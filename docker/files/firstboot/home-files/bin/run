@@ -39,7 +39,19 @@ fi
     fi
 
     mysql swgemu -vvvvv -e "update galaxy set address = '${GALAXY_ADDRESS}';select * from galaxy;"
-    mysql swgemu -vvvvv -e "update accounts set salt='', password=sha1('${ADMIN_PASS}') where username = 'admin';"
+    # SECURITY: the admin password must never appear in this process's argv
+    # (visible to `ps` on the host via `docker top`/procfs for as long as
+    # this mysql invocation runs) or be echoed back to stdout (captured by
+    # `docker logs` via the "2>&1 | tee screenlog.0" below, and written into
+    # screenlog.0 itself). Feed the statement over stdin instead of `-e`, and
+    # drop `-vvvvv`: mysql only echoes back the statements it runs when `-v`
+    # is passed, regardless of whether they came from `-e` or stdin, so `-e`
+    # alone is not sufficient -- both must go. `set -x` (active above) stays
+    # safe here: xtrace prints only the command name for a here-doc ("+ mysql
+    # swgemu"), never the here-doc body.
+    mysql swgemu <<SQL_ADMIN_RESET
+update accounts set salt='', password=sha1('${ADMIN_PASS}') where username = 'admin';
+SQL_ADMIN_RESET
 ) 2>&1 | tee screenlog.0
 
 export ASAN_OPTIONS='atexit=1:stats=1:detect_stack_use_after_return=1'
