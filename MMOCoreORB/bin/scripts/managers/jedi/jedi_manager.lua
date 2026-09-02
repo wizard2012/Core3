@@ -11,7 +11,12 @@ if _TEST then
 	ITEMTHEATERDATAPAD = 2
 end
 
-jediProgressionType = VILLAGEJEDIPROGRESSION
+-- SWGWar: Jedi progression disabled project-wide (docs/DECISIONS.md,
+-- Decision recorded 2026-09-02). Village Jedi is population-gated and
+-- unreachable with 6 players; hologrind is a solo grind not yet
+-- committed to. Revisit per that decisions Revisit if clause.
+-- Upstream default was VILLAGEJEDIPROGRESSION.
+jediProgressionType = NOJEDIPROGRESSION
 
 jediManagerName = "JediManager"
 
