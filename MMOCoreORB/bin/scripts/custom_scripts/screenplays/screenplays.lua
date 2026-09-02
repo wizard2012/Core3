@@ -1,7 +1,4 @@
 includeFile("../custom_scripts/screenplays/war_hook.lua")
-includeFile("../custom_scripts/screenplays/warreport/war_report.lua")
-includeFile("../custom_scripts/screenplays/warreport/war_login.lua")
-includeFile("../custom_scripts/screenplays/warreport/war_probe.lua")
 
 -- Phase 1 synthetic population (D15 / docs/DESIGN-POPULATION.md S4.7):
 -- config first, then the pure placement function, then the screenplay
@@ -12,3 +9,11 @@ includeFile("../custom_scripts/screenplays/population/population_config.lua")
 includeFile("../custom_scripts/screenplays/population/placement.lua")
 includeFile("../custom_scripts/screenplays/population/standing_services.lua")
 includeFile("../custom_scripts/screenplays/population/bartender_rumor.lua")
+
+-- War report surfaces. Loaded AFTER population so war_bartender.lua chains
+-- onto population/bartender_rumor.lua's runScreenHandlers wrapper.
+includeFile("../custom_scripts/screenplays/warreport/war_report.lua")
+includeFile("../custom_scripts/screenplays/warreport/war_login.lua")
+includeFile("../custom_scripts/screenplays/warreport/war_officer.lua")
+includeFile("../custom_scripts/screenplays/warreport/war_bartender.lua")
+includeFile("../custom_scripts/screenplays/warreport/war_probe.lua")
