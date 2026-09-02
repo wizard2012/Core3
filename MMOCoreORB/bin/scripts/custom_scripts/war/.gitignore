@@ -3,3 +3,8 @@
 # regenerate rather than restore from git.
 war_state.lua
 region_map.lua
+
+# Generated per-export by bridge/export_war_state.lua alongside war_state.lua.
+# Same reasoning as war_state.lua above: a per-tick artifact of the live sim,
+# not authored content.
+war_flips.lua
