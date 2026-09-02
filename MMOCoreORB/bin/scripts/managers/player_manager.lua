@@ -48,8 +48,52 @@ onlineCharactersPerAccount = 2 --How many characters are allowed online from a s
 allowSameAccountPvpRatingCredit = 0
 
 --Blue frog / GM buff values
+--
+-- medicalBuff: recalibrated for the Phase 1 synthetic-population field
+-- medic (docs/DESIGN-POPULATION.md S4.5, D15). enhanceCharacter() is the
+-- ONLY buff-applying function exposed to Lua and it is the SAME call the
+-- stock GM "Get Buffs" terminal uses (screenplays/events/buffTerminalMenuComponent.lua)
+-- -- there is exactly one pair of globals, shared by every caller, so this
+-- number is now sized against a real player master doctor rather than
+-- being a GM-strength value. Formula (S4.5): medicalBuff = floor(0.95 x
+-- P_min), P_min measured on a patient whose battle fatigue is cleared.
+--
+-- VERIFIED from this checkout: master-doctor healing_wound_treatment sums
+-- to 95 across science_doctor_novice/wound_01-04/master (sql/datatables.sql
+-- skill_skills, live-queried) -> modSkill factor (100+95)/100 = 1.95.
+-- private_medical_rating = 100 in the stock hospital template
+-- (object/building/general/mun_all_hospital_s01.lua) -> modEnvironment =
+-- 1.0. calculateBFRatio() (CreatureObjectImplementation.cpp:2642) is 1.0
+-- at shockWounds<=250 (cleared) and floors at 0.25 at shockWounds>=1000
+-- (heavy battle fatigue) -- confirms S4.5's "hole": the flat NPC buff does
+-- NOT scale down with the patient's own BF the way a real doctor's does.
+--
+-- NOT VERIFIED (the one open number): the enhance pack's own
+-- "effectiveness" (power) value. It is a crafted-item attribute
+-- (EnhancePackImplementation.cpp: effectiveness = values.getCurrentValue("power"))
+-- stored in schematic/TRE data, not in any SQL table and not reachable
+-- from any Lua binding -- confirmed no object/tangible/pharmaceutical/*.lua
+-- exists and EnhancePack has no Lua wrapper in the 23-class bound object
+-- set. It could not be measured in this Lua+SQL(+live-DB) sandbox; no
+-- client is available to craft and equip a real pack (BACKLOG B4).
+--
+-- effectiveness = 300 below is therefore an ESTIMATE, not a verified
+-- reading, chosen conservatively (a modest "weakest realistic master
+-- pack") so the resulting number errs toward too weak rather than too
+-- strong -- the safer failure direction per S4.5 ("the worst outcome on
+-- the board" is locking out a real doctor). This needs a live
+-- crafting-bench measurement to confirm once B4 is resolved; flagged in
+-- docs/BACKLOG.md. Derivation:
+--   P_min(cleared)  = 300 x 1.95 x 1.0 (BFratio=1.0)  = 585
+--   P_min(high BF)  = 300 x 1.95 x 0.25 (BFratio floor) = 146.25
+--   medicalBuff = floor(0.95 x 585) = 555
+-- NOTE the hole is real and quantified, not closed: 555 > 146.25, so a
+-- heavily-fatigued patient's real doctor buff (146) is still below this
+-- flat NPC buff (555) and the overwrite rule would lock the NPC's buff in
+-- -- exactly the gap S4.5 describes and does not claim to solve without
+-- S4.6's (deferred) C++ binding.
 performanceBuff = 1100
-medicalBuff = 2200
+medicalBuff = 555
 performanceDuration = 7200 -- in seconds
 medicalDuration = 7200 -- in seconds
 

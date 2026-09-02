@@ -1,0 +1,16 @@
+-- Phase 1 synthetic population (D15 / docs/DESIGN-POPULATION.md S4.7):
+-- conversation templates for the field medic and travelling performer.
+-- Loaded via mobile/serverobjects.lua's own custom_scripts seam, in the
+-- SAME Lua state that loads mobile/conversations.lua (and defines the
+-- ConvoTemplate/ConvoScreen base classes) -- unlike
+-- custom_scripts/screenplays/screenplays.lua's DirectorManager Lua state,
+-- where ConvoTemplate is NOT defined (confirmed live: loading it there
+-- raised "attempt to index a nil value (global 'ConvoTemplate')" on every
+-- boot/reload). AiAgent(pNpc):setConvoTemplate("...") in
+-- custom_scripts/screenplays/population/standing_services.lua only ever
+-- needs the template's STRING name (it resolves through a C++ CRC
+-- registry, the same way screenplays/poi/tatooine_jawa_traders.lua points
+-- an existing template at several different conversations by name) -- so
+-- this is the only file that needs the actual ConvoTemplate/ConvoScreen
+-- classes.
+includeFile("../custom_scripts/mobile/population_conversations.lua")

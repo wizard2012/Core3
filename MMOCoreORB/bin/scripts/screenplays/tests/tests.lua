@@ -154,3 +154,233 @@ function Tests:aiAggroEvent(agent, args)
 		SceneObject(agent):destroyObjectFromWorld()
 	end
 end
+
+--------------------------------------------------------------------------
+-- Phase 1 synthetic population (D15 / docs/DESIGN-POPULATION.md S10) --
+-- server-side acceptance, driven via `screen -X stuff 'test populationPhase1\n'`
+-- and confirmed by grepping screenlog.0, per S10's own acceptance spec:
+-- no client is needed or used. Everything below calls
+-- PopulationServices:deliverMedic/deliverPerformer directly -- the same
+-- functions the real conversation handlers call -- so this observes the
+-- actual effect (a max-HAM delta, a wound clear, a credit charge, a
+-- cooldown refusal), not just that a function returned without erroring.
+--------------------------------------------------------------------------
+
+-- MUST match managers/player_manager.lua's medicalBuff. That file is
+-- boot-loaded into a SEPARATE Lua state (PlayerManagerImplementation's own
+-- instance, not DirectorManager's screenplay state this test runs in), so
+-- there is no live global this test can read instead -- see that file's
+-- own comment block for the derivation of 555.
+local POPULATION_TEST_EXPECTED_MEDICAL_BUFF = 555
+
+function Tests:populationPhase1()
+	-- getSpawnPoint("creature_test", ...) returns nil in this deployment
+	-- (verified: stock Tests:aiMoveTest fails identically with "attempt to
+	-- index a nil value (local 'spawnPoint')" -- the creature_test zone is
+	-- not loaded here, matching that function's own "won't load due to
+	-- being version 0013" comment -- a pre-existing environment gap, not
+	-- something this change introduced). Spawn on a real, always-loaded
+	-- zone at fixed coordinates instead (the Mos Eisley aid-post spot from
+	-- population_config.lua -- an arbitrary safe outdoor point).
+	local subject = spawnSceneObject("tatooine", "object/creature/player/human_male.iff", 3614.894, 5, -4780.4487, 0, 0)
+
+	if subject == nil then
+		printf("populationPhase1 FAIL: spawnSceneObject returned nil\n")
+		return
+	end
+
+	if not SceneObject(subject):isPlayerCreature() then
+		printf("populationPhase1 FAIL: spawned object is not a PlayerCreature\n")
+		SceneObject(subject):destroyObjectFromWorld()
+		return
+	end
+
+	local pass = true
+
+	CreatureObject(subject):addCashCredits(1000000, false)
+
+	-- 1. Medic: max HAM(HEALTH) delta equals medicalBuff exactly (buffs
+	-- raise max HAM, so this observes the real effect, not the call).
+	local baselineMaxHealth = CreatureObject(subject):getMaxHAM(HEALTH)
+	local creditsBeforeMedic = CreatureObject(subject):getCashCredits()
+	local medicFee = POPULATION_FEES.medic.base -- regionId=nil -> not frontier -> base fee
+
+	local medicDelivered = PopulationServices:deliverMedic(subject, nil)
+
+	local medicDelta = CreatureObject(subject):getMaxHAM(HEALTH) - baselineMaxHealth
+	local medicCharged = creditsBeforeMedic - CreatureObject(subject):getCashCredits()
+
+	if not medicDelivered then
+		printf("populationPhase1 FAIL: deliverMedic refused on a funded, cooled-down subject\n")
+		pass = false
+	end
+	if medicDelta ~= POPULATION_TEST_EXPECTED_MEDICAL_BUFF then
+		printf("populationPhase1 FAIL: medic maxHAM(HEALTH) delta = " .. medicDelta .. ", expected " .. POPULATION_TEST_EXPECTED_MEDICAL_BUFF .. "\n")
+		pass = false
+	end
+	if medicCharged ~= medicFee then
+		printf("populationPhase1 FAIL: medic fee charged = " .. medicCharged .. ", expected " .. medicFee .. "\n")
+		pass = false
+	end
+
+	-- 2. Medic cooldown: a second attempt inside the cooldown is refused
+	-- and charges nothing.
+	local creditsBeforeSecondMedic = CreatureObject(subject):getCashCredits()
+	local secondMedicDelivered = PopulationServices:deliverMedic(subject, nil)
+	local secondMedicCharged = creditsBeforeSecondMedic - CreatureObject(subject):getCashCredits()
+
+	if secondMedicDelivered then
+		printf("populationPhase1 FAIL: second deliverMedic call inside cooldown was NOT refused\n")
+		pass = false
+	end
+	if secondMedicCharged ~= 0 then
+		printf("populationPhase1 FAIL: refused medic attempt charged " .. secondMedicCharged .. " credits, expected 0\n")
+		pass = false
+	end
+
+	-- 3. Performer: wound the subject, call the path, then confirm the
+	-- WOUND CEILING was actually lifted.
+	--
+	-- VERIFIED LIVE (screenlog): setWounds() and healDamage() never touch
+	-- maxHamList at all (CreatureObjectImplementation.cpp) -- getMaxHAM()
+	-- is a separately-tracked value setWounds/setShockWounds do not write.
+	-- What setWounds(type, N) actually changes is the CURRENT-HAM ceiling
+	-- both setWounds and healDamage enforce as
+	-- `maxHamList.get(type) - wounds.get(type)`. docs/DESIGN-POPULATION.md
+	-- S10's "assert getMaxHAM == getBaseHAM" does not hold for this raw
+	-- spawnSceneObject test subject (getBaseHAM(MIND) reads a template
+	-- stub of 100 that never matched this subject's own getMaxHAM(MIND)
+	-- of 1200, even before any wound -- confirmed by a first run of this
+	-- test) and, per the C++ above, would not be the right observable
+	-- for wound-clearing on ANY subject. The correct, verified observation
+	-- is the ceiling healDamage respects: wound it, confirm healDamage
+	-- cannot reach the unwounded max; clear via the performer; confirm
+	-- healDamage now CAN reach the unwounded max again.
+	local unwoundedMaxMind = CreatureObject(subject):getMaxHAM(MIND)
+	CreatureObject(subject):healDamage(999999, MIND) -- ensure at full before wounding
+
+	CreatureObject(subject):setWounds(MIND, 200)
+	CreatureObject(subject):setShockWounds(300)
+	CreatureObject(subject):healDamage(999999, MIND) -- try to heal past the wound ceiling
+	local ceilingWhileWounded = CreatureObject(subject):getHAM(MIND)
+
+	local performerFee = POPULATION_FEES.performer.base
+	local creditsBeforePerformer = CreatureObject(subject):getCashCredits()
+
+	local performerDelivered = PopulationServices:deliverPerformer(subject, nil, false)
+
+	local performerCharged = creditsBeforePerformer - CreatureObject(subject):getCashCredits()
+	CreatureObject(subject):healDamage(999999, MIND) -- the ceiling should be lifted now
+	local ceilingAfterClear = CreatureObject(subject):getHAM(MIND)
+
+	if not performerDelivered then
+		printf("populationPhase1 FAIL: deliverPerformer refused on a funded, cooled-down subject\n")
+		pass = false
+	end
+	if ceilingWhileWounded >= unwoundedMaxMind then
+		printf("populationPhase1 FAIL: setWounds(MIND, 200) did not lower the heal ceiling (unwounded=" .. unwoundedMaxMind .. " whileWounded=" .. ceilingWhileWounded .. ")\n")
+		pass = false
+	end
+	if ceilingAfterClear ~= unwoundedMaxMind then
+		printf("populationPhase1 FAIL: performer did not lift the wound ceiling back to the unwounded max (unwounded=" .. unwoundedMaxMind .. " afterClear=" .. ceilingAfterClear .. ")\n")
+		pass = false
+	end
+	if performerCharged ~= performerFee then
+		printf("populationPhase1 FAIL: performer fee charged = " .. performerCharged .. ", expected " .. performerFee .. "\n")
+		pass = false
+	end
+
+	-- 4. Performer cooldown: same refusal/no-charge check.
+	local creditsBeforeSecondPerformer = CreatureObject(subject):getCashCredits()
+	local secondPerformerDelivered = PopulationServices:deliverPerformer(subject, nil, false)
+	local secondPerformerCharged = creditsBeforeSecondPerformer - CreatureObject(subject):getCashCredits()
+
+	if secondPerformerDelivered then
+		printf("populationPhase1 FAIL: second deliverPerformer call inside cooldown was NOT refused\n")
+		pass = false
+	end
+	if secondPerformerCharged ~= 0 then
+		printf("populationPhase1 FAIL: refused performer attempt charged " .. secondPerformerCharged .. " credits, expected 0\n")
+		pass = false
+	end
+
+	SceneObject(subject):destroyObjectFromWorld()
+
+	if pass then
+		printf("populationPhase1 PASS\n")
+	else
+		printf("populationPhase1 FAIL (see above)\n")
+	end
+end
+
+--- Diagnostic-only: prints what PopulationPlacement.computeSite() and
+-- PopulationServices:spawnProvider() actually do for medic_1, so a
+-- console operator can see WHY a provider is/isn't spawning without
+-- guessing. Not part of the acceptance suite.
+function Tests:populationDebug()
+	local warState = PopulationPlacement.loadWarState()
+	if warState == nil then
+		printf("populationDebug: loadWarState() returned nil\n")
+		return
+	end
+
+	printf("populationDebug: generated_at_tick=" .. warState.generated_at_tick .. "\n")
+
+	local ok, regionId = pcall(PopulationPlacement.computeSite, "medic", "medic_1", warState, {})
+	printf("populationDebug: computeSite medic_1 ok=" .. tostring(ok) .. " region=" .. tostring(regionId) .. "\n")
+
+	if ok and regionId ~= nil then
+		local site = POPULATION_AID_POSTS[regionId]
+		if site == nil then
+			printf("populationDebug: no POPULATION_AID_POSTS entry for " .. regionId .. "\n")
+		else
+			local pNpc = spawnMobile(site.zone, "medic", -1, site.x, site.z, site.y, site.heading, site.cell)
+			printf("populationDebug: spawnMobile(" .. site.zone .. ", medic, ...) -> " .. tostring(pNpc) .. "\n")
+			if pNpc ~= nil then
+				SceneObject(pNpc):destroyObjectFromWorld()
+			end
+		end
+	end
+end
+
+--- The POPULATION_SERVICES off-switch, proven live: toggling
+-- POPULATION_SERVICES.medic off and calling PopulationServices:refreshAll()
+-- (the same function the self-rescheduling circuit timer calls) actually
+-- despawns medic_1 (its shared-memory npcOid goes to 0); toggling back on
+-- respawns it. Mutates the in-memory config table directly (no file
+-- write) so this is a clean, repeatable console proof.
+function Tests:populationOffSwitch()
+	PopulationServices:refreshAll()
+
+	local before = readSharedMemory("population:medic_1:npcOid")
+	if before == nil or before == 0 then
+		printf("populationOffSwitch FAIL: medic_1 was not spawned before toggling off\n")
+		return
+	end
+
+	local pass = true
+
+	POPULATION_SERVICES.medic = false
+	PopulationServices:refreshAll()
+
+	local afterOff = readSharedMemory("population:medic_1:npcOid")
+	if afterOff ~= 0 then
+		printf("populationOffSwitch FAIL: medic_1 still has an npcOid after switching off (" .. tostring(afterOff) .. ")\n")
+		pass = false
+	end
+
+	POPULATION_SERVICES.medic = true
+	PopulationServices:refreshAll()
+
+	local afterOn = readSharedMemory("population:medic_1:npcOid")
+	if afterOn == nil or afterOn == 0 then
+		printf("populationOffSwitch FAIL: medic_1 did not respawn after switching back on\n")
+		pass = false
+	end
+
+	if pass then
+		printf("populationOffSwitch PASS\n")
+	else
+		printf("populationOffSwitch FAIL (see above)\n")
+	end
+end
