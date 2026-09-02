@@ -326,6 +326,13 @@ end
 -- coordinates for NPCs standing inside buildings (x=60, y=0.6 and friends),
 -- which would have put every waypoint at the origin. Verified against
 -- tatooine_regions.lua:177-183, corellia_regions.lua and naboo_regions.lua.
+-- NB: a region row is {name, x1, y1, {CIRCLE, radius}} OR
+-- {name, x1, y1, {RECTANGLE, x2, y2}}. For a CIRCLE, (x1,y1) IS the centre.
+-- For a RECTANGLE it is a BOUNDING BOX CORNER, and the centre is the midpoint.
+-- nab_keren and nab_theed are the only two RECTANGLE regions here, and both
+-- were originally taken as (x1,y1) -- putting their waypoints 1225 m and 952 m
+-- off, in the officer spawn, the login report and the recruiter briefing.
+-- Verified against managers/planet/<planet>_regions.lua by scripted audit.
 WarReport.COORDS = {
 	tat_anchorhead  = {   102, -5360 },
 	tat_bestine     = { -1218, -3688 },
@@ -339,7 +346,7 @@ WarReport.COORDS = {
 	cor_doaba       = {  3272,  5456 },
 
 	nab_kaadara     = {  5168,  6704 },
-	nab_keren       = {   336,  2140 },
+	nab_keren       = {  1424,  2702 },
 	nab_moenia      = {  4800, -4784 },
-	nab_theed       = { -6160,  3920 },
+	nab_theed       = { -5320,  4368 },
 }
