@@ -154,3 +154,47 @@ function Tests:warBridgeFuncs()
 		printf("WARBRIDGEFUNCS: reskinRegion NOT visible in this VM\n")
 	end
 end
+
+--- Stage a battle immediately, instead of waiting for the cycle timer.
+--
+-- WarBattle:start() schedules the first battle 45s after boot and then every
+-- BATTLE_INTERVAL_MS. reloadscreenplays does not re-run a global screenplay's
+-- start(), so without this a change to war_battle.lua can only be exercised by
+-- restarting the whole server and disconnecting every player.
+function Tests:warBattleNow()
+	printf("WARBATTLE: begin\n")
+
+	if WarBattle == nil then
+		printf("WARBATTLE: FAIL -- WarBattle table is nil\n")
+		return
+	end
+
+	if WarReport == nil or WarReport.state() == nil then
+		printf("WARBATTLE: FAIL -- war state not readable on this thread\n")
+		return
+	end
+
+	local region, holder, contest = WarBattle:pickRegion()
+	printf("WARBATTLE: target=" .. tostring(region)
+		.. " holder=" .. tostring(holder)
+		.. " contest=" .. tostring(contest) .. "\n")
+
+	local ok, err = pcall(function()
+		WarBattle:clear()
+		WarBattle:spawnBattle()
+	end)
+	if not ok then
+		printf("WARBATTLE: ERROR " .. tostring(err) .. "\n")
+	end
+
+	printf("WARBATTLE: end\n")
+end
+
+--- Tear down whatever battle is live.
+function Tests:warBattleClear()
+	if WarBattle == nil then
+		printf("WARBATTLE: WarBattle is nil\n")
+		return
+	end
+	printf("WARBATTLE: cleared " .. tostring(WarBattle:clear()) .. " combatant(s)\n")
+end
