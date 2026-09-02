@@ -112,6 +112,23 @@ end
 -- global it populates rather than includeFile()ing a second copy, so the two
 -- systems can never be looking at different ticks of the war.
 function WarReport.state()
+	-- Core3 gives every server thread its own Lua VM, and WAR_STATE is only
+	-- populated in a thread that has actually included war_hook.lua (which
+	-- calls WarBridge.load() at include time). A reader running on any other
+	-- thread sees nil.
+	--
+	-- That is not hypothetical: it is why the Anchorhead briefing officer
+	-- spawned nowhere while the spawn bridge itself worked perfectly. The
+	-- officer read the state from a thread that had none, got nil, and
+	-- silently declined to spawn.
+	--
+	-- So reload on demand rather than assuming someone else did it. Cheap
+	-- (two includeFile calls of small generated files), idempotent, and it
+	-- makes every surface independent of thread and load order.
+	if (WAR_STATE == nil or type(WAR_STATE) ~= "table") and WarBridge ~= nil and WarBridge.load ~= nil then
+		pcall(function() WarBridge.load() end)
+	end
+
 	if WAR_STATE == nil or type(WAR_STATE) ~= "table" then
 		return nil
 	end

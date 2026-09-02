@@ -72,3 +72,34 @@ function Tests:warBridgeCheck()
 
 	printf("WARBRIDGECHECK: end\n")
 end
+
+--- Force the briefing officers to spawn now.
+--
+-- reloadscreenplays does NOT re-run a global screenplay start() that already
+-- ran at boot (see CLAUDE.md reload section), so editing war_officer.lua and
+-- reloading is not enough to make officers appear -- without this you have to
+-- restart the whole server, which disconnects every player.
+function Tests:warOfficerSpawn()
+	printf("WAROFFICERSPAWN: begin\n")
+
+	if WarOfficer == nil then
+		printf("WAROFFICERSPAWN: FAIL -- WarOfficer table is nil\n")
+		return
+	end
+
+	if WarReport == nil then
+		printf("WAROFFICERSPAWN: FAIL -- WarReport table is nil\n")
+		return
+	end
+
+	local st = WarReport.state()
+	printf("WAROFFICERSPAWN: war state " .. (st ~= nil and ("loaded, tick=" .. tostring(st.generated_at_tick)) or "NOT READABLE") .. "\n")
+
+	WarOfficer.retriesLeft = 0  -- one shot; do not queue retries from a manual call
+	local ok, err = pcall(function() WarOfficer:spawnAll(nil, "") end)
+	if not ok then
+		printf("WAROFFICERSPAWN: ERROR " .. tostring(err) .. "\n")
+	end
+
+	printf("WAROFFICERSPAWN: end\n")
+end

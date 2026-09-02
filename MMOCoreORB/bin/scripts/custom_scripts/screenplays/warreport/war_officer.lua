@@ -61,6 +61,12 @@ WarOfficer = ScreenPlay:new {
 
 	BRIEF_RADIUS_M = 12,
 	REBRIEF_COOLDOWN_MS = 5 * 60 * 1000,
+
+	-- Delay before the first spawn attempt, and the retry cadence when the
+	-- war state is not readable yet. See start() for why this is not inline.
+	spawnDelayMs = 20000,
+	retryDelayMs = 30000,
+	retriesLeft = 5,
 }
 
 registerScreenPlay("WarOfficer", true)
@@ -69,15 +75,43 @@ function WarOfficer:start()
 	if not isZoneEnabled("tatooine") then
 		return
 	end
-	self:spawnAll()
+
+	-- Spawn off a short delay rather than inline. start() can run before the
+	-- war state is readable on this thread, and the original inline version
+	-- then spawned NOTHING, with no retry and nothing logged -- the officer
+	-- was simply absent at Anchorhead and the logs said why: nothing at all.
+	-- A delayed event re-enters on a thread that has been through the normal
+	-- screenplay path, by which point WarReport.state() (which now reloads on
+	-- demand) can answer.
+	createEvent(WarOfficer.spawnDelayMs, "WarOfficer", "spawnAll", nil, "")
 end
 
-function WarOfficer:spawnAll()
-	for i = 1, #self.POSTS do
-		local ok, err = pcall(function() self:spawnPost(self.POSTS[i]) end)
+function WarOfficer:spawnAll(pObject, args)
+	local spawned = 0
+	local skipped = 0
+
+	for i = 1, #WarOfficer.POSTS do
+		local post = WarOfficer.POSTS[i]
+		local ok, res = pcall(function() return WarOfficer:spawnPost(post) end)
 		if not ok then
-			printf("WarOfficer: failed to spawn post " .. tostring(self.POSTS[i].region) .. ": " .. tostring(err) .. "\n")
+			printf("WarOfficer: ERROR spawning " .. tostring(post.region) .. ": " .. tostring(res) .. "\n")
+			skipped = skipped + 1
+		elseif res == true then
+			spawned = spawned + 1
+		else
+			skipped = skipped + 1
 		end
+	end
+
+	-- Always log the outcome. The first version of this file logged nothing on
+	-- the success path AND nothing when it declined to spawn, so "no officer
+	-- at Anchorhead" was indistinguishable from "screenplay never ran".
+	printf("WarOfficer: spawned " .. spawned .. " officer(s), skipped " .. skipped .. "\n")
+
+	if spawned == 0 and WarOfficer.retriesLeft > 0 then
+		WarOfficer.retriesLeft = WarOfficer.retriesLeft - 1
+		printf("WarOfficer: nothing spawned; retrying in " .. WarOfficer.retryDelayMs .. "ms (" .. WarOfficer.retriesLeft .. " left)\n")
+		createEvent(WarOfficer.retryDelayMs, "WarOfficer", "spawnAll", nil, "")
 	end
 end
 
@@ -103,30 +137,33 @@ function WarOfficer:spawnPost(post)
 		return
 	end
 
-	local faction = self:factionFor(post.region)
+	local faction = WarOfficer:factionFor(post.region)
 	if faction == nil then
-		return -- no war state yet; spawn nothing rather than guess a side
+		-- No war state readable yet. Spawn nothing rather than guess a side;
+		-- spawnAll() will retry.
+		return false
 	end
 
-	local template = self.TEMPLATE[faction]
+	local template = WarOfficer.TEMPLATE[faction]
 	if template == nil then
-		return
+		printf("WarOfficer: no template for faction " .. tostring(faction) .. "\n")
+		return false
 	end
 
 	local pNpc = spawnMobile(post.zone, template, -1, post.x, 0, post.y, post.heading, 0)
 	if pNpc == nil then
 		printf("WarOfficer: spawnMobile returned nil for " .. template .. " at " .. post.region .. "\n")
-		return
+		return false
 	end
 
 	AiAgent(pNpc):addObjectFlag(AI_STATIONARY)
-	AiAgent(pNpc):setFollowState(0)
 
 	local pArea = spawnActiveArea(post.zone, "object/active_area.iff",
-		post.x, 0, post.y, self.BRIEF_RADIUS_M, 0)
+		post.x, 0, post.y, WarOfficer.BRIEF_RADIUS_M, 0)
 
 	if pArea == nil then
-		return
+		printf("WarOfficer: spawnActiveArea returned nil at " .. post.region .. " (officer spawned but will not brief)\n")
+		return true
 	end
 
 	-- Remember which region this area briefs on, so the handler does not
@@ -135,6 +172,10 @@ function WarOfficer:spawnPost(post)
 	writeData(SceneObject(pArea):getObjectID() .. ":war:npc", SceneObject(pNpc):getObjectID())
 
 	createObserver(ENTEREDAREA, "WarOfficer", "briefEntered", pArea)
+
+	printf("WarOfficer: " .. tostring(faction) .. " officer at " .. tostring(post.region)
+		.. " (" .. tostring(post.x) .. ", " .. tostring(post.y) .. ")\n")
+	return true
 end
 
 function WarOfficer:briefEntered(pArea, pPlayer)
