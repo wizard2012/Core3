@@ -1,0 +1,5 @@
+# Generated each tick by warsim/scripts/tick_driver.lua via
+# bridge/generate_war_state.lua. Never hand-edited, never committed --
+# regenerate rather than restore from git.
+war_state.lua
+region_map.lua
