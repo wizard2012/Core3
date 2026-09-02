@@ -103,3 +103,26 @@ function Tests:warOfficerSpawn()
 
 	printf("WAROFFICERSPAWN: end\n")
 end
+
+--- Force the flip announcer to run now, ignoring the dedup claim.
+--
+-- reloadscreenplays is lazy per-thread, so after an export there is no
+-- guarantee any thread has re-run war_announce.lua yet. This runs it here.
+function Tests:warAnnounceRun()
+	printf("WARANNOUNCE: begin\n")
+	if WarAnnounce == nil then
+		printf("WARANNOUNCE: FAIL -- WarAnnounce table is nil\n")
+		return
+	end
+	pcall(function() includeFile("../custom_scripts/war/war_flips.lua") end)
+	if WAR_FLIPS == nil then
+		printf("WARANNOUNCE: FAIL -- WAR_FLIPS nil after includeFile\n")
+		return
+	end
+	printf("WARANNOUNCE: flips file tick=" .. tostring(WAR_FLIPS.tick)
+		.. " count=" .. tostring(WAR_FLIPS.flips and #WAR_FLIPS.flips or 0) .. "\n")
+	-- clear the claim so a manual run always announces
+	writeSharedMemory(WarAnnounce.CLAIM_KEY, 1)
+	pcall(function() WarAnnounce:run() end)
+	printf("WARANNOUNCE: end\n")
+end

@@ -121,8 +121,13 @@ function WarAnnounce:run()
 			local ok, err = pcall(function()
 				broadcastToGalaxy(nil, line)
 			end)
-			if not ok then
-				printf("WarAnnounce: broadcastToGalaxy failed: " .. tostring(err) .. "\n")
+			-- Log either way. broadcastToGalaxy itself logs nothing, so without
+			-- this there is no server-side evidence an announcement happened and
+			-- "did the player actually see it?" is unanswerable from the logs.
+			if ok then
+				printf("WarAnnounce: broadcast tick=" .. tostring(tick) .. " :: " .. line .. "\n")
+			else
+				printf("WarAnnounce: broadcastToGalaxy FAILED: " .. tostring(err) .. "\n")
 			end
 		end
 	end
