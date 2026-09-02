@@ -1,4 +1,7 @@
 includeFile("../custom_scripts/screenplays/war_hook.lua")
+includeFile("../custom_scripts/screenplays/warreport/war_report.lua")
+includeFile("../custom_scripts/screenplays/warreport/war_login.lua")
+includeFile("../custom_scripts/screenplays/warreport/war_probe.lua")
 
 -- Phase 1 synthetic population (D15 / docs/DESIGN-POPULATION.md S4.7):
 -- config first, then the pure placement function, then the screenplay
