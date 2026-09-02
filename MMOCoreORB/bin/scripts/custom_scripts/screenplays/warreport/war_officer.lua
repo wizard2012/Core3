@@ -171,6 +171,11 @@ function WarOfficer:spawnPost(post)
 	writeStringData(SceneObject(pArea):getObjectID() .. ":war:region", post.region)
 	writeData(SceneObject(pArea):getObjectID() .. ":war:npc", SceneObject(pNpc):getObjectID())
 
+	-- Also record by region, so respawnForRegion() can find and remove this
+	-- officer and its area when the region changes hands.
+	writeSharedMemory("warofficer:npc:" .. post.region, SceneObject(pNpc):getObjectID())
+	writeSharedMemory("warofficer:area:" .. post.region, SceneObject(pArea):getObjectID())
+
 	createObserver(ENTEREDAREA, "WarOfficer", "briefEntered", pArea)
 
 	printf("WarOfficer: " .. tostring(faction) .. " officer at " .. tostring(post.region)
@@ -230,4 +235,51 @@ function WarOfficer:briefEntered(pArea, pPlayer)
 	end)
 
 	return 0
+end
+
+--- Despawn and re-spawn the officer at one region, so a captured capital is
+-- briefed by whoever now holds it.
+--
+-- Spawned mobiles do not re-evaluate their own faction, so without this the
+-- Anchorhead officer stayed a Rebel captain after the Empire took the town.
+-- Tracked oids are kept in screenplay data keyed by region.
+function WarOfficer:respawnForRegion(regionId)
+	if regionId == nil then
+		return false
+	end
+
+	local post = nil
+	for i = 1, #WarOfficer.POSTS do
+		if WarOfficer.POSTS[i].region == regionId then
+			post = WarOfficer.POSTS[i]
+		end
+	end
+
+	if post == nil then
+		return false  -- no officer stationed there; nothing to do
+	end
+
+	-- Remove the old officer and its briefing area.
+	local npcKey = "warofficer:npc:" .. regionId
+	local areaKey = "warofficer:area:" .. regionId
+
+	for _, key in ipairs({npcKey, areaKey}) do
+		local oid = readSharedMemory(key)
+		if oid ~= nil and oid > 0 then
+			local pObj = getSceneObject(oid)
+			if pObj ~= nil then
+				pcall(function() SceneObject(pObj):destroyObjectFromWorld(false) end)
+			end
+			writeSharedMemory(key, 0)
+		end
+	end
+
+	local ok, res = pcall(function() return WarOfficer:spawnPost(post) end)
+	if ok and res == true then
+		printf("WarOfficer: respawned officer at " .. tostring(regionId) .. " for the new holder\n")
+		return true
+	end
+
+	printf("WarOfficer: respawnForRegion(" .. tostring(regionId) .. ") did not spawn (" .. tostring(res) .. ")\n")
+	return false
 end

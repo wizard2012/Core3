@@ -126,3 +126,31 @@ function Tests:warAnnounceRun()
 	pcall(function() WarAnnounce:run() end)
 	printf("WARANNOUNCE: end\n")
 end
+
+--- Report which WarBridge functions are visible in THIS threads
+
+--- Report which WarBridge functions are visible in THIS thread's Lua VM, and
+-- exercise the reskin directly.
+--
+-- Needed because the flip path silently skipped the reskin: its guard is
+-- `WarBridge.reskinRegion ~= nil`, and a guard that fails looks identical to a
+-- guard that was never reached.
+function Tests:warBridgeFuncs()
+	local function ty(v) return type(v) end
+	printf("WARBRIDGEFUNCS: WarBridge=" .. ty(WarBridge)
+		.. " reskin=" .. ty(WarBridge and WarBridge.reskin)
+		.. " reskinRegion=" .. ty(WarBridge and WarBridge.reskinRegion)
+		.. " WAR_REGION_MAP=" .. ty(WAR_REGION_MAP)
+		.. " spawnMobOverridden=" .. ty(CityScreenPlay and CityScreenPlay._warOriginalSpawnMob)
+		.. "\n")
+
+	if WarBridge ~= nil and WarBridge.reskinRegion ~= nil then
+		printf("WARBRIDGEFUNCS: calling reskinRegion(tat_anchorhead)\n")
+		local ok, err = pcall(function() WarBridge.reskinRegion("tat_anchorhead") end)
+		if not ok then
+			printf("WARBRIDGEFUNCS: ERROR " .. tostring(err) .. "\n")
+		end
+	else
+		printf("WARBRIDGEFUNCS: reskinRegion NOT visible in this VM\n")
+	end
+end

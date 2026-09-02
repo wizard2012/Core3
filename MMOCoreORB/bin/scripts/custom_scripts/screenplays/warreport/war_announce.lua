@@ -116,6 +116,32 @@ function WarAnnounce:run()
 	end
 
 	for i = 1, #flips do
+		-- Reskin the town BEFORE announcing it. The garrison a player turns
+		-- around to look at should already match the sentence they just read;
+		-- announcing a capture while rebel troopers still stand in the street
+		-- is worse than staying silent.
+		--
+		-- Core3 only re-evaluates an NPC's faction when that individual NPC
+		-- dies (onDespawn -> respawn, on a 5 minute timer), so without this a
+		-- flip changed only what WOULD spawn, and the town kept its old
+		-- garrison indefinitely.
+		local flipRegion = flips[i].region
+		if flipRegion ~= nil and WarBridge ~= nil and WarBridge.reskinRegion ~= nil then
+			local okReskin, errReskin = pcall(function()
+				WarBridge.reskinRegion(flipRegion)
+			end)
+			if not okReskin then
+				printf("WarAnnounce: reskinRegion(" .. tostring(flipRegion) .. ") failed: " .. tostring(errReskin) .. "\n")
+			end
+		end
+
+		-- Officers are spawned mobiles too, and equally do not re-evaluate
+		-- their own faction. Respawn them so a captured capital is briefed by
+		-- the captor, not by the side that just lost it.
+		if WarOfficer ~= nil and WarOfficer.respawnForRegion ~= nil then
+			pcall(function() WarOfficer:respawnForRegion(flipRegion) end)
+		end
+
 		local line = self:lineFor(flips[i])
 		if line ~= nil then
 			local ok, err = pcall(function()

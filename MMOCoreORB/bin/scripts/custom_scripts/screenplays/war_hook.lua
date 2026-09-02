@@ -205,6 +205,185 @@ end
 
 -- ================================================ CityScreenPlay overrides ==
 
+--- Key holding the CSV of oids this screenplay currently has spawned.
+local function warSpawnedKey(screenplayName)
+	return "warbridge:spawned:" .. tostring(screenplayName)
+end
+
+--- Remember one spawned NPC so a later flip can despawn it.
+local function warTrackSpawn(screenplayName, oid)
+	local key = warSpawnedKey(screenplayName)
+	local existing = readStringData(key)
+	if existing == nil or existing == "" then
+		writeStringData(key, tostring(oid))
+	else
+		writeStringData(key, existing .. "," .. tostring(oid))
+	end
+end
+
+--- Forget everything tracked for a screenplay.
+local function warClearTracked(screenplayName)
+	writeStringData(warSpawnedKey(screenplayName), "")
+end
+
+--- Iterate the tracked oids.
+local function warTrackedOids(screenplayName)
+	local out = {}
+	local raw = readStringData(warSpawnedKey(screenplayName))
+	if raw == nil or raw == "" then
+		return out
+	end
+	for token in string.gmatch(raw, "([^,]+)") do
+		local n = tonumber(token)
+		if n ~= nil and n > 0 then
+			out[#out + 1] = n
+		end
+	end
+	return out
+end
+
+-- Capture the vanilla spawnMob once per VM incarnation, on a FIELD of the
+-- table (same re-capture-on-reload mechanism this file's header documents).
+if CityScreenPlay._warOriginalSpawnMob == nil then
+	CityScreenPlay._warOriginalSpawnMob = CityScreenPlay.spawnMob
+end
+
+--- Replaces city.lua's spawnMob. Identical behaviour, plus: it returns the
+-- spawned NPC and records its oid so WarBridge.reskin() can despawn it later.
+--
+-- The template selection below is city.lua's own, unchanged: a gcwMobs row
+-- with fewer than 9 fields carries a single template, while a row with 9+
+-- fields carries an IMPERIAL template at [1] and a REBEL one at [2]. That is
+-- the mechanism the faction swap actually rides on.
+function CityScreenPlay:spawnMob(num, controllingFaction, difficulty)
+	local mobsTable = self.gcwMobs
+
+	if num <= 0 or num > #mobsTable then
+		return nil
+	end
+
+	local mobTable = mobsTable[num]
+	local npcTemplate, x, y, z, heading, parentID
+	local npcMood = ""
+	local scanner = false
+
+	if #mobTable < 9 then
+		npcTemplate = mobTable[1]
+		x = mobTable[2]
+		z = mobTable[3]
+		y = mobTable[4]
+		heading = mobTable[5]
+		parentID = mobTable[6]
+		npcMood = mobTable[7]
+		scanner = mobTable[8]
+	else
+		x = mobTable[3]
+		z = mobTable[4]
+		y = mobTable[5]
+		heading = mobTable[6]
+		parentID = mobTable[7]
+		scanner = mobTable[10]
+		if controllingFaction == FACTIONIMPERIAL then
+			npcTemplate = mobTable[1]
+			npcMood = mobTable[8]
+		else
+			npcTemplate = mobTable[2]
+			npcMood = mobTable[9]
+		end
+	end
+
+	local scaling = ""
+	if difficulty > 1 and creatureTemplateExists(npcTemplate .. "_hard") then
+		scaling = "_hard"
+	end
+
+	local pNpc = spawnMobile(self.planet, npcTemplate .. scaling, 0, x, z, y, heading, parentID)
+
+	if pNpc ~= nil then
+		if npcMood ~= "" then
+			self:setMoodString(pNpc, npcMood)
+		end
+		if scanner then
+			AiAgent(pNpc):addObjectFlag(SCANNING_FOR_CONTRABAND)
+		end
+
+		AiAgent(pNpc):addObjectFlag(AI_STATIC)
+		createObserver(CREATUREDESPAWNED, self.screenplayName, "onDespawn", pNpc)
+
+		local oid = SceneObject(pNpc):getObjectID()
+		writeData(oid, num)
+		warTrackSpawn(self.screenplayName, oid)
+	end
+
+	return pNpc
+end
+
+--- Despawn and re-spawn one city's GCW garrison so it reflects the CURRENT
+-- controlling faction. Called when that city's region changes hands.
+--
+-- Destroys with destroyObjectFromWorld(false) -- no despawn event -- so
+-- city.lua's onDespawn does NOT fire and does NOT queue its own 5-minute
+-- respawn. Without that, every reskinned NPC would come back a second time
+-- five minutes later and the town would end up double-garrisoned.
+function WarBridge.reskin(screenplayName)
+	local pScreenplay = _G[screenplayName]
+	if pScreenplay == nil or type(pScreenplay) ~= "table" then
+		printf("WarBridge.reskin: unknown screenplay " .. tostring(screenplayName) .. "\n")
+		return 0, 0
+	end
+
+	local removed = 0
+	local oids = warTrackedOids(screenplayName)
+	for i = 1, #oids do
+		local pNpc = getSceneObject(oids[i])
+		if pNpc ~= nil then
+			pcall(function()
+				deleteData(oids[i])
+				SceneObject(pNpc):destroyObjectFromWorld(false)
+			end)
+			removed = removed + 1
+		end
+	end
+	warClearTracked(screenplayName)
+
+	local spawned = 0
+	pcall(function()
+		pScreenplay:spawnGcwMobiles()
+		spawned = #warTrackedOids(screenplayName)
+	end)
+
+	printf("WarBridge.reskin: " .. tostring(screenplayName)
+		.. " despawned " .. removed .. ", respawned " .. spawned .. "\n")
+	return removed, spawned
+end
+
+--- Reskin every city mapped to `regionId`. Returns how many screenplays were
+-- reskinned, so callers can log a flip that mapped to no city at all.
+function WarBridge.reskinRegion(regionId)
+	if WAR_REGION_MAP == nil then
+		return 0
+	end
+
+	local n = 0
+	local names = {}
+	for screenplayName, mapped in pairs(WAR_REGION_MAP) do
+		if mapped == regionId then
+			names[#names + 1] = screenplayName
+		end
+	end
+	table.sort(names)  -- stable order
+
+	for i = 1, #names do
+		WarBridge.reskin(names[i])
+		n = n + 1
+	end
+
+	if n == 0 then
+		printf("WarBridge.reskinRegion: no city screenplay maps to " .. tostring(regionId) .. "\n")
+	end
+	return n
+end
+
 function CityScreenPlay:spawnGcwMobiles()
 	if not isZoneEnabled(self.planet) then
 		return
