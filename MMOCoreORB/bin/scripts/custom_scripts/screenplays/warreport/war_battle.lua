@@ -16,7 +16,7 @@
   the game to join.
 
   2026-09-02 REWRITE: the first version staged exactly one 4v4, ~255m
-  diagonally outside the town (BATTLE_OFFSET_M=80 applied on both axes), one
+  diagonally outside the town (BATTLE_OFFSET_M=180 applied on both axes), one
   region at a time, with a 2-minute silent gap between 10-minute battles. A
   player standing in the actual town saw nothing. This version stages several
   small sites much closer in, at more than one front region at once, on a
@@ -204,9 +204,27 @@ WarBattle.REGION_KEY = "warbattle:region"
 -- which was itself still failing). Leave an entry commented out until a
 -- human confirms the candidate passes.
 WarBattle.SITE_OVERRIDES = {
-	-- nab_theed   = { anchorOffset = { x = ??, y = ?? }, siteRadius = ?? },
+	-- anchorOffset verified by Tests:battleOffsetSweep against the live
+	-- navmesh on 2026-09-03 -- ALL CLEAR at the one recruiter-anchor point
+	-- this produces (not bearing-dependent, so contest tier cannot affect
+	-- it). {90,90} was chosen as the smallest change off the default
+	-- {80,80} that cleared, out of {90,90}/{100,100}/{-80,80}/{80,-80},
+	-- keeping the diagonal shape and staying close to town.
+	-- siteRadius NOT yet set -- the 90/100/110 candidates swept the same day
+	-- all failed at least one bearing; a wider 60-170 band is queued in
+	-- war_battle_offset_sweep.lua for a follow-up run.
+	nab_theed   = { anchorOffset = { x = 90, y = 90 } },
+	-- siteRadius NOT yet set -- 90/100/110 all failed at least one bearing
+	-- on the 2026-09-03 sweep; a wider band (roughly 60-170) is queued for
+	-- a follow-up run. Do not guess a value here in the meantime.
 	-- cor_tyrena  = { siteRadius = ?? },
-	-- tat_bestine = { siteRadius = ?? },
+	-- siteRadius verified by Tests:battleOffsetSweep against the live
+	-- navmesh on 2026-09-03 -- ALL CLEAR at every bearing across every
+	-- contest tier (totalSites 1-4). 100 was chosen over the other clean
+	-- candidate (110) because it is closer in, matching this file's own
+	-- stated design direction of staging sites "much closer in" (see the
+	-- 2026-09-02 REWRITE note above).
+	tat_bestine = { siteRadius = 100 },
 }
 
 --- The (dx, dy) applied to a region's WarReport.COORDS to place its
