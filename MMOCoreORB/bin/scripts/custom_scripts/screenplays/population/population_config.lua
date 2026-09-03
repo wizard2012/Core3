@@ -59,13 +59,16 @@ POPULATION_SERVICES = {
 -- enforce it among themselves. This is a deliberate, narrow relaxation of
 -- D15's spread rule for guaranteed slots only, not a removal of it.
 --
--- KNOWN GAP: tat_anchorhead has no cantina at all in this build (see
--- POPULATION_CANTINAS below -- 12 of 13 regions, verified asymmetry, not a
--- bug). If tat_anchorhead becomes a front region, the performer guarantee
--- cannot be met there by placement alone; refreshKind() logs this rather
--- than failing silently. Fixing it for real needs a hand-picked interior
--- cantina-equivalent spot for Anchorhead, which is out of scope here (no
--- such coordinate exists in this codebase to reuse).
+-- CLOSED GAP (owner ruling, 2026-09-03): tat_anchorhead has no cantina in
+-- this build, so the performer guarantee could not be met there by
+-- placement alone. Confirmed live, not theoretical -- tat_anchorhead was
+-- ranked an active front and populationFrontCoverage reported
+-- performer=MISSING against the running server.
+--
+-- The owner's instruction was to co-locate the Anchorhead entertainer with
+-- the medic. POPULATION_CANTINAS therefore carries a tat_anchorhead row
+-- derived from POPULATION_AID_POSTS.tat_anchorhead instead of from a
+-- cantina -- see that table's comment for why this needs no code change.
 POPULATION_PROVIDERS = {
 	medic     = { count = 5, guaranteed = 3, kind = "aid_post", bias = "toward_front" },
 	performer = { count = 5, guaranteed = 3, kind = "cantina",  bias = "away_from_front" },
@@ -153,9 +156,23 @@ POPULATION_AID_POSTS = {
 -- screenplays/cities/cantinas/bartenders.lua's bartenderSpawns table,
 -- intersected with the 13 war-mapped regions
 -- (bridge/generated/region_map.lua). Twelve of the seventeen bartender
--- cantinas are in mapped cities; tat_anchorhead has none, which is why it
--- is medic-only (docs/DESIGN-POPULATION.md S4.7.2 -- this is the verified
--- asymmetry, not a special case in code). x/z/y reuse a safe interior spot
+-- cantinas are in mapped cities. tat_anchorhead has none, and its row here
+-- is therefore NOT a cantina: it is POPULATION_AID_POSTS.tat_anchorhead
+-- with a small +4m x offset so the performer stands beside the medic
+-- rather than inside it, per the owner ruling above.
+--
+-- This works with no code change because nothing in standing_services.lua
+-- requires the site to be a real cantina -- the table only answers "where
+-- does the performer stand". The one behavioural difference is the dwell
+-- area (spawnDwellArea): with cell = 0 it is an ordinary outdoor active
+-- area rather than an interior one, so "be in the cantina 60s" becomes
+-- "be within DWELL_RADIUS_M of the performer 60s" -- which is what that
+-- mechanic already approximates everywhere else by its own admission.
+--
+-- The z value is inherited unchanged from the aid post. placeCreature does
+-- no floor snap, so if the +4m offset ever lands on a slope the NPC can sit
+-- slightly off the ground; it is verifiable with the isPointWalkable
+-- console binding rather than by guessing. x/z/y reuse a safe interior spot
 -- from bartenders.lua's own patrolLocations table (patrolLocations[2],
 -- deliberately not patrolLocations[1] where the bartender itself stands).
 POPULATION_CANTINAS = {
@@ -168,6 +185,7 @@ POPULATION_CANTINAS = {
 	nab_keren       = { zone = "naboo",    x = 3.0, z = -0.9, y = 3.4, heading = 0, cell = 5 },
 	nab_moenia      = { zone = "naboo",    x = 3.0, z = -0.9, y = 3.4, heading = 0, cell = 111 },
 	nab_theed       = { zone = "naboo",    x = 3.0, z = -0.9, y = 3.4, heading = 0, cell = 91 },
+	tat_anchorhead  = { zone = "tatooine", x = 66.565128,  z = 52,         y = -5338.9072, heading = 0, cell = 0 },
 	tat_bestine     = { zone = "tatooine", x = 3.0, z = -0.9, y = 3.4, heading = 0, cell = 1028647 },
 	tat_mos_eisley  = { zone = "tatooine", x = 3.0, z = -0.9, y = 3.4, heading = 0, cell = 1082877 },
 	tat_mos_espa    = { zone = "tatooine", x = 3.0, z = -0.9, y = 3.4, heading = 0, cell = 1256058 },
