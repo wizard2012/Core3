@@ -81,3 +81,10 @@ includeFile("../custom_scripts/screenplays/squadleader/sl_probe.lua")
 -- trailing block, out of every other lane's merge surface (see
 -- spawnsafety/spawn_safety_probe.lua's own header for what it does).
 includeFile("../custom_scripts/screenplays/spawnsafety/spawn_safety_probe.lua")
+
+-- Anchorhead west-outpost navmesh (audit-driven fix, dist=-1 found by
+-- Tests.isPointWalkable / spawn_safety_probe.lua for the npc_6/r3_1
+-- patrolPoints cluster in screenplays/cities/tatooine_anchorhead.lua --
+-- see navmesh/anchorhead_outpost_navmesh.lua's own header for the full
+-- writeup). Independent of every other lane; no ordering dependency.
+includeFile("../custom_scripts/screenplays/navmesh/anchorhead_outpost_navmesh.lua")
