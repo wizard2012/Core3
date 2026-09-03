@@ -117,15 +117,22 @@ function Tests:bazaarStockDryRun()
 	printf("BAZAARSTOCKPROBE: end dry run\n")
 end
 
---- Isolated proof of the offline-seller resource staging mechanism, against a
--- specific resource_container_<type> loot item name, independent of any
--- seller (creates the crate and immediately destroys the staging container
--- and the crate itself -- does NOT list or transfer to any seller). Useful
--- to confirm createLoot's zone-dependent path actually works in THIS galaxy's
+--- Isolated proof of the offline-seller resource staging mechanism AND the
+-- new setResourceContainerQuantity binding (stage S2's C++ addition), against
+-- a specific resource_container_<type> loot item name, independent of any
+-- seller (creates the crate, resizes it, then immediately destroys the
+-- staging container and the crate itself -- does NOT list or transfer to any
+-- seller). This is now the ONLY live check of the quantity-setting path:
+-- no Lua binding exposes ResourceContainer::getQuantity() (no
+-- LuaResourceContainer class exists in this codebase, and this stage
+-- deliberately added only the setter, not a getter), so the setter's own
+-- return value -- and the guard cases below -- are as much as can be checked
+-- from a console probe. Also useful, independent of the quantity binding, to
+-- confirm createLoot's zone-dependent path actually works in THIS galaxy's
 -- current resource spawn state before blaming bazaar_stock.lua's own logic
 -- for a depot never listing its resource entries.
 function Tests:bazaarStockResourceProbe()
-	printf("BAZAARSTOCKPROBE: begin resource staging probe\n")
+	printf("BAZAARSTOCKPROBE: begin resource staging + quantity probe\n")
 
 	local pStaging = spawnSceneObject(
 		BAZAAR_CONFIG.STAGING_ZONE,
@@ -142,6 +149,17 @@ function Tests:bazaarStockResourceProbe()
 
 	printf("BAZAARSTOCKPROBE: staging container spawned oid=" .. tostring(SceneObject(pStaging):getObjectID()) .. "\n")
 
+	-- Guard case 1: nil object. Must return false, not crash.
+	local nilCase = setResourceContainerQuantity(nil, 500)
+	printf("BAZAARSTOCKPROBE: setResourceContainerQuantity(nil, 500) = " .. tostring(nilCase) .. " (expect false)\n")
+
+	-- Guard case 2: wrong-type object (the staging container itself is a
+	-- plain TangibleObject/ContainerComponent, not a ResourceContainer).
+	-- Must return false, not crash.
+	local wrongTypeCase = setResourceContainerQuantity(pStaging, 500)
+	printf("BAZAARSTOCKPROBE: setResourceContainerQuantity(non-resource object, 500) = "
+		.. tostring(wrongTypeCase) .. " (expect false)\n")
+
 	local lootOid = createLoot(pStaging, "resource_container_metal", 0, false)
 	printf("BAZAARSTOCKPROBE: createLoot(resource_container_metal) = " .. tostring(lootOid)
 		.. " (0 or nil means no active metal spawn in this zone right now -- not necessarily a bug)\n")
@@ -149,20 +167,27 @@ function Tests:bazaarStockResourceProbe()
 	if lootOid ~= nil and lootOid ~= 0 then
 		local pResource = getSceneObject(lootOid)
 		if pResource ~= nil then
-			-- No Lua binding exposes ResourceContainer::getQuantity() (no
-			-- LuaResourceContainer wrapper exists in this codebase) -- the
-			-- override in custom_scripts/loot/serverobjects.lua can only be
-			-- confirmed from the server console (getAttributes on the crate
-			-- once it's actually in a player's inventory) or in-game, not
-			-- from this probe. This confirms creation succeeded; it does not
-			-- confirm the quantity band.
-			printf("BAZAARSTOCKPROBE: resource crate created oid=" .. tostring(lootOid)
-				.. " -- quantity band not checkable from this probe, see comment above\n")
+			-- Guard case 3: absurd/negative quantity on a REAL resource
+			-- container. Must clamp and return true, not crash or silently
+			-- accept the absurd value (unverifiable from Lua which value it
+			-- actually landed on -- see file header -- but the return value
+			-- and "did the server survive" are still meaningful).
+			local negCase = setResourceContainerQuantity(pResource, -50)
+			printf("BAZAARSTOCKPROBE: setResourceContainerQuantity(real crate, -50) = "
+				.. tostring(negCase) .. " (expect true -- clamped to 1 internally)\n")
+
+			-- The actual depot band this crate's real type would use.
+			local band = { qtyMin = 300, qtyMax = 900 }
+			local wantedQty = getRandomNumber(band.qtyMin, band.qtyMax)
+			local realCase = setResourceContainerQuantity(pResource, wantedQty)
+			printf("BAZAARSTOCKPROBE: setResourceContainerQuantity(real crate, " .. tostring(wantedQty)
+				.. ") = " .. tostring(realCase) .. " (expect true)\n")
+
 			pcall(function() SceneObject(pResource):destroyObjectFromDatabase(true) end)
 		end
 	end
 
 	pcall(function() SceneObject(pStaging):destroyObjectFromWorld() end)
 
-	printf("BAZAARSTOCKPROBE: end resource staging probe\n")
+	printf("BAZAARSTOCKPROBE: end resource staging + quantity probe\n")
 end

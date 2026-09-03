@@ -124,13 +124,22 @@ BAZAAR_CONFIG.FACTION_PERK_DENY_LIST = buildFactionPerkDenyList()
 --
 -- pool entries:
 --   { kind = "consumable", template = "<.iff path>", basePrice = N }
---   { kind = "resource",   lootItem = "resource_container_<type>", basePrice = N }
+--   { kind = "resource",   lootItem = "resource_container_<type>", basePrice = N,
+--                           qtyMin = N, qtyMax = N }
 -- "template" for consumables is an exact object template path created fresh via
 -- giveItem() (never a random loot roll) -- see bazaar_stock.lua's ELIGIBILITY
 -- guard for why that keeps getCraftersName()/getJunkValue() safe by construction.
 -- "lootItem" for resources must be one of the vanilla resource_container_<type>
--- names this stage overrode in custom_scripts/loot/serverobjects.lua (see that
--- file's header for why the name literally cannot be anything else).
+-- names (LootManagerImplementation.cpp strips the literal "resource_container_"
+-- prefix to match a live ResourceSpawn's type -- any other name matches nothing
+-- and createLootResource silently returns nullptr). qtyMin/qtyMax are THIS
+-- listing's own quantity band, applied per-crate via the setResourceContainerQuantity
+-- binding (DirectorManager.cpp, stage S2) in bazaar_stock.lua's
+-- createStagedResource() -- vanilla's own resource_container_<type> loot templates
+-- are left untouched at their stock 5-50 (an earlier version of this stage
+-- overrode those templates globally; reverted per owner ruling once it was
+-- measured that the override silently buffed all 598 mob-loot groupTemplate
+-- references to these same names galaxy-wide, not just the bazaar).
 
 BAZAAR_CONFIG.DEPOTS = {
 
@@ -143,19 +152,19 @@ BAZAAR_CONFIG.DEPOTS = {
 		homeRegion = "cor_coronet", homeZone = "corellia", homeX = -178, homeY = -4504,
 		target = 12,
 		pool = {
-			{ kind = "resource", lootItem = "resource_container_metal",    basePrice = 4500 },
-			{ kind = "resource", lootItem = "resource_container_ore",      basePrice = 4200 },
-			{ kind = "resource", lootItem = "resource_container_chemical", basePrice = 5200 },
-			{ kind = "resource", lootItem = "resource_container_water",    basePrice = 2600 },
-			{ kind = "resource", lootItem = "resource_container_wood",     basePrice = 2800 },
-			{ kind = "resource", lootItem = "resource_container_gemstone", basePrice = 6800 },
-			{ kind = "resource", lootItem = "resource_container_hide",     basePrice = 3200 },
-			{ kind = "resource", lootItem = "resource_container_bone",     basePrice = 1400 },
-			{ kind = "resource", lootItem = "resource_container_bone_horn",basePrice = 1600 },
-			{ kind = "resource", lootItem = "resource_container_cereal",   basePrice = 1200 },
-			{ kind = "resource", lootItem = "resource_container_meat",     basePrice = 1300 },
-			{ kind = "resource", lootItem = "resource_container_milk",     basePrice = 1100 },
-			{ kind = "resource", lootItem = "resource_container_seeds",    basePrice = 1000 },
+			{ kind = "resource", lootItem = "resource_container_metal",    basePrice = 4500, qtyMin = 300, qtyMax = 900 },
+			{ kind = "resource", lootItem = "resource_container_ore",      basePrice = 4200, qtyMin = 300, qtyMax = 900 },
+			{ kind = "resource", lootItem = "resource_container_chemical", basePrice = 5200, qtyMin = 300, qtyMax = 900 },
+			{ kind = "resource", lootItem = "resource_container_water",    basePrice = 2600, qtyMin = 300, qtyMax = 900 },
+			{ kind = "resource", lootItem = "resource_container_wood",     basePrice = 2800, qtyMin = 300, qtyMax = 900 },
+			{ kind = "resource", lootItem = "resource_container_gemstone", basePrice = 6800, qtyMin = 300, qtyMax = 900 },
+			{ kind = "resource", lootItem = "resource_container_hide",     basePrice = 3200, qtyMin = 300, qtyMax = 900 },
+			{ kind = "resource", lootItem = "resource_container_bone",     basePrice = 1400, qtyMin = 150, qtyMax = 450 },
+			{ kind = "resource", lootItem = "resource_container_bone_horn",basePrice = 1600, qtyMin = 150, qtyMax = 450 },
+			{ kind = "resource", lootItem = "resource_container_cereal",   basePrice = 1200, qtyMin = 150, qtyMax = 450 },
+			{ kind = "resource", lootItem = "resource_container_meat",     basePrice = 1300, qtyMin = 150, qtyMax = 450 },
+			{ kind = "resource", lootItem = "resource_container_milk",     basePrice = 1100, qtyMin = 150, qtyMax = 450 },
+			{ kind = "resource", lootItem = "resource_container_seeds",    basePrice = 1000, qtyMin = 150, qtyMax = 450 },
 		},
 	},
 

@@ -56,40 +56,64 @@
        coordinate far from every war-mapped city (BAZAAR_CONFIG.STAGING_*).
        This container has a zone.
     2. createLoot(stagingContainer, "resource_container_<type>", 0, false) --
-       container->getZone() now succeeds, createLootResource runs normally,
-       and the resulting resource crate is transferred into the STAGING
-       container (LootManagerImplementation.cpp:804's own
+       container->getZone() now succeeds, createLootResource runs normally at
+       the VANILLA quantity band (5-50, untouched -- see the QUANTITY note
+       below), and the resulting resource crate is transferred into the
+       STAGING container (LootManagerImplementation.cpp:804's own
        container->transferObject call).
-    3. Fetch that crate via getSceneObject(returned oid), then call
+    3. setResourceContainerQuantity(crate, depotEntry.qtyMin..qtyMax roll) --
+       a new, narrow DirectorManager Lua binding added this stage (see its own
+       header comment in DirectorManager.cpp for the full guard/ignoreMax
+       writeup) wrapping the existing native
+       ResourceContainer::setQuantity(newQuantity, notifyClient=true,
+       ignoreMax=false, destroyEmpty=true) (ResourceContainer.idl) -- real,
+       already shipped, simply never bound to Lua before now. This is what
+       actually gives the crate a bigger-than-vanilla quantity, scoped to
+       exactly this one crate.
+    4. Fetch/keep the crate reference, then call
        sellerInventory:transferObject(crate, -1, false) -- the SAME
        LuaSceneObject::transferObject binding used everywhere else in this
        codebase (LuaSceneObject.cpp:567), which goes through the same
        ContainerComponent::transferObject already shown above to have no zone
        requirement. The crate ends up in the (zoneless) seller's inventory.
-    4. Destroy the now-empty staging container (destroyObjectFromWorld(), the
+    5. Destroy the now-empty staging container (destroyObjectFromWorld(), the
        same one-line cleanup screenplays/tools/firework_event.lua and
        helperfuncs.lua's despawnMobileTask already use for transient spawns).
-  Steps 1-4 happen inside one function call on one screenplay tick -- nothing
+  Steps 1-5 happen inside one function call on one screenplay tick -- nothing
   is ever visible near a player, and nothing persists if any step fails
   (createStagedResource() below cleans up and returns nil rather than leaving
   a stray crate or staging container behind).
 
-  THIS ONLY WORKS FOR THE VANILLA resource_container_<type> NAMES -- see
-  custom_scripts/loot/serverobjects.lua's header for why the bigger-quantity
-  templates this stage adds MUST override those exact vanilla names rather
-  than using new "bazaar_resource_*" names (LootManagerImplementation.cpp:512
+  QUANTITY: NOT a global template override any more. An earlier version of
+  this stage overrode the vanilla resource_container_<type> LOOT ITEM
+  TEMPLATES directly (custom_scripts/loot/serverobjects.lua) to get a bigger
+  band. That was reverted per owner ruling once it was measured that those
+  templates are referenced by 598 groupTemplate entries across mob loot
+  tables galaxy-wide (loot/groups/npc/**) -- the override silently buffed
+  every mob resource drop in the game 6-18x, not just the bazaar's own
+  crates. custom_scripts/loot/serverobjects.lua is back to empty; vanilla
+  resource_container_<type> loot items stay at their stock 5-50 band for
+  everything except what this file explicitly resizes via
+  setResourceContainerQuantity AFTER creation, scoped to exactly the one
+  crate just created in the staging container -- nothing else in the game is
+  touched.
+
+  THE resource_container_<type> NAME ITSELF STILL CANNOT CHANGE -- see
+  bazaar_config.lua's pool-entry doc comment: LootManagerImplementation.cpp
   strips the literal "resource_container_" prefix to match a currently-spawned
-  ResourceSpawn's type -- any other name never matches anything and
-  createLootResource silently returns nullptr for every roll).
+  ResourceSpawn's type, so createLoot must still be called with one of the 13
+  vanilla names, just at its own (now irrelevant, since step 3 resizes it
+  immediately after) vanilla quantity.
 
   CONCLUSION: resources ARE achievable for an offline ghost seller, via the
-  staging mechanism above. This is a source-level conclusion, not a
+  staging + resize mechanism above. This is a source-level conclusion, not a
   live-verified one (see the S3 verification section near the end of this
   file for the exact console probe to run once a seller exists) --
   createStagedResource() is written to fail loud and safe (log, return nil,
   never error into the screenplay tick) if any step of it doesn't behave as
   traced, so a wrong assumption here degrades to "this depot's resource
-  entries never list" rather than a crash or a corrupted bazaar.
+  entries never list, or list at the vanilla 5-50 if only the resize call
+  itself misbehaves" rather than a crash or a corrupted bazaar.
 
   ==========================================================================
   ELIGIBILITY GUARDS (owner-specified, applied to every created item just
@@ -369,10 +393,14 @@ end
 -- ============================================================ resource path ==
 
 --- See file header (THE OFFLINE-SELLER RESOURCE HAZARD) for the full
--- mechanism and why each step is safe. Returns the resource item, already
--- inside pSellerInventory, or nil (having logged why and cleaned up after
--- itself) on any failure.
-function BazaarStock:createStagedResource(lootItemName, pSellerInventory)
+-- mechanism and why each step is safe. qtyMin/qtyMax are the depot pool
+-- entry's own band (bazaar_config.lua) -- a random quantity in that range is
+-- rolled and applied via setResourceContainerQuantity() after the crate is
+-- created, since createLoot() itself only ever produces the vanilla 5-50
+-- (see the QUANTITY note in the file header for why that's now deliberate).
+-- Returns the resource item, already inside pSellerInventory, or nil (having
+-- logged why and cleaned up after itself) on any failure.
+function BazaarStock:createStagedResource(lootItemName, qtyMin, qtyMax, pSellerInventory)
 	local pStaging = spawnSceneObject(
 		BAZAAR_CONFIG.STAGING_ZONE,
 		"object/tangible/container/loot/loot_crate.iff",
@@ -405,6 +433,26 @@ function BazaarStock:createStagedResource(lootItemName, pSellerInventory)
 		return nil
 	end
 
+	-- Resize BEFORE transferring out of the staging container -- doesn't
+	-- matter which container the crate sits in for this call (setQuantity
+	-- doesn't touch containment), but keeping it staged until every step has
+	-- either succeeded or been decided means a hard failure below still
+	-- cleans up in one place (destroy the staging container, which takes the
+	-- crate with it).
+	local wantedQty = getRandomNumber(qtyMin, qtyMax)
+	local resized = setResourceContainerQuantity(pResource, wantedQty)
+
+	if not resized then
+		-- Not fatal: the crate is still a perfectly valid resource item, just
+		-- at whatever createLoot's own vanilla roll (5-50) gave it. Listing a
+		-- smaller-than-intended crate is a minor loss; destroying a good item
+		-- and skipping this depot's resource lane entirely over a resize
+		-- failure would be a worse outcome for a single degraded call.
+		printf("BazaarStock: setResourceContainerQuantity FAILED for '" .. lootItemName
+			.. "' oid=" .. tostring(lootOid) .. " (wanted " .. tostring(wantedQty)
+			.. ") -- listing it at its vanilla quantity instead of failing the whole listing.\n")
+	end
+
 	local transferred = SceneObject(pSellerInventory):transferObject(pResource, -1, false)
 
 	if not transferred then
@@ -433,7 +481,7 @@ function BazaarStock:tryListEntry(depot, pSeller, pInventory, pTerminal, entry)
 			return
 		end
 	elseif entry.kind == "resource" then
-		pItem = self:createStagedResource(entry.lootItem, pInventory)
+		pItem = self:createStagedResource(entry.lootItem, entry.qtyMin, entry.qtyMax, pInventory)
 		if pItem == nil then
 			return -- createStagedResource already logged why
 		end
