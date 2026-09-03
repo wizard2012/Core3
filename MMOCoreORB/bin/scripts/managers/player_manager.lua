@@ -100,8 +100,25 @@ medicalDuration = 7200 -- in seconds
 --Sets the experience multiplier while grouped
 groupExpMultiplier = 1.2
 
---Sets a global experience multiplier
-globalExpMultiplier = 1.0
+--Sets a global experience multiplier. Doubled (2.0) rather than 1.0 for the same
+--reason skill costs were originally halved: this server runs for a small private
+--group, not the thousands a stock XP curve is paced for. This is the PREFERRED
+--lever over discounting skill costs (see skill_manager.lua's xpCostMultiplier,
+--reverted to 1.0 alongside this change) because doubling the rate a player EARNS
+--xp is mathematically equivalent in time-to-train (skill training spends XP in
+--full, so cost/rate is the same whether cost is halved or rate is doubled) but
+--does not desynchronize the client's own bundled skill-cost display from the
+--server's actual requirement -- the client shows the real, unmodified stock cost,
+--and the player's live XP total (which the server does send to the client) simply
+--fills that bar twice as fast. Halving cost instead makes the server accept a
+--purchase at half of what the client's own progress bar displays as required,
+--which is a visible, uncorrectable mismatch since we cannot ship modified client
+--skill data. Composes with groupExpMultiplier above (multiplicative, as everywhere
+--else in this function) and with any xp_increase buff a player already has.
+--NOTE: political xp (city elections), merchant xp (vendor income), and force rank
+--xp (Jedi) are granted through a different, unmultiplied path and are NOT affected
+--by this value -- only activity XP that flows through awardExperience() is.
+globalExpMultiplier = 2.0
 
 --Sets the base number of control devices of each type that a player can have in their datapad at once
 --For creature pets, A Creature Handler will have the base number + their stored pets skill mod as limit
