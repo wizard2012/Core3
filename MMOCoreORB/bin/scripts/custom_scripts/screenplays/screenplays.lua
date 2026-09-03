@@ -29,6 +29,7 @@ includeFile("../custom_scripts/screenplays/warreport/war_contrib.lua")
 -- see war_contrib_counter.lua's header for why load order here matters.
 includeFile("../custom_scripts/screenplays/warreport/war_contrib_counter.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_report.lua")
+includeFile("../custom_scripts/screenplays/warreport/war_map.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_login.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_contrib_hook.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_officer.lua")

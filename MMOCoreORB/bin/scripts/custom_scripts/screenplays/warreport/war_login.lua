@@ -1,8 +1,11 @@
 --[[
   custom_scripts/screenplays/warreport/war_login.lua
 
-  Surface 1 of 4: the war report a player gets on login, plus the front-line
-  waypoints that put the war on their map.
+  Surface 1 of 4: the war report a player gets on login, plus the live map
+  overlay that puts the war on their map (drawn by warreport/war_map.lua --
+  see that file's header for the label format, colour mapping, and change
+  detection; the map-marking logic that used to live in THIS file as
+  markFront() has been folded there, see the note below).
 
   WHY A MONKEY-PATCH AND NOT AN EDIT TO playerTriggers.lua: same reasoning as
   bridge/war_hook.lua and population/bartender_rumor.lua -- playerTriggers.lua
@@ -26,13 +29,18 @@
   onto a short timer instead so it arrives once the player is actually
   looking at the world.
 
-  WHY WAYPOINTS ARE SESSION-ONLY (persistence = 0): a persistent waypoint per
-  front region per login would grow the player's datapad without bound and
-  leave stale markers pointing at fronts that have since gone quiet. Passing
-  persistence = 0 to addWaypoint (LuaPlayerObject.cpp:188 documents the
-  11-argument form) means the markers live for the session and are re-derived
-  from current war state on the next login -- so they are always accurate and
-  never accumulate.
+  MAP OVERLAY FOLDED INTO war_map.lua (2026-09-03): this file used to place
+  its own front-only waypoints via a markFront() method (specialTypeID = 0,
+  a single flat colour, one label style, front regions only). war_map.lua
+  now covers every war city on the player's planet -- not just fronts --
+  with a richer label (faction, contest tier, supply) and its own reserved
+  specialTypeID, colour-coded by faction, refreshed every 10 minutes. Running
+  both would double up pins for the same cities with different colours and
+  specialTypeIDs, so markFront() and its two fields (waypointColor,
+  frontThreshold) were removed outright rather than left dead and
+  re-enableable by accident. The single call site below now hands off to
+  WarMap:refresh(pPlayer) instead, which also takes over the 10-minute
+  self-rescheduling and logout cleanup -- see war_map.lua's own header.
 ]]
 
 WarReportLogin = ScreenPlay:new {
@@ -42,18 +50,6 @@ WarReportLogin = ScreenPlay:new {
 	-- finish zoning; short enough that it still reads as "here is where the
 	-- war stands" rather than arriving out of nowhere mid-play.
 	reportDelayMs = 12000,
-
-	-- Contest at or above which a region is worth a map marker. Matches
-	-- WarReport.frontRegions' own default (1.0, the same floor
-	-- war_battle.lua stages a fight at) so the text report, the waypoints,
-	-- and the battle system can never disagree about what counts as "the
-	-- front". Noise is controlled by WarReport.MAX_FRONT_REGIONS, not by
-	-- raising this back up.
-	frontThreshold = 1.0,
-
-	-- Waypoint colour. 2 is the standard blue used by
-	-- screenplays that mark objectives; see addWaypoint's `color` arg.
-	waypointColor = 2,
 }
 
 registerScreenPlay("WarReportLogin", true)
@@ -137,54 +133,20 @@ function WarReportLogin:sendReport(pPlayer)
 				creature:sendSystemMessage("  " .. lines[i])
 			end
 		end
-
-		WarReportLogin:markFront(pPlayer, zoneName)
 	end)
 
 	if not ok then
 		printf("WarReportLogin: sendReport failed: " .. tostring(err) .. "\n")
 	end
-end
 
---- Drop session-only waypoints on every contested region of this planet.
-function WarReportLogin:markFront(pPlayer, zoneName)
-	if pPlayer == nil or zoneName == nil then
-		return
-	end
-	if WarReport == nil or WarReport.COORDS == nil then
-		return
-	end
-
-	local pGhost = CreatureObject(pPlayer):getPlayerObject()
-	if pGhost == nil then
-		return
-	end
-
-	local front = WarReport.frontRegions(WarReportLogin.frontThreshold)
-	for i = 1, #front do
-		local id = front[i].id
-		local coords = WarReport.COORDS[id]
-
-		if coords ~= nil and WarReport.PLANET_OF[id] == zoneName then
-			local label = WarReport.regionName(id) .. " (" .. WarReport.factionAdjective(front[i].faction) .. ")"
-
-			pcall(function()
-				PlayerObject(pGhost):addWaypoint(
-					zoneName,          -- planet
-					label,             -- name (literal; no .stf needed)
-					"",                -- desc
-					coords[1],         -- x
-					0,                 -- z
-					coords[2],         -- y
-					WarReportLogin.waypointColor,
-					true,              -- active
-					true,              -- notifyClient
-					0,                 -- specialTypeID
-					0                  -- persistence: session-only, see header
-				)
-			end)
+	-- Kick off the map overlay separately from the text-report pcall above,
+	-- so a failure in one can never suppress the other. See war_map.lua's
+	-- own header for what this does and why it is safe to call unconditionally.
+	pcall(function()
+		if WarMap ~= nil then
+			WarMap:refresh(pPlayer)
 		end
-	end
+	end)
 end
 
 WarReportLogin:install()
