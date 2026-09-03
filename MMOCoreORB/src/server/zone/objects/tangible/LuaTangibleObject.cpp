@@ -57,6 +57,7 @@ Luna<LuaTangibleObject>::RegType LuaTangibleObject::Register[] = {
 		{ "isNoTrade", &LuaTangibleObject::isNoTrade},
 		{ "getMainDefender", &LuaTangibleObject::getMainDefender},
 		{ "getConditionDamage", &LuaTangibleObject::getConditionDamage},
+		{ "getMaxCondition", &LuaTangibleObject::getMaxCondition},
 		{ "isActivated", &LuaTangibleObject::isActivated},
 		{ 0, 0 }
 };
@@ -447,6 +448,14 @@ int LuaTangibleObject::getConditionDamage(lua_State* L){
 	int conditionDamage = realObject->getConditionDamage();
 
 	lua_pushinteger(L, conditionDamage);
+
+	return 1;
+}
+
+int LuaTangibleObject::getMaxCondition(lua_State* L){
+	int maxCondition = realObject->getMaxCondition();
+
+	lua_pushinteger(L, maxCondition);
 
 	return 1;
 }

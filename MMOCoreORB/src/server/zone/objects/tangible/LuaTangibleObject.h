@@ -67,6 +67,7 @@ namespace tangible {
 		int isNoTrade(lua_State* L);
 		int getMainDefender(lua_State* L);
 		int getConditionDamage(lua_State* L);
+		int getMaxCondition(lua_State* L);
 		int isActivated(lua_State* L);
 
 	protected:

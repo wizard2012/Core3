@@ -19,16 +19,19 @@
   screenplays/cities/cantinas/bartender_conv_handler.lua's own
   cross-file references.
 
-  BEST-EFFORT, UNPROVEN CLIENT-SIDE (docs/AGENTS.md S8, BACKLOG B4): the
-  @population:* string ids below follow this codebase's own convention
-  (see @bartender:* in mobile/conversations/misc/bartender_conv.lua) but
-  this design cannot add the matching .stf string-table entries -- that is
-  a TRE/client-asset pipeline step, out of the Lua+SQL scope this task is
-  bound to. Until a .stf exists, the client shows the raw key rather than
-  readable text; the underlying MECHANIC is fully server-side and is what
-  screenplays/tests/tests.lua's Tests:populationPhase1 exercises directly,
-  bypassing the conversation UI entirely, exactly per
-  docs/DESIGN-POPULATION.md S10's acceptance spec.
+  CORRECTED: this file previously used @population:* StringId keys on the
+  premise that this project ships no .stf string table, so those keys
+  would render to the player as the literal, un-looked-up key text. That
+  premise was wrong. Core3 branches on a leading "@" both at template load
+  and at send time (ConversationScreen.h's readObject() for dialog bodies
+  via leftDialog/customDialogText, and addOption() for options) and takes
+  the string as plain literal text whenever it does NOT start with "@" --
+  no .stf entry required. Vanilla already relies on this itself (e.g.
+  mobile/conversations/events/syren/kaila_min_conv.lua's literal option
+  "You led me into an ambush!"). So every screen below now carries plain
+  English directly: dialog bodies via customDialogText, options as literal
+  strings in the options tables. This is proven readable client-side, not
+  merely server-side -- there is no StringId indirection left to fail.
 ]]
 
 PopulationMedicConvoTemplate = ConvoTemplate:new {
@@ -40,18 +43,18 @@ PopulationMedicConvoTemplate = ConvoTemplate:new {
 
 population_medic_start = ConvoScreen:new {
 	id = "population_medic_start",
-	leftDialog = "@population:medic_greet",
+	customDialogText = "You look like you could use some patching up. I can treat your wounds, for a fee.",
 	stopConversation = "false",
 	options = {
-		{"@population:medic_opt_treat", "opt_treat"},
-		{"@population:opt_leave", "opt_leave"},
+		{"Patch me up.", "opt_treat"},
+		{"Just passing through.", "opt_leave"},
 	}
 }
 PopulationMedicConvoTemplate:addScreen(population_medic_start)
 
 population_medic_treat = ConvoScreen:new {
 	id = "opt_treat",
-	leftDialog = "@population:medic_msg_treat",
+	customDialogText = "Hold still... there, that should hold you over.",
 	stopConversation = "true",
 	options = {}
 }
@@ -59,7 +62,7 @@ PopulationMedicConvoTemplate:addScreen(population_medic_treat)
 
 population_medic_leave = ConvoScreen:new {
 	id = "opt_leave",
-	leftDialog = "@population:msg_leave",
+	customDialogText = "Take care of yourself.",
 	stopConversation = "true",
 	options = {}
 }
@@ -90,18 +93,18 @@ PopulationPerformerConvoTemplate = ConvoTemplate:new {
 
 population_performer_start = ConvoScreen:new {
 	id = "population_performer_start",
-	leftDialog = "@population:performer_greet",
+	customDialogText = "Stay a while and enjoy the show. Once you've had your fill, come back and I'll help clear your head, for a fee.",
 	stopConversation = "false",
 	options = {
-		{"@population:performer_opt_clear", "opt_clear"},
-		{"@population:opt_leave", "opt_leave"},
+		{"Watch the performance.", "opt_clear"},
+		{"Just passing through.", "opt_leave"},
 	}
 }
 PopulationPerformerConvoTemplate:addScreen(population_performer_start)
 
 population_performer_clear = ConvoScreen:new {
 	id = "opt_clear",
-	leftDialog = "@population:performer_msg_clear",
+	customDialogText = "Enjoy the show.",
 	stopConversation = "true",
 	options = {}
 }
@@ -109,7 +112,7 @@ PopulationPerformerConvoTemplate:addScreen(population_performer_clear)
 
 population_performer_leave = ConvoScreen:new {
 	id = "opt_leave",
-	leftDialog = "@population:msg_leave",
+	customDialogText = "Take care of yourself.",
 	stopConversation = "true",
 	options = {}
 }

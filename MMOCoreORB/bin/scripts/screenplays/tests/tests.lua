@@ -507,3 +507,28 @@ function Tests:warCivilianAudit()
 		end
 	end
 end
+
+-- Live verification that LuaTangibleObject::getMaxCondition actually
+-- reaches Lua (see LuaTangibleObject.cpp/.h) -- spawns a crafted-class
+-- weapon and prints its maxCondition with a unique marker.
+-- console: test getMaxConditionCheck
+function Tests:getMaxConditionCheck()
+	local subject = spawnSceneObject("tatooine", "object/weapon/melee/sword/sword_lightsaber_vader.iff", 3614.894, 5, -4780.4487, 0, 0)
+
+	if subject == nil then
+		printf("GETMAXCONDITIONCHECK: FAIL -- spawnSceneObject returned nil\n")
+		return
+	end
+
+	local ok, maxCondition = pcall(function() return TangibleObject(subject):getMaxCondition() end)
+
+	if not ok then
+		printf("GETMAXCONDITIONCHECK: FAIL -- getMaxCondition errored: " .. tostring(maxCondition) .. "\n")
+	elseif maxCondition == nil then
+		printf("GETMAXCONDITIONCHECK: FAIL -- getMaxCondition returned nil\n")
+	else
+		printf("GETMAXCONDITIONCHECK: PASS -- maxCondition=" .. tostring(maxCondition) .. "\n")
+	end
+
+	SceneObject(subject):destroyObjectFromWorld()
+end
