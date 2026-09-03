@@ -720,6 +720,22 @@ namespace conf {
 			return cachedCovertOvertSystem;
 		}
 
+		// SWGWar: delay before /declareovert leave actually applies FactionStatus::ONLEAVE.
+		// Owner-specified default is 2 minutes; tunable via config-local.lua without a rebuild
+		// of the command logic itself.
+		inline int getFactionOnLeaveDelayMs() {
+			static uint32 cachedVersion = 0;
+			static int cachedFactionOnLeaveDelayMs;
+
+			if (configVersion.get() > cachedVersion) {
+				Locker guard(&mutex);
+				cachedFactionOnLeaveDelayMs = getInt("Core3.GCWManager.FactionOnLeaveDelayMs", 2 * 60 * 1000);
+				cachedVersion = configVersion.get();
+			}
+
+			return cachedFactionOnLeaveDelayMs;
+		}
+
 		inline bool getLoginEnableSessionId() {
 			static uint32 cachedVersion = 0;
 			static bool cachedEnableSessionId;
