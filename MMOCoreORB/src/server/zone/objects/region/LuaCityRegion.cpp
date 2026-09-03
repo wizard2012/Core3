@@ -63,6 +63,21 @@ int LuaCityRegion::getBazaarCount(lua_State* L) {
 int LuaCityRegion::getBazaar(lua_State* L) {
 	int idx = lua_tointeger(L, -1);
 
+	// Defect fix (post-S1 verifier pass): CityRegion::getBazaar(int) is upstream
+	// (bazaars.get(idx), a VectorMap) and does not bounds-check -- an out-of-range or
+	// negative index throws ArrayIndexOutOfBoundsException (ArrayList.h:577-578).
+	// LuaFunction::callFunction only catches LuaPanicException, so that exception is
+	// uncaught on the console `test` path and terminates the server outright, and on
+	// the screenplay-task path it's caught but leaves the Lua VM mid-pcall and corrupt.
+	// getBazaar() is our own wrapper file (in scope), so the bounds check belongs here
+	// rather than touching the upstream CityRegion.idl method.
+	int count = realObject->getBazaarCount();
+
+	if (idx < 0 || idx >= count) {
+		lua_pushnil(L);
+		return 1;
+	}
+
 	TangibleObject* bazaar = realObject->getBazaar(idx);
 
 	if (bazaar == nullptr)

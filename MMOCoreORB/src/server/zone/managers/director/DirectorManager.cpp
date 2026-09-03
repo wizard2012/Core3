@@ -4587,6 +4587,16 @@ int DirectorManager::destroyNavMesh(lua_State *L) {
 // addSaleItem's earlier guards (dead/incapacitated seller, null zone, active trade
 // session, stale oldItem status) since S1 never exercises this path; a real listing
 // policy in S2 should keep that in mind.
+//
+// Locking convention (corrected -- an earlier note here had this backwards): upstream
+// callers lock the SELLER first and hold that lock across the addSaleItem() call --
+// e.g. CreateImmediateAuctionMessageCallback.h:55-60 does `Locker locker(player);`
+// then calls addSaleItem() while still holding it; CreateAuctionMessageCallback.h and
+// CancelLiveAuctionMessageCallback.h do the same. This binding itself takes no lock on
+// `seller` -- it is a thin wrapper, not a network callback -- so a caller that drives
+// an ONLINE player's inventory through this path would need to lock that player first,
+// exactly like the upstream callbacks do. For an offline/ghost seller (S1's only use
+// case) this is benign: nothing else is contending for that object.
 int DirectorManager::bazaarBotList(lua_State* L) {
 	if (checkArgumentCount(L, 5) == 1) {
 		String err = "incorrect number of arguments passed to DirectorManager::bazaarBotList. Proper arguments is: (seller, itemOid, terminal, description, price)";
@@ -4598,10 +4608,39 @@ int DirectorManager::bazaarBotList(lua_State* L) {
 	CreatureObject* seller = (CreatureObject*) lua_touserdata(L, -5);
 	uint64 itemOid = lua_tointeger(L, -4);
 	SceneObject* terminal = (SceneObject*) lua_touserdata(L, -3);
-	UnicodeString description = lua_tostring(L, -2);
-	int price = lua_tointeger(L, -1);
+
+	// Defect fix: lua_tostring() returns NULL for a nil (or non-string/number) argument,
+	// and UnicodeString(const char*) calls strlen() on it unconditionally -- a nil
+	// description segfaults. Treat a missing description as empty rather than rejecting
+	// outright: a blank description is a harmless, recoverable listing (the item's own
+	// name still shows on the terminal), not a reason to fail the whole call.
+	const char* descriptionRaw = lua_tostring(L, -2);
+	UnicodeString description = (descriptionRaw != nullptr) ? UnicodeString(descriptionRaw) : UnicodeString("");
+
+	// Defect fix: lua_tointeger() returns a 64-bit lua_Integer. The old code assigned
+	// straight into `int price`, silently truncating an out-of-range value (e.g.
+	// 4294967301 wrapped down to 5) *before* the MAXBAZAARPRICE check ever saw it, so an
+	// absurd price could sail through as a tiny valid-looking one. Range-check first,
+	// then narrow.
+	lua_Integer rawPrice = lua_tointeger(L, -1);
+
+	if (rawPrice < 1 || rawPrice > AuctionManager::MAXBAZAARPRICE) {
+		lua_pushinteger(L, ItemSoldMessage::INVALIDSALEPRICE);
+		return 1;
+	}
+
+	int price = (int) rawPrice;
 
 	if (seller == nullptr || terminal == nullptr) {
+		lua_pushinteger(L, ItemSoldMessage::UNKNOWNERROR);
+		return 1;
+	}
+
+	// Defect fix: checkSaleItem() (AuctionManagerImplementation.cpp:831) unconditionally
+	// dereferences seller->getPlayerObject()->getVendorCount(). getPlayerObject() is
+	// getSlottedObject("ghost"), which is null for anything that isn't a player creature
+	// (e.g. an AiAgent) -- null-deref. Guard it here before it ever reaches checkSaleItem.
+	if (!seller->isPlayerCreature()) {
 		lua_pushinteger(L, ItemSoldMessage::UNKNOWNERROR);
 		return 1;
 	}
@@ -4636,6 +4675,24 @@ int DirectorManager::bazaarBotList(lua_State* L) {
 
 	if (res == ItemSoldMessage::SUCCESS) {
 		auctionManager->addSaleItem(seller, itemOid, terminal, description, price, 0, false, false);
+
+		// Defect fix: addSaleItem() is void and re-runs its own guards internally
+		// (dead/incapacitated seller, null zone, active trade session, stale oldItem
+		// status -- none of which checkSaleItem() above checks), so checkSaleItem's
+		// SUCCESS does not guarantee addSaleItem actually listed the item. We cannot get
+		// addSaleItem's internal result directly (upstream, off limits to change), so
+		// verify by looking the item up in the same AuctionsMap that bazaarBotCounts()
+		// already reads, exactly the way bazaarBotCancel() above verifies cancellation.
+		// If it isn't actually listed under this seller, report failure instead of the
+		// misleading SUCCESS the old code returned unconditionally.
+		AuctionsMap* auctionMap = auctionManager->getAuctionMap();
+		ManagedReference<AuctionItem*> listedItem = (auctionMap != nullptr) ? auctionMap->getItem(itemOid) : nullptr;
+
+		bool actuallyListed = listedItem != nullptr && listedItem->getOwnerID() == seller->getObjectID()
+				&& (listedItem->getStatus() == AuctionItem::FORSALE || listedItem->getStatus() == AuctionItem::OFFERED);
+
+		if (!actuallyListed)
+			res = ItemSoldMessage::UNKNOWNERROR;
 	}
 
 	lua_pushinteger(L, res);
@@ -4702,8 +4759,10 @@ int DirectorManager::bazaarBotCancel(lua_State* L) {
 }
 
 // Read-only. ownerListings mirrors what checkSaleItem uses to cap per-player bazaar
-// listings; totalBazaarForSale sums every bazaar terminal's listing count galaxy-wide,
-// so a stocking policy can taper off automatically as real players list things.
+// listings; totalBazaarForSale sums every bazaar terminal's *currently for-sale*
+// listing count galaxy-wide (FORSALE status only -- see the filter below; EXPIRED/SOLD
+// items awaiting retrieval don't count), so a stocking policy can taper off
+// automatically as real players list things.
 int DirectorManager::bazaarBotCounts(lua_State* L) {
 	if (checkArgumentCount(L, 1) == 1) {
 		String err = "incorrect number of arguments passed to DirectorManager::bazaarBotCounts. Proper arguments is: (seller)";
@@ -4750,11 +4809,25 @@ int DirectorManager::bazaarBotCounts(lua_State* L) {
 
 	int totalBazaarForSale = 0;
 
+	// Defect fix: TerminalItemList::size() counts every item ever put in the list,
+	// including EXPIRED and SOLD items still sitting there awaiting retrieval -- it is
+	// not "currently for sale" despite the variable's name. Filter by status the same
+	// way AuctionsMapImplementation::getVendorItemCount(vendor, forSaleOnly=true) does,
+	// so this actually counts live for-sale listings.
 	for (int i = 0; i < allBazaars.size(); ++i) {
 		TerminalItemList* terminalItems = allBazaars.get(i);
 
-		if (terminalItems != nullptr)
-			totalBazaarForSale += terminalItems->size();
+		if (terminalItems == nullptr)
+			continue;
+
+		ReadLocker rlocker(terminalItems);
+
+		for (int j = 0; j < terminalItems->size(); ++j) {
+			AuctionItem* item = terminalItems->get(j);
+
+			if (item != nullptr && item->getStatus() == AuctionItem::FORSALE)
+				totalBazaarForSale++;
+		}
 	}
 
 	lua_pushinteger(L, ownerListings);
