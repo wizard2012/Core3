@@ -652,4 +652,32 @@ rebelRecruiterConvoTemplate:addScreen(cancel_resignation);
 
 -- End of file
 
+
+-- Materiel donation (backlog: player-facing war-materiel producer). Real
+-- Lua-template screens (this file is loaded from mobile/, boot-time only --
+-- restart.sh, not reload-lua.sh, picks up changes here), not a self-linked
+-- workaround: see war_donate.lua's header for why that distinction matters
+-- on a path that destroys player property. customDialogText below is a
+-- static fallback only -- WarDonate overwrites it every time via
+-- setCustomDialogText before the screen reaches the player.
+
+donate_review = ConvoScreen:new {
+	id = "donate_review",
+	customDialogText = "One moment while the quartermaster looks over what you have.",
+	stopConversation = "false",
+	options = {
+		{"Confirm donation", "donate_execute"},
+		{"Never mind.", ""},
+	}
+}
+rebelRecruiterConvoTemplate:addScreen(donate_review);
+
+donate_execute = ConvoScreen:new {
+	id = "donate_execute",
+	customDialogText = "Processing your donation...",
+	stopConversation = "true",
+	options = {}
+}
+rebelRecruiterConvoTemplate:addScreen(donate_execute);
+
 addConversationTemplate("rebelRecruiterConvoTemplate", rebelRecruiterConvoTemplate);

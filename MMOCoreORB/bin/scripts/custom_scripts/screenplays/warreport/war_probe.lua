@@ -337,3 +337,124 @@ function Tests:warContribHookCheck()
 
 	printf("WARCONTRIBHOOKCHECK: end\n")
 end
+
+
+--- Proof that the materiel-donation writer (war_donate.lua) is loaded, its
+-- recruiter conversation wrap is installed, its faction-perk exclusion set
+-- built successfully, and that WarContrib.VALID_SOURCES now accepts
+-- "materiel_donation" end to end -- WITHOUT touching the production spool
+-- (log/warcontrib/) and without requiring a live player to hand anything
+-- over. Same scratch-SPOOL_DIR technique as warContribHookCheck above.
+--
+-- Run:
+--   docker exec -u swgemu swgwar-core3 bash -lc \
+--     "screen -S swgemu-server -X stuff \x27test warDonateCheck\n\x27"
+--   docker exec -u swgemu swgwar-core3 bash -lc \
+--     "grep WARDONATECHECK ~/workspace/Core3/MMOCoreORB/bin/screenlog.0 | tail -20"
+function Tests:warDonateCheck()
+	printf("WARDONATECHECK: begin\n")
+
+	if WarDonate == nil then
+		printf("WARDONATECHECK: FAIL -- WarDonate table is nil; war_donate.lua did not load into this VM\n")
+		return
+	end
+	printf("WARDONATECHECK: WarDonate table present\n")
+
+	if WarContrib == nil or WarContrib.record == nil then
+		printf("WARDONATECHECK: FAIL -- WarContrib.record not visible on this thread\n")
+		return
+	end
+
+	if WarContrib.VALID_SOURCES == nil or WarContrib.VALID_SOURCES.materiel_donation ~= true then
+		printf("WARDONATECHECK: FAIL -- materiel_donation is not in WarContrib.VALID_SOURCES\n")
+		return
+	end
+	printf("WARDONATECHECK: materiel_donation is a valid WarContrib source\n")
+
+	-- Recruiter conversation wrap check.
+	local wrapped = (RecruiterConvoHandler ~= nil and RecruiterConvoHandler._warDonateOriginalRSH ~= nil)
+	printf("WARDONATECHECK: recruiter conversation wrap installed=" .. tostring(wrapped) .. "\n")
+
+	-- Real-screen check: donate_review/donate_execute must actually exist
+	-- in BOTH recruiter conv templates (mobile/conversations/recruiter/
+	-- {rebel,imperial}_recruiter_conv.lua) -- this is what replaced the
+	-- earlier self-linked-screen workaround, so a restart that did not pick
+	-- up those two files would otherwise fail silently the first time a
+	-- player actually tried to donate. Best-effort: these are plain Lua
+	-- globals set by mobile/ at boot, so absence on THIS thread is
+	-- reported, not treated as a hard failure, in case this particular
+	-- thread never loaded those files into its own VM.
+	local function hasScreen(template, screenId)
+		if template == nil or template.screens == nil then
+			return nil
+		end
+		for i = 1, #template.screens do
+			if template.screens[i] ~= nil and template.screens[i].id == screenId then
+				return true
+			end
+		end
+		return false
+	end
+
+	if rebelRecruiterConvoTemplate == nil then
+		printf("WARDONATECHECK: rebelRecruiterConvoTemplate not visible on this thread (inconclusive)\n")
+	else
+		printf("WARDONATECHECK: rebel donate_review present=" .. tostring(hasScreen(rebelRecruiterConvoTemplate, "donate_review"))
+			.. " donate_execute present=" .. tostring(hasScreen(rebelRecruiterConvoTemplate, "donate_execute")) .. "\n")
+	end
+
+	if imperialRecruiterConvoTemplate == nil then
+		printf("WARDONATECHECK: imperialRecruiterConvoTemplate not visible on this thread (inconclusive)\n")
+	else
+		printf("WARDONATECHECK: imperial donate_review present=" .. tostring(hasScreen(imperialRecruiterConvoTemplate, "donate_review"))
+			.. " donate_execute present=" .. tostring(hasScreen(imperialRecruiterConvoTemplate, "donate_execute")) .. "\n")
+	end
+
+	-- Faction-perk exclusion set built from the live factionPerkData tables.
+	local forbidden = WarDonate:forbiddenTemplates()
+	local count = 0
+	for _ in pairs(forbidden) do count = count + 1 end
+	printf("WARDONATECHECK: forbidden faction-perk templates loaded=" .. tostring(count) .. "\n")
+
+	local knownPerkTemplate = "object/tangible/wearables/armor/marine/armor_marine_backpack.iff"
+	printf("WARDONATECHECK: known rebel perk template rejected=" .. tostring(forbidden[knownPerkTemplate] == true) .. "\n")
+
+	-- Region geometry reuse check -- same WarReport.regionAt call
+	-- war_contrib_hook.lua already proves; re-checked here because
+	-- war_donate.lua's confirmDonation depends on it independently.
+	if WarReport == nil or WarReport.regionAt == nil or WarReport.COORDS == nil then
+		printf("WARDONATECHECK: FAIL -- WarReport.regionAt/COORDS not visible on this thread\n")
+		return
+	end
+	local centre = WarReport.COORDS.tat_mos_eisley
+	local inTown = WarReport.regionAt("tatooine", centre[1], centre[2])
+	printf("WARDONATECHECK: regionAt(town centre)=" .. tostring(inTown) .. "\n")
+
+	-- Spool write check, redirected to a scratch path -- NEVER the
+	-- production spool.
+	local realSpoolDir = WarContrib.SPOOL_DIR
+	local scratchDir = "log/warcontrib_donate_probe_scratch"
+	WarContrib.SPOOL_DIR = scratchDir
+
+	local recorded, reason = WarContrib.record("rebel", "tat_mos_eisley", "materiel_donation", 7.5, 555555555)
+	printf("WARDONATECHECK: WarContrib.record(materiel_donation) recorded=" .. tostring(recorded) .. " reason=" .. tostring(reason) .. "\n")
+
+	local handle = io.popen("ls " .. scratchDir .. "/*.csv 2>/dev/null")
+	if handle ~= nil then
+		for path in handle:lines() do
+			local fh = io.open(path, "r")
+			if fh ~= nil then
+				for line in fh:lines() do
+					printf("WARDONATECHECK: scratch line: " .. line .. "\n")
+				end
+				fh:close()
+			end
+		end
+		handle:close()
+	end
+
+	os.execute("rm -rf " .. scratchDir)
+	WarContrib.SPOOL_DIR = realSpoolDir
+
+	printf("WARDONATECHECK: end\n")
+end

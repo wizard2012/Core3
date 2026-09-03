@@ -79,6 +79,12 @@
   boundary, so VALID_SOURCES below is a manually-kept copy of the DESIGN.md
   table -- if that table changes, this list must change with it.
 
+  EIGHTH VALUE ADDED: `materiel_donation` -- docs/DESIGN-VICTORY.md's
+  recruiter-hand-in channel (distinct from `materiel_delivery`, mission-based
+  and still unwired). The writer is
+  custom_scripts/screenplays/warreport/war_donate.lua; see that file's
+  header for the valuation formula and the two laundering loops it closes.
+
   This module is deliberately Core3-API-free (no CreatureObject, no
   assumption that `printf` exists) so it can be exercised from plain host
   lua5.3 -- see deploy/tests/assert-contrib-flush.sh, which dofile()s this
@@ -120,6 +126,7 @@ local VALID_SOURCES = {
 	presence_hour           = true,
 	pvp_kill                = true,
 	base_delivery           = true,
+	materiel_donation       = true,
 }
 WarContrib.VALID_SOURCES = VALID_SOURCES
 
