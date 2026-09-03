@@ -40,12 +40,14 @@
   why a small town (tat_anchorhead, radius 125) doesn't get a site flung
   further out than a big one (cor_kor_vella, radius 758) -- see
   siteRadiusFor(). The very first site of the highest-contest region is
-  placed at the exact legacy diagonal (coords + BATTLE_OFFSET_M on both axes)
-  on purpose: war_recruiter.lua's markBattle() independently recomputes that
-  same point from WarBattle.BATTLE_OFFSET_M and WarBattle.REGION_KEY to drop
-  a waypoint, and it was not this change's job to touch that file. Every
-  other site is spread at even bearings around the town at the derived
-  radius (see bearingOffset()).
+  placed at the recruiter-anchor point (coords + BATTLE_OFFSET_M diagonal by
+  default, or a region's SITE_OVERRIDES.anchorOffset when the default lands
+  off the navmesh) computed by WarBattle.anchorPoint() -- see the
+  SITE_OVERRIDES comment above WarBattle.anchorOffset() for why that function
+  is the ONLY place this arithmetic exists. war_recruiter.lua's markBattle()
+  calls the same function to drop its waypoint, so the two cannot
+  independently drift apart. Every other site is spread at even bearings
+  around the town at the derived radius (see bearingOffset()).
 
   This is bearing/radius math with NO terrain awareness -- it does not know
   about walls, cliffs, water, or building interiors. Failure mode: a site can
@@ -106,9 +108,14 @@ WarBattle.screenplayName = "WarBattle"
 -- that fielding several sites at once stays inside the NPC budget below.
 WarBattle.SQUAD_SIZE = 3
 
--- Metres from town centre for the one "primary" site that has to match
--- war_recruiter.lua's independently-recomputed waypoint math exactly
--- (coords + BATTLE_OFFSET_M on both x and y). Every other site uses
+-- Shared default metres-from-town-centre diagonal for the recruiter-anchor
+-- site (both x and y). This is the DEFAULT only -- WarBattle.anchorOffset()
+-- (see SITE_OVERRIDES below) is what siteOrigin() and war_recruiter.lua's
+-- markBattle() actually call, and it substitutes a region's
+-- SITE_OVERRIDES.anchorOffset in place of this pair when one is set. Never
+-- read this field directly outside WarBattle.anchorOffset() -- go through
+-- the function so a per-region override can never be bypassed by one call
+-- site and honoured by the other. Every non-anchor site uses
 -- siteRadiusFor() instead -- see PLACEMENT above.
 WarBattle.BATTLE_OFFSET_M = 80
 
@@ -161,6 +168,91 @@ WarBattle.TROOPS = {
 
 WarBattle.OIDS_KEY = "warbattle:oids"
 WarBattle.REGION_KEY = "warbattle:region"
+
+-- ============================================================ overrides ==
+-- Per-region overrides for site placement math, added after a navmesh-backed
+-- audit (isPointWalkable, 2026-09-02) found four sites computed by the
+-- shared default math sitting off the walkable navmesh. Two independent
+-- sub-fields, because they fix two different kinds of site:
+--
+--   anchorOffset = { x = <dx>, y = <dy> }
+--     Overrides BATTLE_OFFSET_M for THIS region's recruiter-anchor site
+--     only (siteOrigin()'s isRecruiterAnchor branch). Read ONLY through
+--     WarBattle.anchorPoint() below -- the SINGLE place this arithmetic
+--     exists. war_recruiter.lua's markBattle() calls that same function
+--     instead of recomputing coords+offset itself, so the fight location
+--     and the waypoint that points at it can never independently drift
+--     apart, no matter what future edit touches either file.
+--
+--   siteRadius = <metres>
+--     Overrides siteRadiusFor()'s computed circle radius for every
+--     non-primary ("circle@Ndeg") site in this region. war_recruiter.lua
+--     never reads this -- it only ever points at the recruiter anchor, never
+--     at a circle site -- so there is no divergence risk to guard here.
+--     LIMITATION: a radius override still spreads sites around the FULL
+--     360-degree circle, and which bearing lands at a given siteIndex shifts
+--     as contest tier changes the site count (sitesForContest()). Verifying
+--     one bearing walkable at a candidate radius is not proof every bearing
+--     at that radius is clear -- re-check across bearings/contest tiers
+--     before trusting a region is fully fixed, not just the bearing named in
+--     the original failure report.
+--
+-- Every value here MUST be independently verified against the live
+-- isPointWalkable audit before being uncommented. DO NOT GUESS: an
+-- unverified number that merely looks plausible is exactly the failure mode
+-- that has already cost this project time (a "fix" that copied a coordinate
+-- which was itself still failing). Leave an entry commented out until a
+-- human confirms the candidate passes.
+WarBattle.SITE_OVERRIDES = {
+	-- anchorOffset verified by Tests:battleOffsetSweep against the live
+	-- navmesh on 2026-09-03 -- ALL CLEAR at the one recruiter-anchor point
+	-- this produces (not bearing-dependent, so contest tier cannot affect
+	-- it). {90,90} was chosen as the smallest change off the default
+	-- {80,80} that cleared, out of {90,90}/{100,100}/{-80,80}/{80,-80},
+	-- keeping the diagonal shape and staying close to town.
+	-- siteRadius verified by the widened Tests:battleOffsetSweep run against
+	-- the live navmesh on 2026-09-03 -- ALL CLEAR at every bearing across
+	-- every contest tier. The 60-170 sweep cleared at 60/70/80/150 only:
+	-- 90 through 140 all failed at least one bearing, which reads as a ring
+	-- of structures at mid radius rather than a single bad bearing. 80 was
+	-- chosen as the largest value in the near band, keeping sites "much
+	-- closer in" per the 2026-09-02 REWRITE note while staying clear.
+	nab_theed   = { anchorOffset = { x = 90, y = 90 }, siteRadius = 80 },
+	-- siteRadius verified by the widened Tests:battleOffsetSweep run against
+	-- the live navmesh on 2026-09-03 -- ALL CLEAR at every bearing across
+	-- every contest tier. The 60-170 sweep cleared at 70/80/140/150/160
+	-- only: 90 through 130 all failed at least one bearing, the same
+	-- mid-radius dead band nab_theed shows. 80 chosen for the same reason,
+	-- and so both regions share one value rather than two arbitrary ones.
+	cor_tyrena  = { siteRadius = 80 },
+	-- siteRadius verified by Tests:battleOffsetSweep against the live
+	-- navmesh on 2026-09-03 -- ALL CLEAR at every bearing across every
+	-- contest tier (totalSites 1-4). 100 was chosen over the other clean
+	-- candidate (110) because it is closer in, matching this file's own
+	-- stated design direction of staging sites "much closer in" (see the
+	-- 2026-09-02 REWRITE note above).
+	tat_bestine = { siteRadius = 100 },
+}
+
+--- The (dx, dy) applied to a region's WarReport.COORDS to place its
+-- recruiter-anchor site. Per-region override if SITE_OVERRIDES has one,
+-- else the shared BATTLE_OFFSET_M diagonal for both axes.
+function WarBattle.anchorOffset(regionId)
+	local override = WarBattle.SITE_OVERRIDES[regionId]
+	if override ~= nil and override.anchorOffset ~= nil then
+		return override.anchorOffset.x, override.anchorOffset.y
+	end
+	return WarBattle.BATTLE_OFFSET_M, WarBattle.BATTLE_OFFSET_M
+end
+
+--- World-space point for a region's recruiter-anchor site. THE ONLY place
+-- coords+offset arithmetic for that site exists -- siteOrigin() below and
+-- war_recruiter.lua's markBattle() both call this instead of recomputing it,
+-- so they are structurally unable to diverge (see SITE_OVERRIDES comment).
+function WarBattle.anchorPoint(coords, regionId)
+	local dx, dy = WarBattle.anchorOffset(regionId)
+	return coords[1] + dx, coords[2] + dy
+end
 
 registerScreenPlay("WarBattle", true)
 
@@ -254,7 +346,18 @@ end
 --- Placement radius for every non-primary site at a region: a fraction of
 -- that town's own radius, clamped so it never gets absurdly close to or far
 -- from the centre regardless of how big or small the town is.
-local function siteRadiusFor(regionId)
+--
+-- PROMOTED from `local function` to a WarBattle field (2026-09-03) so
+-- spawn_safety_probe.lua (and any other console probe) can call the real,
+-- live implementation -- SITE_OVERRIDES included -- instead of maintaining
+-- a separate copy that silently drifts out of sync every time this
+-- function changes. Behaviour is unchanged; this is a visibility promotion
+-- only.
+function WarBattle.siteRadiusFor(regionId)
+	local override = WarBattle.SITE_OVERRIDES[regionId]
+	if override ~= nil and override.siteRadius ~= nil then
+		return override.siteRadius
+	end
 	local r = townRadius(regionId) * WarBattle.SITE_RADIUS_FRACTION
 	if r < WarBattle.SITE_RADIUS_MIN then
 		r = WarBattle.SITE_RADIUS_MIN
@@ -269,11 +372,14 @@ end
 -- first site of the very first region staged this cycle, which uses the
 -- exact legacy diagonal offset instead, to stay byte-for-byte compatible
 -- with war_recruiter.lua's own waypoint math (see PLACEMENT above).
-local function siteOrigin(coords, regionId, siteIndex, totalSites, isRecruiterAnchor)
+--
+-- PROMOTED from `local function` to a WarBattle field for the same reason
+-- as WarBattle.siteRadiusFor above -- see that comment.
+function WarBattle.siteOrigin(coords, regionId, siteIndex, totalSites, isRecruiterAnchor)
 	if isRecruiterAnchor then
-		return coords[1] + WarBattle.BATTLE_OFFSET_M, coords[2] + WarBattle.BATTLE_OFFSET_M
+		return WarBattle.anchorPoint(coords, regionId)
 	end
-	local radius = siteRadiusFor(regionId)
+	local radius = WarBattle.siteRadiusFor(regionId)
 	local degrees = 45 + (siteIndex - 1) * (360 / totalSites)
 	local rad = degrees * math.pi / 180
 	return coords[1] + radius * math.cos(rad), coords[2] + radius * math.sin(rad)
@@ -403,7 +509,7 @@ function WarBattle:stageBattles()
 				end
 
 				local isRecruiterAnchor = (not primaryRegionWritten) and (s == 1)
-				local ox, oy = siteOrigin(coords, regionId, s, wanted, isRecruiterAnchor)
+				local ox, oy = WarBattle.siteOrigin(coords, regionId, s, wanted, isRecruiterAnchor)
 				local fielded = spawnSite(zone, regionId, s, defender, attacker, ox, oy)
 
 				if fielded > 0 then

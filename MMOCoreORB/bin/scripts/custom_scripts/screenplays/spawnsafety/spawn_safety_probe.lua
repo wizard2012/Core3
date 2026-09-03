@@ -29,12 +29,17 @@
   --------------
   1. Each war region's WarReport.COORDS town centre (from war_report.lua).
   2. The SAME site circle war_battle.lua actually stages fights on --
-     reproduced here from war_battle.lua's siteRadiusFor()/siteOrigin()
-     (BATTLE_OFFSET_M, SITE_RADIUS_FRACTION/MIN/MAX, DEFAULT_TOWN_RADIUS,
-     MAX_SITES_PER_REGION -- copied as of the 2026-09-02 rewrite; if those
-     constants change in war_battle.lua this audit goes stale and should be
-     re-synced) -- NOT an approximation of it. war_battle.lua itself is not
-     touched or called.
+     calls WarBattle.anchorPoint()/WarBattle.siteOrigin() LIVE (promoted
+     from `local function` to WarBattle fields on 2026-09-03 for exactly
+     this purpose -- see that file's own comment on the promotion) so
+     WarBattle.SITE_OVERRIDES and any future change to the placement math
+     are picked up automatically, with no separate copy of the formula or
+     its constants to go stale. This section used to reproduce
+     siteRadiusFor()/siteOrigin() locally; that copy is exactly what let it
+     report four phantom failures (nab_theed/cor_tyrena/tat_bestine sites
+     that SITE_OVERRIDES had already fixed) that Tests:battleOffsetSweep
+     had independently verified ALL CLEAR against the live navmesh -- see
+     git history for that incident. Never reintroduce a local copy here.
   3. Every stationaryMobiles / patrolPoints coordinate in the 13
      war-mapped cities' screenplays/cities/*.lua -- the exact tables
      street_life.lua trusts by inheritance today, with no verification at
@@ -109,77 +114,57 @@ local SPAWNSAFETY_REGIONS = {
 }
 
 -- ============================================================ war_battle ==
--- Reproduced from custom_scripts/screenplays/warreport/war_battle.lua
--- (siteRadiusFor/siteOrigin/townRadius, as of the 2026-09-02 rewrite).
--- war_battle.lua is READ ONLY by this file -- these are copies of its
--- constants and formulas, not calls into it (its site-math helpers are
--- `local`, not reachable from outside that file).
-
-local SPAWNSAFETY_BATTLE_OFFSET_M = 80          -- WarBattle.BATTLE_OFFSET_M
-local SPAWNSAFETY_SITE_RADIUS_FRACTION = 0.4    -- WarBattle.SITE_RADIUS_FRACTION
-local SPAWNSAFETY_SITE_RADIUS_MIN = 40          -- WarBattle.SITE_RADIUS_MIN
-local SPAWNSAFETY_SITE_RADIUS_MAX = 130         -- WarBattle.SITE_RADIUS_MAX
-local SPAWNSAFETY_DEFAULT_TOWN_RADIUS = 150     -- WarBattle.DEFAULT_TOWN_RADIUS
-local SPAWNSAFETY_MAX_SITES_PER_REGION = 4      -- WarBattle.MAX_SITES_PER_REGION
-
--- Mirrors war_battle.lua's local townRadius(regionId).
-local function spawnsafetyTownRadius(regionId)
-	local bounds = WarReport.KILL_BOUNDS and WarReport.KILL_BOUNDS[regionId]
-	if bounds == nil then
-		return SPAWNSAFETY_DEFAULT_TOWN_RADIUS
-	end
-	if bounds.kind == "circle" and type(bounds.radius) == "number" then
-		return bounds.radius
-	end
-	if bounds.kind == "rect" then
-		local halfW = math.abs(bounds.x2 - bounds.x1) / 2
-		local halfH = math.abs(bounds.y2 - bounds.y1) / 2
-		return math.min(halfW, halfH)
-	end
-	return SPAWNSAFETY_DEFAULT_TOWN_RADIUS
-end
-
--- Mirrors war_battle.lua's local siteRadiusFor(regionId).
-local function spawnsafetySiteRadiusFor(regionId)
-	local r = spawnsafetyTownRadius(regionId) * SPAWNSAFETY_SITE_RADIUS_FRACTION
-	if r < SPAWNSAFETY_SITE_RADIUS_MIN then
-		r = SPAWNSAFETY_SITE_RADIUS_MIN
-	elseif r > SPAWNSAFETY_SITE_RADIUS_MAX then
-		r = SPAWNSAFETY_SITE_RADIUS_MAX
-	end
-	return r
-end
+-- Calls WarBattle's OWN live functions -- never a local copy. WarBattle
+-- promoted siteRadiusFor/siteOrigin from `local function` to WarBattle
+-- fields on 2026-09-03 specifically so this file (and any other console
+-- probe) can call the real implementation, SITE_OVERRIDES included,
+-- instead of maintaining a second copy that silently rots the moment
+-- war_battle.lua changes -- which is exactly what happened here: a
+-- previous version of this section copied BATTLE_OFFSET_M/
+-- SITE_RADIUS_FRACTION/MIN/MAX/DEFAULT_TOWN_RADIUS/MAX_SITES_PER_REGION and
+-- reimplemented siteRadiusFor()/siteOrigin() locally, and went stale the
+-- moment WarBattle.SITE_OVERRIDES shipped, reporting four failures at
+-- nab_theed/cor_tyrena/tat_bestine that Tests:battleOffsetSweep had already
+-- verified ALL CLEAR against the live navmesh. Do not reintroduce a copy.
 
 --- Every world (x, y) war_battle.lua can actually place a site's origin at
--- for this region: the legacy recruiter-anchor diagonal, plus the circle
--- point at every bearing siteOrigin() can produce across every totalSites
--- value from 1 to SPAWNSAFETY_MAX_SITES_PER_REGION (the radius does not
--- depend on totalSites, only the bearing spacing does -- see war_battle.lua's
--- siteOrigin()). Returns a list of {label, x, y}.
+-- for this region: WarBattle.anchorPoint()'s recruiter-anchor point, plus
+-- every circle point WarBattle.siteOrigin() can produce across every
+-- totalSites value from 1 to the LIVE WarBattle.MAX_SITES_PER_REGION (the
+-- radius does not depend on totalSites, only the bearing spacing does).
+-- Deduplicated on the resulting (x, y) itself -- not on a re-derived
+-- bearing -- so this never needs to know or guess war_battle.lua's degree
+-- formula; it only needs the points that formula actually produces.
+-- Degrades to nil (the caller in Tests:spawnSafetyAudit below prints a
+-- SKIP line for it) if WarBattle or a needed field/function is missing,
+-- rather than erroring.
 local function spawnsafetyBattleSites(regionId, coords)
+	if type(WarBattle) ~= "table" or type(WarBattle.anchorPoint) ~= "function"
+			or type(WarBattle.siteOrigin) ~= "function" or type(WarBattle.MAX_SITES_PER_REGION) ~= "number" then
+		return nil
+	end
+
 	local sites = {}
+	local seenPoints = {}
 
-	sites[#sites + 1] = {
-		label = "recruiter-anchor",
-		x = coords[1] + SPAWNSAFETY_BATTLE_OFFSET_M,
-		y = coords[2] + SPAWNSAFETY_BATTLE_OFFSET_M,
-	}
+	local function addPoint(label, x, y)
+		local key = string.format("%.2f,%.2f", x, y)
+		if not seenPoints[key] then
+			seenPoints[key] = true
+			sites[#sites + 1] = { label = label, x = x, y = y }
+		end
+	end
 
-	local radius = spawnsafetySiteRadiusFor(regionId)
-	local seenDegrees = {}
+	local ok, ax, ay = pcall(WarBattle.anchorPoint, coords, regionId)
+	if ok and type(ax) == "number" and type(ay) == "number" then
+		addPoint("recruiter-anchor", ax, ay)
+	end
 
-	for totalSites = 1, SPAWNSAFETY_MAX_SITES_PER_REGION do
+	for totalSites = 1, WarBattle.MAX_SITES_PER_REGION do
 		for siteIndex = 1, totalSites do
-			local degrees = 45 + (siteIndex - 1) * (360 / totalSites)
-			local key = math.floor(degrees * 1000 + 0.5)
-			if not seenDegrees[key] then
-				seenDegrees[key] = true
-				local rad = degrees * math.pi / 180
-				sites[#sites + 1] = {
-					label = "circle@" .. string.format("%.1f", degrees) .. "deg",
-					x = coords[1] + radius * math.cos(rad),
-					y = coords[2] + radius * math.sin(rad),
-				}
+			local okCircle, x, y = pcall(WarBattle.siteOrigin, coords, regionId, siteIndex, totalSites, false)
+			if okCircle and type(x) == "number" and type(y) == "number" then
+				addPoint(string.format("circle#%d/%d", siteIndex, totalSites), x, y)
 			end
 		end
 	end
@@ -370,10 +355,15 @@ function Tests:spawnSafetyAudit()
 			-- 1. Town centre.
 			spawnsafetyCheck(region.id .. " town-centre", region.planet, coords[1], nil, coords[2])
 
-			-- 2. The real war_battle.lua site circle (reproduced, not approximated).
+			-- 2. The real war_battle.lua site circle, called live -- never approximated.
 			local sites = spawnsafetyBattleSites(region.id, coords)
-			for s = 1, #sites do
-				spawnsafetyCheck(region.id .. " " .. sites[s].label, region.planet, sites[s].x, nil, sites[s].y)
+			if sites == nil then
+				printf("SPAWNAUDIT: SKIP  " .. region.id .. " battle-site section -- WarBattle or a required field/function is missing on this thread\n")
+				spawnsafetySkip = spawnsafetySkip + 1
+			else
+				for s = 1, #sites do
+					spawnsafetyCheck(region.id .. " " .. sites[s].label, region.planet, sites[s].x, nil, sites[s].y)
+				end
 			end
 		end
 
