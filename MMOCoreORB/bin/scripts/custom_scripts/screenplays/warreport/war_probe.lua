@@ -375,6 +375,41 @@ function Tests:warDonateCheck()
 	local wrapped = (RecruiterConvoHandler ~= nil and RecruiterConvoHandler._warDonateOriginalRSH ~= nil)
 	printf("WARDONATECHECK: recruiter conversation wrap installed=" .. tostring(wrapped) .. "\n")
 
+	-- Real-screen check: donate_review/donate_execute must actually exist
+	-- in BOTH recruiter conv templates (mobile/conversations/recruiter/
+	-- {rebel,imperial}_recruiter_conv.lua) -- this is what replaced the
+	-- earlier self-linked-screen workaround, so a restart that did not pick
+	-- up those two files would otherwise fail silently the first time a
+	-- player actually tried to donate. Best-effort: these are plain Lua
+	-- globals set by mobile/ at boot, so absence on THIS thread is
+	-- reported, not treated as a hard failure, in case this particular
+	-- thread never loaded those files into its own VM.
+	local function hasScreen(template, screenId)
+		if template == nil or template.screens == nil then
+			return nil
+		end
+		for i = 1, #template.screens do
+			if template.screens[i] ~= nil and template.screens[i].id == screenId then
+				return true
+			end
+		end
+		return false
+	end
+
+	if rebelRecruiterConvoTemplate == nil then
+		printf("WARDONATECHECK: rebelRecruiterConvoTemplate not visible on this thread (inconclusive)\n")
+	else
+		printf("WARDONATECHECK: rebel donate_review present=" .. tostring(hasScreen(rebelRecruiterConvoTemplate, "donate_review"))
+			.. " donate_execute present=" .. tostring(hasScreen(rebelRecruiterConvoTemplate, "donate_execute")) .. "\n")
+	end
+
+	if imperialRecruiterConvoTemplate == nil then
+		printf("WARDONATECHECK: imperialRecruiterConvoTemplate not visible on this thread (inconclusive)\n")
+	else
+		printf("WARDONATECHECK: imperial donate_review present=" .. tostring(hasScreen(imperialRecruiterConvoTemplate, "donate_review"))
+			.. " donate_execute present=" .. tostring(hasScreen(imperialRecruiterConvoTemplate, "donate_execute")) .. "\n")
+	end
+
 	-- Faction-perk exclusion set built from the live factionPerkData tables.
 	local forbidden = WarDonate:forbiddenTemplates()
 	local count = 0
