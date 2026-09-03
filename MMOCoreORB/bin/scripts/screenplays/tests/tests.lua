@@ -411,3 +411,40 @@ function Tests:warContribLoaded()
 	printf("WARCONTRIBLOADED: PASS -- WarContrib table+record function present, VALID_SOURCES count="
 		.. count .. " spool_dir=" .. tostring(WarContrib.SPOOL_DIR) .. "\n")
 end
+
+-- ============================================================== Backlog B?
+-- Live verification aid for the multi-site WarBattle rewrite: dumps every
+-- currently-tracked combatant's OID, zone and world position, so a change
+-- to war_battle.lua's placement/budget logic can be checked server-side
+-- (count, spread, zone) without a game client. Read-only: never spawns,
+-- clears, or writes anything WarBattle itself does not already own.
+function Tests:warBattleDump()
+	if type(WarBattle) ~= "table" then
+		printf("WARBATTLEDUMP: FAIL -- WarBattle table is nil\n")
+		return
+	end
+
+	local raw = readStringData(WarBattle.OIDS_KEY)
+	if raw == nil or raw == "" then
+		printf("WARBATTLEDUMP: 0 tracked NPC(s)\n")
+		return
+	end
+
+	local count = 0
+	for token in string.gmatch(raw, "([^,]+)") do
+		local oid = tonumber(token)
+		if oid ~= nil and oid > 0 then
+			local pObj = getSceneObject(oid)
+			if pObj == nil then
+				printf("WARBATTLEDUMP: oid=" .. oid .. " MISSING (tracked but not resolvable)\n")
+			else
+				local so = SceneObject(pObj)
+				printf(string.format("WARBATTLEDUMP: oid=%d zone=%s pos=(%.1f, %.1f)\n",
+					oid, tostring(so:getZoneName()), so:getWorldPositionX(), so:getWorldPositionY()))
+			end
+			count = count + 1
+		end
+	end
+	printf("WARBATTLEDUMP: total tracked=" .. count
+		.. " region=" .. tostring(readStringData(WarBattle.REGION_KEY)) .. "\n")
+end

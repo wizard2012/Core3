@@ -15,9 +15,16 @@ includeFile("../custom_scripts/screenplays/population/bartender_rumor.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_contrib.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_report.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_login.lua")
+includeFile("../custom_scripts/screenplays/warreport/war_contrib_hook.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_officer.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_bartender.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_announce.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_battle.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_recruiter.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_probe.lua")
+
+-- New-player starter pack (mechanism only; NOT wired into character
+-- creation yet -- owner wants to tune contents first, see
+-- starter_pack.lua's file header).
+includeFile("../custom_scripts/screenplays/starterpack/starter_pack.lua")
+includeFile("../custom_scripts/screenplays/starterpack/starter_pack_probe.lua")

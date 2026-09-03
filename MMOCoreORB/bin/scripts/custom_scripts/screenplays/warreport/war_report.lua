@@ -372,3 +372,75 @@ WarReport.COORDS = {
 	nab_moenia      = {  4800, -4784 },
 	nab_theed       = { -5320,  4368 },
 }
+
+--- KILL_BOUNDS -- the containment shape for each COORDS town centre, used
+-- by regionAt() below to turn a world position into a war region id for
+-- combat-contribution attribution (backlog: wire game combat into
+-- war_contrib). Sourced from the SAME authoritative game region tables
+-- COORDS's own header says it was taken from
+-- (managers/planet/<planet>_regions.lua CITY rows) -- this is the radius
+-- half of the row COORDS already took the centre from, not a new mapping.
+-- Every CITY row on tatooine/corellia/naboo is {CIRCLE, radius} except
+-- nab_keren and nab_theed, which are {RECTANGLE, x2, y2} (bounding-box
+-- corner opposite {x1,y1}) -- COORDS already notes this and stores the
+-- midpoint; KILL_BOUNDS stores the same rectangle's corners instead of a
+-- radius for those two, verified against naboo_regions.lua:94,96.
+WarReport.KILL_BOUNDS = {
+	tat_anchorhead  = { kind = "circle", radius = 125 },
+	tat_bestine     = { kind = "circle", radius = 336 },
+	tat_mos_eisley  = { kind = "circle", radius = 456 },
+	tat_mos_espa    = { kind = "circle", radius = 533 },
+
+	cor_bela_vistal = { kind = "circle", radius = 480 },
+	cor_coronet     = { kind = "circle", radius = 581 },
+	cor_tyrena      = { kind = "circle", radius = 622 },
+	cor_kor_vella   = { kind = "circle", radius = 758 },
+	cor_doaba       = { kind = "circle", radius = 632 },
+
+	nab_kaadara     = { kind = "circle", radius = 320 },
+	nab_moenia      = { kind = "circle", radius = 336 },
+	-- naboo_regions.lua:94 -- {336, 2140, {RECTANGLE, 2512, 3264}}
+	nab_keren       = { kind = "rect", x1 = 336,   y1 = 2140, x2 = 2512, y2 = 3264 },
+	-- naboo_regions.lua:96 -- {-6160, 3920, {RECTANGLE, -4480, 4816}}
+	nab_theed       = { kind = "rect", x1 = -6160, y1 = 3920, x2 = -4480, y2 = 4816 },
+}
+
+--- Resolve a world position to a war region id, or nil if it falls outside
+-- every mapped town's kill-attribution bounds (open field, a different
+-- planet, or a region with no Core3 city screenplay -- bridge/region_map.lua
+-- already leaves those `false`, so KILL_BOUNDS simply has no entry for
+-- them). Deliberately returns nil rather than picking a "nearest" region:
+-- the caller (war_contrib_hook.lua) records nothing on nil, per this
+-- project's rule that a guess is worse than no data.
+--
+-- Pure geometry -- does not require WAR_STATE to be loaded, so a combat kill
+-- can still be correctly rejected/accepted even on a thread where the war
+-- state failed to parse (WarContrib.record's own faction/region validation
+-- is the only other gate a caller needs).
+function WarReport.regionAt(zoneName, x, y)
+	if type(zoneName) ~= "string" or type(x) ~= "number" or type(y) ~= "number" then
+		return nil
+	end
+
+	for id, shape in pairs(WarReport.KILL_BOUNDS) do
+		if WarReport.PLANET_OF[id] == zoneName then
+			if shape.kind == "circle" then
+				local c = WarReport.COORDS[id]
+				if c ~= nil then
+					local dx, dy = x - c[1], y - c[2]
+					if (dx * dx + dy * dy) <= (shape.radius * shape.radius) then
+						return id
+					end
+				end
+			elseif shape.kind == "rect" then
+				local xlo, xhi = math.min(shape.x1, shape.x2), math.max(shape.x1, shape.x2)
+				local ylo, yhi = math.min(shape.y1, shape.y2), math.max(shape.y1, shape.y2)
+				if x >= xlo and x <= xhi and y >= ylo and y <= yhi then
+					return id
+				end
+			end
+		end
+	end
+
+	return nil
+end

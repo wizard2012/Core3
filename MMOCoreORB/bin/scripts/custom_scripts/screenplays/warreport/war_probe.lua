@@ -252,3 +252,88 @@ function Tests:warFrontRender()
 
 	printf("WARFRONTRENDER: end\n")
 end
+
+
+--- Proof that the combat-contribution hook (war_contrib_hook.lua) is
+-- loaded, its login wrap is installed, and region attribution resolves
+-- real war-region coordinates correctly -- WITHOUT touching the production
+-- spool (log/warcontrib/) or requiring a live player to actually kill
+-- anything. Redirects WarContrib.SPOOL_DIR to a scratch path for the
+-- duration of the check, calls WarContrib.record() directly with
+-- synthetic-but-valid arguments (the same call onKilledCreature makes),
+-- reads the line back, then restores SPOOL_DIR and deletes the scratch
+-- file so nothing is left behind.
+--
+-- Run:
+--   docker exec -u swgemu swgwar-core3 bash -lc \
+--     "screen -S swgemu-server -X stuff \x27test warContribHookCheck\n\x27"
+--   docker exec -u swgemu swgwar-core3 bash -lc \
+--     "grep WARCONTRIBHOOKCHECK ~/workspace/Core3/MMOCoreORB/bin/screenlog.0 | tail -20"
+function Tests:warContribHookCheck()
+	printf("WARCONTRIBHOOKCHECK: begin\n")
+
+	if WarContribHook == nil then
+		printf("WARCONTRIBHOOKCHECK: FAIL -- WarContribHook table is nil; war_contrib_hook.lua did not load into this VM\n")
+		return
+	end
+	printf("WARCONTRIBHOOKCHECK: WarContribHook table present\n")
+
+	if WarContrib == nil or WarContrib.record == nil then
+		printf("WARCONTRIBHOOKCHECK: FAIL -- WarContrib.record not visible on this thread\n")
+		return
+	end
+
+	if WarReport == nil or WarReport.regionAt == nil then
+		printf("WARCONTRIBHOOKCHECK: FAIL -- WarReport.regionAt not visible on this thread\n")
+		return
+	end
+
+	-- Registration check: has the login wrap actually installed?
+	local wrapped = (PlayerTriggers ~= nil and PlayerTriggers._warContribOriginalLoggedIn ~= nil)
+	printf("WARCONTRIBHOOKCHECK: login wrap installed=" .. tostring(wrapped) .. "\n")
+
+	-- Region geometry check: Mos Eisley's own town-centre coordinate must
+	-- resolve to tat_mos_eisley, and a point far out in open desert must
+	-- resolve to nil (no guessing).
+	local centre = WarReport.COORDS.tat_mos_eisley
+	local inTown = WarReport.regionAt("tatooine", centre[1], centre[2])
+	local farAway = WarReport.regionAt("tatooine", centre[1] + 50000, centre[2] + 50000)
+	printf("WARCONTRIBHOOKCHECK: regionAt(town centre)=" .. tostring(inTown)
+		.. " regionAt(open desert)=" .. tostring(farAway) .. "\n")
+
+	-- Spool write check, redirected to a scratch path -- NEVER the
+	-- production spool (log/warcontrib/), which the hourly cron flushes
+	-- into the live ledger.
+	local realSpoolDir = WarContrib.SPOOL_DIR
+	local scratchDir = "log/warcontrib_probe_scratch"
+	WarContrib.SPOOL_DIR = scratchDir
+
+	local recorded, reason = WarContrib.record("imperial", "tat_mos_eisley", "npc_kill_faction", WarContribHook.NPC_KILL_POINTS, 123456789)
+	printf("WARCONTRIBHOOKCHECK: WarContrib.record(npc_kill_faction) recorded=" .. tostring(recorded) .. " reason=" .. tostring(reason) .. "\n")
+
+	local recorded2, reason2 = WarContrib.record("rebel", "tat_mos_eisley", "pvp_kill", WarContribHook.PVP_KILL_POINTS, 987654321)
+	printf("WARCONTRIBHOOKCHECK: WarContrib.record(pvp_kill) recorded=" .. tostring(recorded2) .. " reason=" .. tostring(reason2) .. "\n")
+
+	-- Read back whatever bucket file(s) landed in the scratch dir, so the
+	-- exact written line is visible in screenlog.0 for eyeballing.
+	local handle = io.popen("ls " .. scratchDir .. "/*.csv 2>/dev/null")
+	if handle ~= nil then
+		for path in handle:lines() do
+			local fh = io.open(path, "r")
+			if fh ~= nil then
+				for line in fh:lines() do
+					printf("WARCONTRIBHOOKCHECK: scratch line: " .. line .. "\n")
+				end
+				fh:close()
+			end
+		end
+		handle:close()
+	end
+
+	-- Clean up the scratch spool so repeat runs of this probe don't
+	-- accumulate files, and restore SPOOL_DIR unconditionally.
+	os.execute("rm -rf " .. scratchDir)
+	WarContrib.SPOOL_DIR = realSpoolDir
+
+	printf("WARCONTRIBHOOKCHECK: end\n")
+end
