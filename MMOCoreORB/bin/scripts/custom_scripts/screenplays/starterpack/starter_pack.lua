@@ -85,16 +85,13 @@ StarterPack.ITEMS = {
 		-- get the capacity bonus. Intentionally not auto-equipped here --
 		-- see the report for why.
 	},
-	{
-		key = "carbine_accuracy_buff",
-		label = "Carbine accuracy buff (5 charges, +10 accuracy / 300s)",
-		type = "item",
-		template = "object/tangible/skill_buff/skill_buff_carbine_accuracy.iff",
-		-- Paired to the granted weapon on purpose: this is a doctor/
-		-- entertainer-shaped buff a solo player has no other way to get,
-		-- but it is a temporary combat AID (5 uses, 5-minute duration
-		-- each), not a stat that trivialises fights outright.
-	},
+	-- REMOVED 2026-09-03: the carbine accuracy buff. It was paired to the DH-17,
+	-- which was itself removed because cert_carbine_dh17 comes from
+	-- combat_marksman_novice and PlayerCreationManager::addProfessionStartingItems
+	-- awards exactly ONE starting skill -- the novice box of the profession chosen
+	-- at creation. With no carbine in the pack the buff had nothing to buff, so it
+	-- went too. See BACKLOG B24: healing and weapons are both certification-gated,
+	-- which is why a single flat list cannot arm or heal six different professions.
 	{
 		key = "landspeeder_x34",
 		label = "X-34 landspeeder",
