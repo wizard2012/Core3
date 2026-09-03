@@ -40,6 +40,10 @@ includeFile("../custom_scripts/screenplays/warreport/war_bartender.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_announce.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_battle.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_recruiter.lua")
+-- Read-only console probe (Tests:battleOffsetSweep) for the SITE_OVERRIDES
+-- candidates in war_battle.lua -- depends on WarBattle/WarReport already
+-- being loaded, hence placed after both.
+includeFile("../custom_scripts/screenplays/warreport/war_battle_offset_sweep.lua")
 -- Independently wraps RecruiterConvoHandler.runScreenHandlers again (own
 -- stash field, chains the prior wrap first -- see its own header); load
 -- order relative to war_recruiter.lua does not matter for correctness, but

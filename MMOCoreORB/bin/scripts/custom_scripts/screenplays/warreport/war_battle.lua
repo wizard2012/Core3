@@ -16,7 +16,7 @@
   the game to join.
 
   2026-09-02 REWRITE: the first version staged exactly one 4v4, ~255m
-  diagonally outside the town (BATTLE_OFFSET_M=180 applied on both axes), one
+  diagonally outside the town (BATTLE_OFFSET_M=80 applied on both axes), one
   region at a time, with a 2-minute silent gap between 10-minute battles. A
   player standing in the actual town saw nothing. This version stages several
   small sites much closer in, at more than one front region at once, on a
