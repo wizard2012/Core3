@@ -55,42 +55,27 @@ StarterPack = {}
 -- see DirectorManager::giveControlDevice in
 -- src/server/zone/managers/director/DirectorManager.cpp.
 --
--- CARBINE CHOICE (see report for full reasoning): Novice Marksman
--- (skill id 110, combat_marksman_novice, sql/swgemu.sql:2273) grants
--- exactly ONE carbine certification: cert_carbine_dh17. Of the two
--- templates in object/weapon/ranged/carbine/ that require that exact
--- cert (carbine_dh17.lua, carbine_dh17_black.lua -- identical stats,
--- 40-115 dmg, 3.5s speed), carbine_dh17.lua is the craftable/standard
--- skin and is what's granted here. Every other carbine in that directory
--- requires a cert Novice Marksman does not grant (verified by grepping
--- certificationsRequired across every file in that directory).
+-- MEDICINE ITEMS REMOVED: medicine templates require medicineUse skill modifier
+-- (e.g. crafted_stimpack_sm_s1_b.lua:48 sets medicineUse = 5). Fresh characters
+-- have healing_ability = 0 (StimPack.idl:104 checks player.getSkillMod("healing_ability")
+-- < super.medicineUseRequired), and healing_ability appears in disabledWearableSkillMods,
+-- so NO equipment can work around the gate. Result: every medicine item in this build
+-- requires at least science_medic_novice (the ONLY source of healing_ability in the
+-- skill tree). NO self-heal item exists at zero Medic skill. Stimpacks granted here
+-- were INERT and have been removed. Future tuning must account for this gate.
+-- CERTIFICATION-GATED ITEMS REMOVED: Character creation grants exactly ONE starting
+-- skill, selected by profession (PlayerCreationManager::addProfessionStartingItems:
+-- auto startingSkill = professionData->getSkill()). Marksman gets combat_marksman_novice
+-- and cert_carbine_dh17; Artisan, Brawler, Medic, Scout, and Entertainer get their
+-- respective profession novice skills and NO Marksman certs. Any certification-gated
+-- item is INERT for 5 out of 6 starting professions. A pack given to every new player
+-- cannot contain items 83% of players cannot use. DH-17 carbine (required cert_carbine_dh17)
+-- has been removed for this reason. Future tuning must account for this gate.
+-- TESTING NOTE: When adding items to this pack, verify usability against a fresh
+-- character from EVERY starting profession (Marksman, Artisan, Brawler, Medic, Scout,
+-- Entertainer). Both defects found so far (stimpacks and carbine) came from testing
+-- against a single profession and assuming that was typical.
 StarterPack.ITEMS = {
-	{
-		key = "carbine",
-		label = "DH-17 carbine",
-		type = "item",
-		template = "object/weapon/ranged/carbine/carbine_dh17.iff",
-		-- Verified: requires cert_carbine_dh17 only, which
-		-- combat_marksman_novice grants (sql/swgemu.sql:2273).
-	},
-	{
-		key = "stimpack_b_1",
-		label = "Stimpack B bundle (25 charges)",
-		type = "item",
-		template = "object/tangible/medicine/crafted/crafted_stimpack_sm_s1_b.iff",
-		-- Grade B: medicineUse=5 (usable with effectively no Medic skill,
-		-- unlike grade C/D/E which need medicineUse 30-40), effectiveness
-		-- 350 (much better than grade A's 100 at the SAME low
-		-- requirement). This is the best solo-friendly heal-per-charge
-		-- tradeoff a 0-Medic-skill character can actually use at full
-		-- power. Two bundles = 50 total charges.
-	},
-	{
-		key = "stimpack_b_2",
-		label = "Stimpack B bundle (25 charges)",
-		type = "item",
-		template = "object/tangible/medicine/crafted/crafted_stimpack_sm_s1_b.iff",
-	},
 	{
 		key = "backpack",
 		label = "Backpack (worn container)",
