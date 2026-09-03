@@ -10,6 +10,15 @@ includeFile("../custom_scripts/screenplays/population/placement.lua")
 includeFile("../custom_scripts/screenplays/population/standing_services.lua")
 includeFile("../custom_scripts/screenplays/population/bartender_rumor.lua")
 
+-- Ambient street life: lines (pure data) first, then tunables, then the
+-- screenplay itself, then its console probes. Reads WarBridge/WarReport at
+-- CALL time (not include time), so it does not need to load after
+-- warreport/war_report.lua below -- see street_life.lua's own header.
+includeFile("../custom_scripts/screenplays/population/street_lines.lua")
+includeFile("../custom_scripts/screenplays/population/street_config.lua")
+includeFile("../custom_scripts/screenplays/population/street_life.lua")
+includeFile("../custom_scripts/screenplays/population/street_probe.lua")
+
 -- War report surfaces. Loaded AFTER population so war_bartender.lua chains
 -- onto population/bartender_rumor.lua's runScreenHandlers wrapper.
 includeFile("../custom_scripts/screenplays/warreport/war_contrib.lua")
