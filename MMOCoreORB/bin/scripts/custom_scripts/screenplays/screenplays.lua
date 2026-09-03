@@ -49,3 +49,11 @@ includeFile("../custom_scripts/screenplays/starterpack/starter_pack_probe.lua")
 
 -- Bazaar stocking, stage S1 (binding + probe only -- see docs/DECISIONS.md).
 includeFile("../custom_scripts/screenplays/bazaar/bazaar_probe.lua")
+
+-- Squad Leader onboarding: free novice Squad Leader skill + GCW faction
+-- picker at login (see squadleader/sl_onboard.lua header). Reads
+-- recruiterScreenplay's faction hash codes at CALL time, not include time,
+-- so it has no ordering dependency on the warreport/* block above -- kept
+-- as its own trailing block to stay out of that lane's merge surface.
+includeFile("../custom_scripts/screenplays/squadleader/sl_onboard.lua")
+includeFile("../custom_scripts/screenplays/squadleader/sl_probe.lua")
