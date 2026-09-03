@@ -39,6 +39,11 @@ includeFile("../custom_scripts/screenplays/warreport/war_bartender.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_announce.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_battle.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_recruiter.lua")
+-- Independently wraps RecruiterConvoHandler.runScreenHandlers again (own
+-- stash field, chains the prior wrap first -- see its own header); load
+-- order relative to war_recruiter.lua does not matter for correctness, but
+-- follows it here since both touch the same recruiter conversation surface.
+includeFile("../custom_scripts/screenplays/warreport/war_donate.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_probe.lua")
 
 -- New-player starter pack (mechanism only; NOT wired into character
