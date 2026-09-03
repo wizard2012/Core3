@@ -71,6 +71,17 @@ public:
 	Vector<WorldCoordinates>* findPathFromWorldToWorld(const WorldCoordinates& pointA, const Vector<WorldCoordinates>& endPoints, Zone* zone, bool allowPartial);
 	bool getSpawnPointInArea(const Sphere& area, Zone* zone, Vector3& point, bool checkPath = true);
 
+	// B21 spawn-placement safety check.
+	// x, y are the world horizontal coordinates and z is world height (i.e. the same
+	// (x, y, z) convention used everywhere else in this file, e.g. getSpawnPointInArea's
+	// Sphere center). Returns true only if a walkable navmesh polygon exists within
+	// `tolerance` of (x, y, z) -- not merely "some polygon exists somewhere nearby",
+	// which is what a bare findNearestPoly result would otherwise be mistaken for.
+	// outDistance, if non-null, is always set to the distance to the nearest walkable
+	// point found (or -1.0f if no navmesh covers this location at all), regardless of
+	// whether the point passes.
+	bool isPointOnNavMesh(Zone* zone, float x, float y, float z, float tolerance, float* outDistance = nullptr);
+
 	// The caller of this function is responsible for deleting the NavCollision objects.
 	// Collisions should be sorted from closest to farthest.
 	void getNavMeshCollisions(SortedVector<NavCollision*> *collisions, const SortedVector<ManagedReference<NavArea*>> *area, const Vector3& start, const Vector3& end);

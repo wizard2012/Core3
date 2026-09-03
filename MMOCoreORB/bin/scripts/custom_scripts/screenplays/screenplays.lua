@@ -72,3 +72,11 @@ includeFile("../custom_scripts/screenplays/bazaar/bazaar_stock_probe.lua")
 -- as its own trailing block to stay out of that lane's merge surface.
 includeFile("../custom_scripts/screenplays/squadleader/sl_onboard.lua")
 includeFile("../custom_scripts/screenplays/squadleader/sl_probe.lua")
+
+-- B21 spawn-placement safety audit (Tests:spawnSafetyAudit). Read-only,
+-- console-triggered only -- reads WarReport/city screenplay tables at CALL
+-- time, not include time, so it only needs to load after this file's own
+-- warreport/ block above, not depend on any other lane. Kept as its own
+-- trailing block, out of every other lane's merge surface (see
+-- spawnsafety/spawn_safety_probe.lua's own header for what it does).
+includeFile("../custom_scripts/screenplays/spawnsafety/spawn_safety_probe.lua")
