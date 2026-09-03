@@ -307,6 +307,16 @@ public:
 	}
 
 	/**
+	 * Overrides the XP cost for the skill. Used by SkillManager::loadClientData() to
+	 * apply xpCostMultiplier (see scripts/managers/skill_manager.lua) after loading the
+	 * stock value from the datatable.
+	 * @param cost the new XP cost for the skill.
+	 */
+	inline void setXpCost(int cost) {
+		xpCost = cost;
+	}
+
+	/**
 	 * Returns the credits required for training the skill at a trainer.
 	 * @return the credits required for training the skill at a trainer.
 	 */

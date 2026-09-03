@@ -32,6 +32,7 @@ SkillManager::SkillManager()
 	performanceManager = new PerformanceManager();
 
 	apprenticeshipEnabled = false;
+	xpCostMultiplier = 1.0f;
 }
 
 SkillManager::~SkillManager() {
@@ -61,6 +62,18 @@ void SkillManager::loadLuaConfig() {
 
 	apprenticeshipEnabled = lua->getGlobalByte("apprenticeshipEnabled");
 
+	float configuredMultiplier = lua->getGlobalFloat("xpCostMultiplier");
+
+	// getGlobalFloat returns 0 for both "absent" and "present but not a number", and a
+	// multiplier of 0 would zero out every skill's XP cost -- never treat that as valid.
+	// Stock behaviour (1.0) is the only safe default when the value can't be trusted.
+	if (configuredMultiplier > 0.f) {
+		xpCostMultiplier = configuredMultiplier;
+	} else {
+		xpCostMultiplier = 1.0f;
+		info(true) << "xpCostMultiplier missing or invalid in skill_manager.lua; defaulting to 1.0 (stock XP costs).";
+	}
+
 	delete lua;
 	lua = nullptr;
 }
@@ -78,11 +91,37 @@ void SkillManager::loadClientData() {
 
 	delete iffStream;
 
+	int xpCostsAdjusted = 0;
+	String xpCostExampleName;
+	int xpCostExampleBefore = 0;
+	int xpCostExampleAfter = 0;
+
 	for (int i = 0; i < dtiff.getTotalRows(); ++i) {
 		DataTableRow* row = dtiff.getRow(i);
 
 		Reference<Skill*> skill = new Skill();
 		skill->parseDataTableRow(row);
+
+		// Apply the small-population XP cost multiplier (see skill_manager.lua). 1.0 is a
+		// no-op. Round to the nearest int, but never let a real cost round down to free.
+		int stockXpCost = skill->getXpCost();
+
+		if (stockXpCost > 0 && xpCostMultiplier != 1.0f) {
+			int adjustedXpCost = (int) lround(stockXpCost * (double) xpCostMultiplier);
+
+			if (adjustedXpCost < 1) {
+				adjustedXpCost = 1;
+			}
+
+			skill->setXpCost(adjustedXpCost);
+			++xpCostsAdjusted;
+
+			if (xpCostExampleName.isEmpty()) {
+				xpCostExampleName = skill->getSkillName();
+				xpCostExampleBefore = stockXpCost;
+				xpCostExampleAfter = adjustedXpCost;
+			}
+		}
 
 		Skill* parent = skillMap.get(skill->getParentName().hashCode());
 
@@ -105,6 +144,12 @@ void SkillManager::loadClientData() {
 				abilityMap.put(command, new Ability(command));
 			}
 		}
+	}
+
+	if (xpCostsAdjusted > 0) {
+		info(true) << "Applied xpCostMultiplier " << xpCostMultiplier << " to " << xpCostsAdjusted
+				<< " skill(s) with xpCost > 0. Example: " << xpCostExampleName << " " << xpCostExampleBefore
+				<< " -> " << xpCostExampleAfter << ".";
 	}
 
 	// Load Droid Commands

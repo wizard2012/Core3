@@ -56,6 +56,10 @@ class SkillManager : public Singleton<SkillManager>, public Logger, public Objec
 
 	bool apprenticeshipEnabled;
 
+	// Applied to every skill's xpCost in loadClientData(). See skill_manager.lua for why
+	// this exists (small private population) and what a missing/invalid value means.
+	float xpCostMultiplier;
+
 public:
 	SkillManager();
 	~SkillManager();
