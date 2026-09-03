@@ -210,14 +210,21 @@ WarBattle.SITE_OVERRIDES = {
 	-- it). {90,90} was chosen as the smallest change off the default
 	-- {80,80} that cleared, out of {90,90}/{100,100}/{-80,80}/{80,-80},
 	-- keeping the diagonal shape and staying close to town.
-	-- siteRadius NOT yet set -- the 90/100/110 candidates swept the same day
-	-- all failed at least one bearing; a wider 60-170 band is queued in
-	-- war_battle_offset_sweep.lua for a follow-up run.
-	nab_theed   = { anchorOffset = { x = 90, y = 90 } },
-	-- siteRadius NOT yet set -- 90/100/110 all failed at least one bearing
-	-- on the 2026-09-03 sweep; a wider band (roughly 60-170) is queued for
-	-- a follow-up run. Do not guess a value here in the meantime.
-	-- cor_tyrena  = { siteRadius = ?? },
+	-- siteRadius verified by the widened Tests:battleOffsetSweep run against
+	-- the live navmesh on 2026-09-03 -- ALL CLEAR at every bearing across
+	-- every contest tier. The 60-170 sweep cleared at 60/70/80/150 only:
+	-- 90 through 140 all failed at least one bearing, which reads as a ring
+	-- of structures at mid radius rather than a single bad bearing. 80 was
+	-- chosen as the largest value in the near band, keeping sites "much
+	-- closer in" per the 2026-09-02 REWRITE note while staying clear.
+	nab_theed   = { anchorOffset = { x = 90, y = 90 }, siteRadius = 80 },
+	-- siteRadius verified by the widened Tests:battleOffsetSweep run against
+	-- the live navmesh on 2026-09-03 -- ALL CLEAR at every bearing across
+	-- every contest tier. The 60-170 sweep cleared at 70/80/140/150/160
+	-- only: 90 through 130 all failed at least one bearing, the same
+	-- mid-radius dead band nab_theed shows. 80 chosen for the same reason,
+	-- and so both regions share one value rather than two arbitrary ones.
+	cor_tyrena  = { siteRadius = 80 },
 	-- siteRadius verified by Tests:battleOffsetSweep against the live
 	-- navmesh on 2026-09-03 -- ALL CLEAR at every bearing across every
 	-- contest tier (totalSites 1-4). 100 was chosen over the other clean
