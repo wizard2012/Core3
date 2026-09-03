@@ -1359,3 +1359,84 @@ bool PathFinderManager::getSpawnPointInArea(const Sphere& area, Zone *zone, Vect
 
 	return false;
 }
+
+// B21 spawn-placement safety check -- see header comment for the coordinate convention
+// and the reasoning behind the tolerance check.
+bool PathFinderManager::isPointOnNavMesh(Zone* zone, float x, float y, float z, float tolerance, float* outDistance) {
+	if (outDistance != nullptr)
+		*outDistance = -1.0f;
+
+	if (zone == nullptr)
+		return false;
+
+	SortedVector<ManagedReference<NavArea*>> areas;
+	zone->getInRangeNavMeshes(x, y, &areas, true);
+
+	if (areas.size() == 0) {
+		// No navmesh tile covers this location at all -- we cannot vouch for it either
+		// way. Treat as unsafe rather than silently passing.
+		return false;
+	}
+
+	Vector3 flipped(x, z, -y);
+
+	// Deliberately generous: we want findNearestPoly to always return *some* real
+	// result when a navmesh exists nearby, so the distance check below can tell the
+	// difference between "just off the mesh" and "buried deep inside a building",
+	// rather than findNearestPoly silently failing on a too-tight search box and us
+	// reporting a meaningless "no result" for both cases.
+	const float extents[3] = {50.0f, 20.0f, 50.0f};
+
+	dtNavMeshQuery* query = getNavQuery();
+
+	if (query == nullptr)
+		return false;
+
+	float bestDistance = -1.0f;
+
+	for (const auto& navArea : areas) {
+		if (navArea == nullptr)
+			continue;
+
+		RecastNavMesh* mesh = navArea->getNavMesh();
+
+		if (mesh == nullptr)
+			continue;
+
+		ReadLocker rLocker(navArea);
+
+		dtNavMesh* dtNavMesh = mesh->getNavMesh();
+
+		if (dtNavMesh == nullptr)
+			continue;
+
+		query->init(dtNavMesh, MAX_QUERY_NODES);
+
+		dtPolyRef poly = 0;
+		float resultPoint[3] = {0, 0, 0};
+		int status = 0;
+
+		if (!((status = query->findNearestPoly(flipped.toFloatArray(), extents, &m_spawnFilter, &poly, resultPoint)) & DT_SUCCESS))
+			continue;
+
+		// findNearestPoly can return DT_SUCCESS with poly == 0 when nothing was found
+		// within extents -- resultPoint is left untouched in that case, so it must not
+		// be trusted unless poly is non-zero (see DetourNavMeshQuery::findNearestPoly).
+		if (poly == 0)
+			continue;
+
+		Vector3 snapped(resultPoint[0], resultPoint[1], resultPoint[2]);
+		float dist = flipped.distanceTo(snapped);
+
+		if (bestDistance < 0.0f || dist < bestDistance)
+			bestDistance = dist;
+	}
+
+	if (outDistance != nullptr)
+		*outDistance = bestDistance;
+
+	if (bestDistance < 0.0f)
+		return false;
+
+	return bestDistance <= tolerance;
+}

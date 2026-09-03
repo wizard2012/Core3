@@ -232,6 +232,7 @@ namespace server {
 		static int getQuestTasks(lua_State* L);
 		static int broadcastToGalaxy(lua_State* L);
 		static int getWorldFloor(lua_State* L);
+		static int isPointWalkable(lua_State* L); // B21 spawn-placement safety check
 		static int useCovertOvert(lua_State* L);
 		static int drawClientPath(lua_State* L);
 

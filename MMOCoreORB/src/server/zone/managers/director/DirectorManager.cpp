@@ -552,6 +552,7 @@ void DirectorManager::initializeLuaEngine(Lua* luaEngine) {
 	luaEngine->registerFunction("getQuestTasks", getQuestTasks);
 	luaEngine->registerFunction("broadcastToGalaxy", broadcastToGalaxy);
 	luaEngine->registerFunction("getWorldFloor", getWorldFloor);
+	luaEngine->registerFunction("isPointWalkable", isPointWalkable); // B21 spawn-placement safety check
 	luaEngine->registerFunction("useCovertOvert", useCovertOvert);
 	luaEngine->registerFunction("drawClientPath", drawClientPath);
 
@@ -5308,6 +5309,60 @@ int DirectorManager::getWorldFloor(lua_State* L) {
 	lua_pushnumber(L, z);
 
 	return 1;
+}
+
+// B21 spawn-placement safety check.
+// isPointWalkable(zoneName, x, z, y) -> isWalkable [, distanceToWalkable]
+// Argument order matches the {x, z, y} convention used by getSpawnPointInArea's
+// returned table (z is world height, y is the second world-horizontal axis).
+// Returns false/nil rather than erroring on any bad input -- null/unknown zone,
+// non-numeric coordinates, or a zone with no navmesh loaded all fall through to a
+// clean "not walkable, no distance available" result.
+int DirectorManager::isPointWalkable(lua_State* L) {
+	if (checkArgumentCount(L, 4) == 1) {
+		String err = "incorrect number of arguments passed to DirectorManager::isPointWalkable";
+		printTraceError(L, err);
+		ERROR_CODE = INCORRECT_ARGUMENTS;
+		return 0;
+	}
+
+	if (!lua_isstring(L, -4) || !lua_isnumber(L, -3) || !lua_isnumber(L, -2) || !lua_isnumber(L, -1)) {
+		lua_pushboolean(L, 0);
+		return 1;
+	}
+
+	String zoneName = lua_tostring(L, -4);
+	float x = lua_tonumber(L, -3);
+	float z = lua_tonumber(L, -2);
+	float y = lua_tonumber(L, -1);
+
+	ZoneServer* zoneServer = ServerCore::getZoneServer();
+
+	if (zoneServer == nullptr) {
+		lua_pushboolean(L, 0);
+		return 1;
+	}
+
+	Zone* zone = zoneServer->getZone(zoneName);
+
+	if (zone == nullptr) {
+		lua_pushboolean(L, 0);
+		return 1;
+	}
+
+	// Tolerance matches RecastTileBuilder's m_agentRadius (the erosion radius baked
+	// into every navmesh at build time -- see MMOCoreORB/src/pathfinding/RecastTileBuilder.cpp).
+	// A legitimately walkable point can differ from the mesh surface by up to that
+	// much; anything farther means real geometry (or empty space) is in the way.
+	static const float AGENT_RADIUS_TOLERANCE = 0.5f;
+
+	float distance = -1.0f;
+	bool walkable = PathFinderManager::instance()->isPointOnNavMesh(zone, x, y, z, AGENT_RADIUS_TOLERANCE, &distance);
+
+	lua_pushboolean(L, walkable ? 1 : 0);
+	lua_pushnumber(L, distance);
+
+	return 2;
 }
 
 int DirectorManager::useCovertOvert(lua_State* L) {
