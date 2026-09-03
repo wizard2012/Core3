@@ -4918,6 +4918,26 @@ int DirectorManager::setResourceContainerQuantity(lua_State* L) {
 		rawQuantity = ResourceContainer::MAXSIZE;
 	}
 
+	// Locking: verified before adding this, not assumed. ResourceContainerImplementation::
+	// setQuantity (ResourceContainerImplementation.cpp:41) already takes its own internal
+	// Locker(_this) as its first line -- so this call was never unsafe on its own. The
+	// question was whether an EXTERNAL Locker here could deadlock against that internal one;
+	// it cannot, because engine3's Locker (system/thread/Locker.h) checks
+	// isLockedByCurrentThread() before locking and is a no-op (does not lock, does not
+	// unlock) when the object is already locked by the calling thread -- exactly the pattern
+	// upstream itself relies on in ResourceSpawnImplementation::createResource
+	// (ResourceSpawnImplementation.cpp:238-243: `Locker locker(newResource); ...
+	// newResource->setQuantity(units);`), which would deadlock on every resource spawn in the
+	// game if same-thread relocking were not a safe no-op. Nothing in this binding's own call
+	// path (bazaar_stock.lua's createStagedResource -- createLoot returns a plain oid, not a
+	// held lock, and getSceneObject takes none) holds a lock on `container` when this function
+	// runs, so there was no pre-existing lock to conflict with either way. Added anyway to
+	// match this file's own convention for object-mutating bindings (e.g. `Locker
+	// locker(creature);` above, `Locker objLocker(object);` in spawnSceneObject) -- harmless
+	// when redundant, and correct if a future edit ever reads container's state before this
+	// line.
+	Locker locker(container);
+
 	container->setQuantity((uint32) rawQuantity, true, false, true);
 
 	lua_pushboolean(L, true);
