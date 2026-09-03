@@ -10,6 +10,7 @@
 #include "server/zone/objects/creature/variables/Skill.h"
 
 class PerformanceManager;
+class TransactionLog;
 
 namespace server {
 namespace zone {
@@ -60,6 +61,25 @@ class SkillManager : public Singleton<SkillManager>, public Logger, public Objec
 	// this exists (small private population) and what a missing/invalid value means.
 	float xpCostMultiplier;
 
+	// Exact skill names (Squad Leader tree) whose skillPointsRequired is zeroed out in
+	// loadClientData(). Loaded from squadLeaderZeroPointSkills in skill_manager.lua; see
+	// that file for why an exact list, and Skill::setSkillPointsRequired for why this is
+	// done at load time rather than as a check-time special case. Empty (exempts nothing)
+	// if the config table is missing or malformed.
+	SortedVector<String> zeroPointCostSkills;
+
+	/**
+	 * Performs the actual grant bookkeeping for a skill once all checks have passed:
+	 * skill points/XP withdrawal, ability/schematic/modifier grants, badge/level/group
+	 * updates, and the client delta update. Shared by awardSkill() (which walks
+	 * prerequisites and enforces cost/points) and forceAwardSkill() (which does not).
+	 * Always returns true -- extracted verbatim from the tail of awardSkill(), no
+	 * behaviour change. noXpRequired mirrors awardSkill()'s own parameter: forceAwardSkill()
+	 * always passes false (it always charges XP normally; the only thing it skips is the
+	 * prerequisite walk and canLearnSkill() check).
+	 */
+	bool grantSkillEffects(Skill* skill, CreatureObject* creature, bool notifyClient, TransactionLog& trx, bool noXpRequired);
+
 public:
 	SkillManager();
 	~SkillManager();
@@ -83,6 +103,17 @@ public:
 	void removeDroidCommands(PlayerObject* ghost);
 
 	bool awardSkill(const String& skillName, CreatureObject* creature, bool notifyClient = true, bool awardRequiredSkills = false, bool noXpRequired = false);
+
+	/**
+	 * Grants a single skill unconditionally: no prerequisite walk (and therefore no risk
+	 * of cascading into unrelated trees), no canLearnSkill() cost/points check. Used for
+	 * onboarding grants (e.g. free Squad Leader novice on character creation) where the
+	 * skill must always be granted regardless of what the character does or doesn't hold.
+	 * Returns false only if the skill name doesn't exist. Returns true immediately (no-op)
+	 * if the creature already has the skill.
+	 */
+	bool forceAwardSkill(const String& skillName, CreatureObject* creature, bool notifyClient = true);
+
 	void awardDraftSchematics(Skill* skill, PlayerObject* ghost, bool notifyClient = true);
 
 	bool surrenderSkill(const String& skillName, CreatureObject* creature, bool notifyClient = true, bool verifyFrs = true, bool allowPilot = false);
