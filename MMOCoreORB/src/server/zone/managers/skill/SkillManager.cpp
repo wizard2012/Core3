@@ -74,6 +74,24 @@ void SkillManager::loadLuaConfig() {
 		info(true) << "xpCostMultiplier missing or invalid in skill_manager.lua; defaulting to 1.0 (stock XP costs).";
 	}
 
+	zeroPointCostSkills.removeAll();
+
+	LuaObject zeroPointTable = lua->getGlobalObject("squadLeaderZeroPointSkills");
+
+	// A missing or malformed table must exempt nothing -- never treat it as "exempt
+	// everything" or crash. zeroPointCostSkills simply stays empty in that case.
+	if (zeroPointTable.isValidTable()) {
+		for (int i = 1; i <= zeroPointTable.getTableSize(); ++i) {
+			String skillName = zeroPointTable.getStringAt(i);
+
+			if (!skillName.isEmpty()) {
+				zeroPointCostSkills.put(skillName);
+			}
+		}
+	}
+
+	zeroPointTable.pop();
+
 	delete lua;
 	lua = nullptr;
 }
@@ -96,11 +114,23 @@ void SkillManager::loadClientData() {
 	int xpCostExampleBefore = 0;
 	int xpCostExampleAfter = 0;
 
+	int zeroPointSkillsFound = 0;
+
 	for (int i = 0; i < dtiff.getTotalRows(); ++i) {
 		DataTableRow* row = dtiff.getRow(i);
 
 		Reference<Skill*> skill = new Skill();
 		skill->parseDataTableRow(row);
+
+		// Zero out the skill point cost for the configured Squad Leader onboarding
+		// exemption (see squadLeaderZeroPointSkills in skill_manager.lua). Internal
+		// prerequisites (movement_02 needs movement_01, etc) are untouched -- this only
+		// changes what awardSkill()/surrenderSkill() charge and refund against the
+		// 250-point cap.
+		if (!zeroPointCostSkills.isEmpty() && zeroPointCostSkills.contains(skill->getSkillName())) {
+			skill->setSkillPointsRequired(0);
+			++zeroPointSkillsFound;
+		}
 
 		// Apply the small-population XP cost multiplier (see skill_manager.lua). 1.0 is a
 		// no-op. Round to the nearest int, but never let a real cost round down to free.
@@ -150,6 +180,12 @@ void SkillManager::loadClientData() {
 		info(true) << "Applied xpCostMultiplier " << xpCostMultiplier << " to " << xpCostsAdjusted
 				<< " skill(s) with xpCost > 0. Example: " << xpCostExampleName << " " << xpCostExampleBefore
 				<< " -> " << xpCostExampleAfter << ".";
+	}
+
+	if (!zeroPointCostSkills.isEmpty()) {
+		info(true) << "Zeroed skillPointsRequired for " << zeroPointSkillsFound << " of "
+				<< zeroPointCostSkills.size() << " configured squadLeaderZeroPointSkills entries (out of "
+				<< dtiff.getTotalRows() << " total skills loaded); all other skills' point costs are untouched.";
 	}
 
 	// Load Droid Commands
@@ -402,6 +438,29 @@ bool SkillManager::awardSkill(const String& skillName, CreatureObject* creature,
 	if (creature->hasSkill(skill->getSkillName()))
 		return true;
 
+	return grantSkillEffects(skill, creature, notifyClient, trx, noXpRequired);
+}
+
+bool SkillManager::forceAwardSkill(const String& skillName, CreatureObject* creature, bool notifyClient) {
+	auto skill = skillMap.get(skillName.hashCode());
+
+	if (skill == nullptr)
+		return false;
+
+	Locker locker(creature);
+	TransactionLog trx(TrxCode::SKILLTRAININGSYSTEM, creature);
+	trx.addState("skill", skillName);
+	trx.addState("forced", "true");
+
+	//If they already have the skill, then return true. No prerequisite walk, no
+	//canLearnSkill() check -- this is an unconditional grant by design.
+	if (creature->hasSkill(skill->getSkillName()))
+		return true;
+
+	return grantSkillEffects(skill, creature, notifyClient, trx, false);
+}
+
+bool SkillManager::grantSkillEffects(Skill* skill, CreatureObject* creature, bool notifyClient, TransactionLog& trx, bool noXpRequired) {
 	ManagedReference<PlayerObject*> ghost = creature->getPlayerObject();
 
 	if (ghost != nullptr) {
@@ -453,11 +512,11 @@ bool SkillManager::awardSkill(const String& skillName, CreatureObject* creature,
 
 		ManagedReference<PlayerManager*> playerManager = creature->getZoneServer()->getPlayerManager();
 
-		if (skillName.contains("master")) {
+		if (skill->getSkillName().contains("master")) {
 			if (playerManager != nullptr) {
-				const Badge* badge = BadgeList::instance()->get(skillName);
+				const Badge* badge = BadgeList::instance()->get(skill->getSkillName());
 
-				if (badge == nullptr && skillName == "crafting_shipwright_master") {
+				if (badge == nullptr && skill->getSkillName() == "crafting_shipwright_master") {
 					badge = BadgeList::instance()->get("crafting_shipwright");
 				}
 

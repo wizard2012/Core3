@@ -333,6 +333,20 @@ public:
 	}
 
 	/**
+	 * Overrides the skill points required for the skill. Used by
+	 * SkillManager::loadClientData() to zero out the point cost for a configured exempt
+	 * list of skills (see scripts/managers/skill_manager.lua) after loading the stock
+	 * value from the datatable. Deliberately applied at load time, not as a special case
+	 * in the award/surrender point-check, so awardSkill()/surrenderSkill()'s point
+	 * reconciliation (which recomputes 250 - sum of held skills' pointsRequired) always
+	 * agrees with what was actually charged.
+	 * @param points the new skill points required for the skill.
+	 */
+	inline void setSkillPointsRequired(int points) {
+		pointsRequired = points;
+	}
+
+	/**
 	 * Returns the species required for the skill.
 	 * @return the species required for the skill.
 	 */
