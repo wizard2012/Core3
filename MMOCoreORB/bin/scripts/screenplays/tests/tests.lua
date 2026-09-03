@@ -448,3 +448,62 @@ function Tests:warBattleDump()
 	printf("WARBATTLEDUMP: total tracked=" .. count
 		.. " region=" .. tostring(readStringData(WarBattle.REGION_KEY)) .. "\n")
 end
+
+-- Live verification aid for the civilian-flight rewrite (war_hook.lua): for
+-- each of the four cities the original density-fraction audit measured
+-- (Anchorhead, Bestine, Coronet, Theed), prints the patrol/stationary row
+-- counts, split civilian/combat, the fraction the currently-deployed war
+-- state resolves for each, and the resulting spawn count -- the exact
+-- decision CityScreenPlay:spawnPatrolMobiles/spawnStationaryMobiles already
+-- made at boot (there is no randomness in the COUNT, only in which combat
+-- row is picked when more than one is available, so this reproduces the
+-- real boot-time numbers without needing a live in-world NPC count).
+-- console: test warCivilianAudit
+function Tests:warCivilianAudit()
+	if type(WarBridge) ~= "table" then
+		printf("WARCIVILIANAUDIT: FAIL -- WarBridge table is nil\n")
+		return
+	end
+
+	local screenplayNames = {
+		"TatooineAnchorheadScreenPlay",
+		"TatooineBestineScreenPlay",
+		"CorelliaCoronetScreenPlay",
+		"NabooTheedScreenPlay",
+	}
+
+	for _, name in ipairs(screenplayNames) do
+		local sp = _G[name]
+		if sp == nil then
+			printf("WARCIVILIANAUDIT: " .. name .. " -- SKIP (screenplay not found)\n")
+		else
+			local total = #sp.patrolMobiles
+			local civTotal, milTotal = 0, 0
+			for i = 1, total do
+				if sp.patrolMobiles[i][9] == true then
+					milTotal = milTotal + 1
+				else
+					civTotal = civTotal + 1
+				end
+			end
+
+			local okC, civFraction = pcall(WarBridge.civilianFlightFraction, sp)
+			local okM, milFraction = pcall(WarBridge.militaryPatrolDensityFraction, sp)
+			if not okC then civFraction = -1 end
+			if not okM then milFraction = -1 end
+
+			local civSpawn = WarBridge.computeSpawnCount(civTotal, civFraction, 1)
+			local milSpawn = WarBridge.computeSpawnCount(milTotal, milFraction, 1)
+
+			local stationaryTotal = #sp.stationaryMobiles
+			local stationarySpawn = WarBridge.computeSpawnCount(stationaryTotal, civFraction, 1)
+
+			printf(string.format(
+				"WARCIVILIANAUDIT: %s civFraction=%.4f milFraction=%.4f patrol=%d/%d (civ %d/%d + mil %d/%d) stationary=%d/%d\n",
+				name, civFraction, milFraction,
+				civSpawn + milSpawn, total,
+				civSpawn, civTotal, milSpawn, milTotal,
+				stationarySpawn, stationaryTotal))
+		end
+	end
+end

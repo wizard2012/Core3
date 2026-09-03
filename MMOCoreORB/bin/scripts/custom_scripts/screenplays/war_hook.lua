@@ -40,9 +40,45 @@
     faction-swap a patrol entry when its template field is a two-element
     table {imperial_template, rebel_template} instead of a bare string (old
     entries, all currently bare strings, are completely unaffected), and
-    (b) spawn only a war-state-driven PREFIX of the patrol list, sized by
-    DESIGN-UNITS.md S:U7.2's density_fraction, so a contested/frontier
-    region visibly patrols heavier than a quiet interior one.
+    (b) spawn a war-state-driven SUBSET of the patrol list, using TWO
+    independent fractions (see "TWO SEPARATE DIALS" below) instead of one.
+  - spawnStationaryMobiles: extended the same way as (b) above, using the
+    civilian-flight fraction only (stationary rows are always civilians --
+    city.lua has no combat/military stationary concept).
+
+  TWO SEPARATE DIALS -- DO NOT CONFLATE THEM AGAIN
+  --------------------------------------------------
+  This file used to have exactly one fraction, WarBridge.patrolDensityFraction,
+  driven by garrison strength (DESIGN-UNITS.md S:U7.2), and applied it to
+  EVERY patrol row regardless of type. That was a bug: every patrol row that
+  actually exists in this game's data is a CIVILIAN (patrol[9] == false --
+  audited across all 13 war-mapped cities, 99/99 rows). So the "military
+  garrison" dial was silently culling civilians, and because contested towns
+  get the LOWEST garrison-based fraction, the closer a town was to the war
+  the emptier its streets looked -- backwards from the intent, and it also
+  did nothing to stationaryMobiles, so the town looked arbitrarily patchy.
+  Ruling (owner, see docs/BACKLOG.md history): keep the thinning, but make it
+  a deliberate, correctly-named FEATURE -- "civilians flee a war zone" -- and
+  apply it consistently to every civilian-presence row, patrol and
+  stationary alike. So there are now two independent fractions:
+
+    WarBridge.militaryPatrolDensityFraction(sp) -- unchanged math, garrison
+      strength driven, applies ONLY to patrol rows with patrol[9] == true
+      (a "combatPatrol" row). There are none in the shipped data today, so
+      this path is currently inert; it becomes live the day a combat patrol
+      row is added, with no further code change needed.
+
+    WarBridge.civilianFlightFraction(sp) -- NEW, driven by region.threat and
+      region.supply_status (see WarBridge.CIVILIAN_FLIGHT below for the
+      tunable coefficients and the reasoning behind each one). Applies to
+      every patrol row with patrol[9] ~= true, AND to every row in
+      stationaryMobiles (which has no patrol[9]-equivalent -- it's all
+      civilians, always).
+
+  Never let one fraction answer both questions again: "how hard does the
+  garrison patrol" and "how many civilians are still on the street" are
+  different questions with different inputs, and conflating them is exactly
+  the bug this rewrite fixes.
 
   FAIL-SAFE CONTRACT
   -------------------
@@ -55,9 +91,13 @@
   malformed table shape, an unmapped screenplay, or an unrecognised faction
   string. Every call site treats nil as "use stock Core3 behaviour" and
   falls through to literally the same call city.lua itself would have made
-  (getControllingFaction(self.planet), or the full unfiltered patrol list).
-  bridge/tests/t_failsafe.lua exercises the pure decision logic; the live
-  server test in the task report exercises the real file.
+  (getControllingFaction(self.planet), or the full unfiltered patrol /
+  stationary list). WarBridge.militaryPatrolDensityFraction and
+  WarBridge.civilianFlightFraction both follow the identical rule: any
+  failure to read a valid number out of WAR_STATE returns 1.0 (spawn
+  everything, i.e. stock behaviour), never an error and never a partial
+  crowd. bridge/tests/t_failsafe.lua exercises the pure decision logic; the
+  live server test in the task report exercises the real file.
 ]]
 
 -- ========================================================== WarBridge ====
@@ -161,13 +201,19 @@ function WarBridge.resolveFaction(screenplayInstance)
 	return controllingFaction
 end
 
---- Fraction (0..1) of the stock patrol list this region should spawn right
--- now, per DESIGN-UNITS.md S:U7.2 (already computed server-side by
--- bridge/war_state_writer.lua -- this file only reads the number). Returns
--- 1.0 (spawn everything, i.e. stock behaviour) whenever the war state
--- doesn't have an opinion, so an unmapped city or a missing file patrols
--- exactly as it always did.
-function WarBridge.patrolDensityFraction(screenplayInstance)
+--- Fraction (0..1) of the stock COMBAT patrol rows (patrol[9] == true) this
+-- region's garrison should actually put on the street right now, per
+-- DESIGN-UNITS.md S:U7.2 (already computed server-side by
+-- bridge/war_state_writer.lua as region.density_fraction -- this file only
+-- reads the number). Returns 1.0 (spawn everything, i.e. stock behaviour)
+-- whenever the war state doesn't have an opinion, so an unmapped city or a
+-- missing file patrols exactly as it always did.
+--
+-- Renamed from patrolDensityFraction: it used to be applied to every patrol
+-- row, civilian and combat alike, which was the bug this file's header now
+-- documents at length. This function's MATH is unchanged -- only its scope
+-- (combat rows only) and its name changed.
+function WarBridge.militaryPatrolDensityFraction(screenplayInstance)
 	local ok, region = pcall(WarBridge.getRegionForScreenplay, screenplayInstance.screenplayName)
 
 	if not ok or region == nil or type(region.density_fraction) ~= "number" then
@@ -179,6 +225,96 @@ function WarBridge.patrolDensityFraction(screenplayInstance)
 	if f > 1 then f = 1 end
 
 	return f
+end
+
+--- Tunable coefficients for WarBridge.civilianFlightFraction. Every constant
+-- here is game-side Lua (not warsim/), so there is no determinism
+-- constraint on it -- but it still gets named, commented, single-sourced
+-- constants instead of bare numbers buried in the formula below.
+WarBridge.CIVILIAN_FLIGHT = {
+	-- How much of the civilian population leaves purely because of danger
+	-- (region.threat, 0..1, already contest/100 -- see
+	-- bridge/war_state_writer.lua). At the maximum threat=1.0, this
+	-- coefficient alone removes up to this fraction of civilians. Turning
+	-- it up makes contested/frontline towns empty out faster as the fight
+	-- gets hotter; turning it down makes civilians more stubborn.
+	THREAT_COEFF = 0.60,
+
+	-- Additional flat fraction of civilians who leave because supply is
+	-- degraded or cut -- people leave when the shelves are empty, not just
+	-- when there's shooting. Keyed by region.supply_status (see
+	-- bridge/war_state_writer.lua's supply_status_for()). A status this
+	-- table doesn't recognise (including a missing/malformed field) is
+	-- treated as no additional penalty -- threat is still applied, so this
+	-- is graceful degradation, not a fail-safe trigger (that only fires
+	-- when region.threat itself isn't a usable number).
+	SUPPLY_PENALTY = {
+		connected = 0.00,
+		degraded  = 0.15,
+		cut       = 0.30,
+	},
+
+	-- Absolute floor on the fraction, regardless of how bad threat/supply
+	-- get. The owner's ruling was explicit: a contested town must still
+	-- read as inhabited, not abandoned -- this is what keeps that true even
+	-- at threat=1.0 with supply cut. 0.35 means a town never loses more
+	-- than roughly two-thirds of its civilian presence to the war.
+	FLOOR = 0.35,
+}
+
+--- Fraction (0..1) of civilian presence (patrol rows with patrol[9] ~= true,
+-- and every stationaryMobiles row) that should still be spawned in this
+-- region right now -- "civilians flee a war zone" per the owner's ruling.
+-- Driven by region.threat and region.supply_status, NOT by garrison
+-- strength (see this file's header for why the old shared-fraction design
+-- was wrong). Returns 1.0 (spawn everyone, i.e. stock behaviour) whenever
+-- the war state doesn't have a usable region.threat number for this
+-- screenplay, so an unmapped city or a missing file keeps its full civilian
+-- crowd exactly as it always did -- the same fail-safe contract every other
+-- WarBridge fraction in this file follows.
+function WarBridge.civilianFlightFraction(screenplayInstance)
+	local ok, region = pcall(WarBridge.getRegionForScreenplay, screenplayInstance.screenplayName)
+
+	if not ok or region == nil or type(region.threat) ~= "number" then
+		return 1.0
+	end
+
+	local cfg = WarBridge.CIVILIAN_FLIGHT
+	local threat = region.threat
+	if threat < 0 then threat = 0 end
+	if threat > 1 then threat = 1 end
+
+	local supplyPenalty = cfg.SUPPLY_PENALTY[region.supply_status] or 0.00
+
+	local f = 1.0 - (threat * cfg.THREAT_COEFF) - supplyPenalty
+
+	if f < cfg.FLOOR then f = cfg.FLOOR end
+	if f > 1.0 then f = 1.0 end
+
+	return f
+end
+
+--- Shared "how many of N rows survive this fraction" arithmetic for both
+-- the civilian and military dials. Always rounds UP (ceil), same as the
+-- original density-gating code did, and never returns 0 for a nonempty
+-- list when minCount >= 1 -- every call site here uses minCount = 1,
+-- because "zero rows spawned" is the exact "looks abandoned" failure the
+-- owner's ruling was written to avoid.
+function WarBridge.computeSpawnCount(total, fraction, minCount)
+	if total <= 0 then
+		return 0
+	end
+
+	local count = math.ceil(total * fraction)
+
+	if count < minCount then
+		count = minCount
+	end
+	if count > total then
+		count = total
+	end
+
+	return count
 end
 
 --- The faction-swap template for one patrol entry. `templateField` is
@@ -405,28 +541,93 @@ function CityScreenPlay:respawn(pAiAgent, args)
 	self:spawnMob(mobNumber, controllingFaction, difficulty)
 end
 
+--- Spawns a subset of self.patrolMobiles, using TWO independent fractions:
+-- combat rows (patrol[9] == true) are gated by
+-- WarBridge.militaryPatrolDensityFraction (garrison strength), civilian
+-- rows (patrol[9] ~= true) by WarBridge.civilianFlightFraction (threat +
+-- supply). Each row's own field decides which dial applies to it -- a
+-- mixed patrol list gets both dials applied, each to its own rows, then the
+-- two selected subsets are merged back into ascending index order so
+-- spawnPatrol's own per-row logic (mood, observers, patrol points) runs
+-- exactly as it always has, just on a filtered set of indices.
+--
+-- Fail-safe: if the war state has no opinion on either fraction, both
+-- fractions come back 1.0, every row's minCount-vs-total math resolves to
+-- "spawn all", and the merged set is the full patrol list in original
+-- order -- byte-identical to stock behaviour.
 function CityScreenPlay:spawnPatrolMobiles()
 	if not isZoneEnabled(self.planet) then
 		return
 	end
 
 	local total = #self.patrolMobiles
-	local spawnCount = total
 
-	local ok, fraction = pcall(WarBridge.patrolDensityFraction, self)
-	if ok and type(fraction) == "number" then
-		spawnCount = math.ceil(total * fraction)
-		if spawnCount < 1 and total > 0 then
-			spawnCount = 1 -- never a fully empty patrol list -- U7.2's own
-			               -- worked example bottoms out at 0.4/16, not 0
-		end
-		if spawnCount > total then
-			spawnCount = total
+	local civilianIndices, combatIndices = {}, {}
+	for i = 1, total do
+		if self.patrolMobiles[i][9] == true then
+			combatIndices[#combatIndices + 1] = i
+		else
+			civilianIndices[#civilianIndices + 1] = i
 		end
 	end
 
+	local militaryFraction = 1.0
+	local okM, fM = pcall(WarBridge.militaryPatrolDensityFraction, self)
+	if okM and type(fM) == "number" then
+		militaryFraction = fM
+	end
+
+	local civilianFraction = 1.0
+	local okC, fC = pcall(WarBridge.civilianFlightFraction, self)
+	if okC and type(fC) == "number" then
+		civilianFraction = fC
+	end
+
+	local combatSpawnCount = WarBridge.computeSpawnCount(#combatIndices, militaryFraction, 1)
+	local civilianSpawnCount = WarBridge.computeSpawnCount(#civilianIndices, civilianFraction, 1)
+
+	local toSpawn = {}
+	for i = 1, civilianSpawnCount do
+		toSpawn[#toSpawn + 1] = civilianIndices[i]
+	end
+	for i = 1, combatSpawnCount do
+		toSpawn[#toSpawn + 1] = combatIndices[i]
+	end
+	table.sort(toSpawn)
+
+	for i = 1, #toSpawn do
+		self:spawnPatrol(toSpawn[i])
+	end
+end
+
+--- Spawns a subset of self.stationaryMobiles, using ONLY the civilian-flight
+-- fraction -- stationaryMobiles has no combat/military concept in city.lua,
+-- every row is a civilian. Structured identically to the civilian half of
+-- spawnPatrolMobiles above (same fraction function, same
+-- computeSpawnCount floor of 1), just without the patrol[9] split since
+-- there is nothing to split.
+--
+-- This is what makes the flight look deliberate instead of arbitrary (the
+-- owner's own words): without it, a contested town's patrols thin out but
+-- its stationary vendors/idlers stay at full stock count, which reads as a
+-- bug, not a warzone.
+function CityScreenPlay:spawnStationaryMobiles()
+	if not isZoneEnabled(self.planet) then
+		return
+	end
+
+	local total = #self.stationaryMobiles
+
+	local civilianFraction = 1.0
+	local ok, f = pcall(WarBridge.civilianFlightFraction, self)
+	if ok and type(f) == "number" then
+		civilianFraction = f
+	end
+
+	local spawnCount = WarBridge.computeSpawnCount(total, civilianFraction, 1)
+
 	for i = 1, spawnCount do
-		self:spawnPatrol(i)
+		self:spawnStationaryMobile(i)
 	end
 end
 
@@ -585,11 +786,24 @@ function WarBridgeTest:describeRegion(screenplayName)
 		return "unmapped or war-state unavailable for " .. tostring(screenplayName)
 	end
 
+	local sp = _G[screenplayName]
+	local civilianFraction, militaryFraction = "n/a", "n/a"
+	if sp ~= nil then
+		local okC, fC = pcall(WarBridge.civilianFlightFraction, sp)
+		if okC then civilianFraction = tostring(fC) end
+		local okM, fM = pcall(WarBridge.militaryPatrolDensityFraction, sp)
+		if okM then militaryFraction = tostring(fM) end
+	end
+
 	return "region=" .. tostring(regionId)
 		.. " faction=" .. tostring(region.faction)
 		.. " contest=" .. tostring(region.contest)
 		.. " garrison=" .. tostring(region.garrison_strength)
+		.. " threat=" .. tostring(region.threat)
+		.. " supply_status=" .. tostring(region.supply_status)
 		.. " density=" .. tostring(region.patrol_density)
 		.. " density_fraction=" .. tostring(region.density_fraction)
+		.. " militaryPatrolDensityFraction=" .. militaryFraction
+		.. " civilianFlightFraction=" .. civilianFraction
 		.. " checkpoint_level=" .. tostring(region.checkpoint_level)
 end
