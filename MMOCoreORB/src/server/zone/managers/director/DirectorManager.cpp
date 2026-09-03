@@ -112,6 +112,12 @@
 #include "server/zone/packets/ui/CreateClientPathMessage.h"
 #include "server/zone/objects/ship/squadron/ShipSquadronFormation.h"
 
+// Bazaar stocking (stage S1) -- see docs/DECISIONS.md
+#include "server/zone/managers/auction/AuctionManager.h"
+#include "server/zone/managers/auction/AuctionsMap.h"
+#include "server/zone/managers/auction/TerminalListVector.h"
+#include "server/zone/packets/auction/ItemSoldMessage.h"
+
 int DirectorManager::DEBUG_MODE = 0;
 int DirectorManager::ERROR_CODE = NO_ERROR;
 
@@ -557,6 +563,11 @@ void DirectorManager::initializeLuaEngine(Lua* luaEngine) {
 	//Navigation Mesh Management
 	luaEngine->registerFunction("createNavMesh", createNavMesh);
 	luaEngine->registerFunction("destroyNavMesh", destroyNavMesh);
+
+	// Bazaar stocking (stage S1)
+	luaEngine->registerFunction("bazaarBotList", bazaarBotList);
+	luaEngine->registerFunction("bazaarBotCancel", bazaarBotCancel);
+	luaEngine->registerFunction("bazaarBotCounts", bazaarBotCounts);
 
 	luaEngine->setGlobalInt("POSITIONCHANGED", ObserverEventType::POSITIONCHANGED);
 	luaEngine->setGlobalInt("CLOSECONTAINER", ObserverEventType::CLOSECONTAINER);
@@ -4559,6 +4570,197 @@ int DirectorManager::destroyNavMesh(lua_State *L) {
 	}
 
 	return 0;
+}
+
+// Bazaar stocking (stage S1) -- see docs/DECISIONS.md
+//
+// The bazaar is not reachable from Lua, and AuctionManager/AuctionsMap must not be
+// modified (owner ruling). These three functions are thin additive wrappers over
+// existing, unmodified native AuctionManager/AuctionsMap methods.
+//
+// addSaleItem() and cancelItem() are both `void` in AuctionManager.idl -- neither
+// returns a status code, they only mail an ItemSoldMessage/CancelLiveAuctionResponseMessage
+// to the seller's client. A ghost seller has no client, so that packet goes nowhere.
+// bazaarBotList() below calls the existing, unmodified, native checkSaleItem() --
+// the exact same validation addSaleItem() itself calls internally to decide whether to
+// proceed -- and returns that literal ItemSoldMessage code. It does not replicate
+// addSaleItem's earlier guards (dead/incapacitated seller, null zone, active trade
+// session, stale oldItem status) since S1 never exercises this path; a real listing
+// policy in S2 should keep that in mind.
+int DirectorManager::bazaarBotList(lua_State* L) {
+	if (checkArgumentCount(L, 5) == 1) {
+		String err = "incorrect number of arguments passed to DirectorManager::bazaarBotList. Proper arguments is: (seller, itemOid, terminal, description, price)";
+		printTraceError(L, err);
+		ERROR_CODE = INCORRECT_ARGUMENTS;
+		return 0;
+	}
+
+	CreatureObject* seller = (CreatureObject*) lua_touserdata(L, -5);
+	uint64 itemOid = lua_tointeger(L, -4);
+	SceneObject* terminal = (SceneObject*) lua_touserdata(L, -3);
+	UnicodeString description = lua_tostring(L, -2);
+	int price = lua_tointeger(L, -1);
+
+	if (seller == nullptr || terminal == nullptr) {
+		lua_pushinteger(L, ItemSoldMessage::UNKNOWNERROR);
+		return 1;
+	}
+
+	if (!terminal->isBazaarTerminal()) {
+		lua_pushinteger(L, ItemSoldMessage::VENDORNOTWORKING);
+		return 1;
+	}
+
+	ZoneServer* zoneServer = ServerCore::getZoneServer();
+
+	if (zoneServer == nullptr) {
+		lua_pushinteger(L, ItemSoldMessage::UNKNOWNERROR);
+		return 1;
+	}
+
+	ManagedReference<AuctionManager*> auctionManager = zoneServer->getAuctionManager();
+
+	if (auctionManager == nullptr) {
+		lua_pushinteger(L, ItemSoldMessage::UNKNOWNERROR);
+		return 1;
+	}
+
+	ManagedReference<SceneObject*> objectToSell = zoneServer->getObject(itemOid);
+
+	if (objectToSell == nullptr) {
+		lua_pushinteger(L, ItemSoldMessage::INVALIDITEM);
+		return 1;
+	}
+
+	int res = auctionManager->checkSaleItem(seller, objectToSell.get(), terminal, price, false, false);
+
+	if (res == ItemSoldMessage::SUCCESS) {
+		auctionManager->addSaleItem(seller, itemOid, terminal, description, price, 0, false, false);
+	}
+
+	lua_pushinteger(L, res);
+
+	return 1;
+}
+
+// The off switch. cancelItem() is native/void; this wrapper reports success/failure by
+// checking the item's ownership and listed state in the (unmodified) AuctionsMap before
+// and after the call, rather than adding any new logic to AuctionManager/AuctionsMap.
+int DirectorManager::bazaarBotCancel(lua_State* L) {
+	if (checkArgumentCount(L, 2) == 1) {
+		String err = "incorrect number of arguments passed to DirectorManager::bazaarBotCancel. Proper arguments is: (seller, itemOid)";
+		printTraceError(L, err);
+		ERROR_CODE = INCORRECT_ARGUMENTS;
+		return 0;
+	}
+
+	CreatureObject* seller = (CreatureObject*) lua_touserdata(L, -2);
+	uint64 itemOid = lua_tointeger(L, -1);
+
+	if (seller == nullptr) {
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	ZoneServer* zoneServer = ServerCore::getZoneServer();
+
+	if (zoneServer == nullptr) {
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	ManagedReference<AuctionManager*> auctionManager = zoneServer->getAuctionManager();
+
+	if (auctionManager == nullptr) {
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	AuctionsMap* auctionMap = auctionManager->getAuctionMap();
+
+	if (auctionMap == nullptr) {
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	ManagedReference<AuctionItem*> item = auctionMap->getItem(itemOid);
+
+	if (item == nullptr || item->getOwnerID() != seller->getObjectID()) {
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	bool wasListed = item->getStatus() == AuctionItem::FORSALE || item->getStatus() == AuctionItem::OFFERED;
+
+	auctionManager->cancelItem(seller, itemOid);
+
+	bool success = wasListed && item->getStatus() != AuctionItem::FORSALE && item->getStatus() != AuctionItem::OFFERED;
+
+	lua_pushboolean(L, success);
+
+	return 1;
+}
+
+// Read-only. ownerListings mirrors what checkSaleItem uses to cap per-player bazaar
+// listings; totalBazaarForSale sums every bazaar terminal's listing count galaxy-wide,
+// so a stocking policy can taper off automatically as real players list things.
+int DirectorManager::bazaarBotCounts(lua_State* L) {
+	if (checkArgumentCount(L, 1) == 1) {
+		String err = "incorrect number of arguments passed to DirectorManager::bazaarBotCounts. Proper arguments is: (seller)";
+		printTraceError(L, err);
+		ERROR_CODE = INCORRECT_ARGUMENTS;
+		return 0;
+	}
+
+	CreatureObject* seller = (CreatureObject*) lua_touserdata(L, -1);
+
+	if (seller == nullptr) {
+		lua_pushinteger(L, 0);
+		lua_pushinteger(L, 0);
+		return 2;
+	}
+
+	ZoneServer* zoneServer = ServerCore::getZoneServer();
+
+	if (zoneServer == nullptr) {
+		lua_pushinteger(L, 0);
+		lua_pushinteger(L, 0);
+		return 2;
+	}
+
+	ManagedReference<AuctionManager*> auctionManager = zoneServer->getAuctionManager();
+
+	if (auctionManager == nullptr) {
+		lua_pushinteger(L, 0);
+		lua_pushinteger(L, 0);
+		return 2;
+	}
+
+	AuctionsMap* auctionMap = auctionManager->getAuctionMap();
+
+	if (auctionMap == nullptr) {
+		lua_pushinteger(L, 0);
+		lua_pushinteger(L, 0);
+		return 2;
+	}
+
+	int ownerListings = auctionMap->getCommodityCount(seller);
+
+	TerminalListVector allBazaars = auctionMap->getBazaarTerminalData("", "", nullptr);
+
+	int totalBazaarForSale = 0;
+
+	for (int i = 0; i < allBazaars.size(); ++i) {
+		TerminalItemList* terminalItems = allBazaars.get(i);
+
+		if (terminalItems != nullptr)
+			totalBazaarForSale += terminalItems->size();
+	}
+
+	lua_pushinteger(L, ownerListings);
+	lua_pushinteger(L, totalBazaarForSale);
+
+	return 2;
 }
 
 int DirectorManager::creatureTemplateExists(lua_State* L) {

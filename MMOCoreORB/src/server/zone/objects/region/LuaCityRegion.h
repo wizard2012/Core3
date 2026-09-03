@@ -22,6 +22,10 @@ namespace region {
 		int _getObject(lua_State* L);
 		int isClientRegion(lua_State* L);
 
+		// Bazaar stocking (stage S1) -- see docs/DECISIONS.md
+		int getBazaarCount(lua_State* L);
+		int getBazaar(lua_State* L);
+
 	protected:
 		CityRegion* _getRealCityRegion() {
 			return realObject.get();

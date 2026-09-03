@@ -210,6 +210,12 @@ namespace server {
 		static int createQuestVectorMap(lua_State* L);
 		static int createNavMesh(lua_State* L);
 		static int destroyNavMesh(lua_State* L);
+
+		// Bazaar stocking (stage S1) -- see docs/DECISIONS.md
+		static int bazaarBotList(lua_State* L);
+		static int bazaarBotCancel(lua_State* L);
+		static int bazaarBotCounts(lua_State* L);
+
 		static int creatureTemplateExists(lua_State* L);
 		static int printLuaError(lua_State* L);
 		static int logLua(lua_State* L);

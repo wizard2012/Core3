@@ -28,3 +28,6 @@ includeFile("../custom_scripts/screenplays/warreport/war_probe.lua")
 -- starter_pack.lua's file header).
 includeFile("../custom_scripts/screenplays/starterpack/starter_pack.lua")
 includeFile("../custom_scripts/screenplays/starterpack/starter_pack_probe.lua")
+
+-- Bazaar stocking, stage S1 (binding + probe only -- see docs/DECISIONS.md).
+includeFile("../custom_scripts/screenplays/bazaar/bazaar_probe.lua")
