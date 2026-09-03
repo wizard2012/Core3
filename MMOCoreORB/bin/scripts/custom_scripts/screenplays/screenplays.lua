@@ -22,10 +22,18 @@ includeFile("../custom_scripts/screenplays/population/street_probe.lua")
 -- War report surfaces. Loaded AFTER population so war_bartender.lua chains
 -- onto population/bartender_rumor.lua's runScreenHandlers wrapper.
 includeFile("../custom_scripts/screenplays/warreport/war_contrib.lua")
+-- Must load right after war_contrib.lua: it wraps WarContrib.record, and
+-- that wrap must be (re)installed every time war_contrib.lua's own
+-- unconditional `function WarContrib.record(...)` re-runs on a reload --
+-- see war_contrib_counter.lua's header for why load order here matters.
+includeFile("../custom_scripts/screenplays/warreport/war_contrib_counter.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_report.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_login.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_contrib_hook.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_officer.lua")
+-- Reads WarOfficer.POSTS and the warofficer:npc:<region> shared-memory keys
+-- war_officer.lua writes, so it must load after that file.
+includeFile("../custom_scripts/screenplays/warreport/war_officer_report.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_bartender.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_announce.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_battle.lua")

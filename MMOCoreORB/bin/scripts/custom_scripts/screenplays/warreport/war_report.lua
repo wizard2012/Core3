@@ -294,8 +294,16 @@ function WarReport.regionLine(regionId)
 		line = line .. ", quiet"
 	end
 
+	-- Three real supply_status values exist in the live war state today
+	-- (connected, degraded, cut -- confirmed against the deployed
+	-- custom_scripts/war/war_state.lua). "connected" was, and remains,
+	-- silent -- a healthy region needs no extra words. "degraded" used to
+	-- fall through to nothing at all, reading identically to a healthy
+	-- region; it now gets its own word so a player can tell the two apart.
 	if r.supply_status == "cut" then
 		line = line .. ", supply cut"
+	elseif r.supply_status == "degraded" then
+		line = line .. ", supply strained"
 	end
 
 	return line .. "."
@@ -322,6 +330,61 @@ function WarReport.planetLines(planetId)
 		end
 	end
 	return out
+end
+
+--- Gap 2's galaxy-wide-but-front-scoped supply overview: every region
+-- currently on WarReport.frontRegions() (the same front-line list the
+-- login report and the waypoint layer already use), grouped so cut/
+-- strained regions are easy to spot rather than buried in a wall of
+-- "connected" lines.
+--
+-- SCOPED TO FRONTS, NOT EVERY REGION: this file's own header rule is that
+-- "a galaxy-wide dump every login is the loading screen failure mode this
+-- design was warned about" -- an ALL-regions dump on demand would still be
+-- exactly that shape of wall of text, just moved from login to a menu
+-- click. It is also not very actionable: a quiet, uncontested region's
+-- supply status doesn't help a player decide where to go. Fronts are where
+-- the war is actually being fought and where a delivery run matters, so
+-- that is what this reports -- the same scoping decision war_login.lua's
+-- own waypoint logic already made for the same reason.
+--
+-- DELIVERED ONLY ON DEMAND (the officer's Report radial, war_officer_report
+-- .lua) -- never called from the login report. Returns a list of plain
+-- strings ready for sendSystemMessage(), one call per line; never nil, even
+-- when there is nothing to report.
+function WarReport.supplyOverview()
+	local st = WarReport.state()
+	local front = WarReport.frontRegions()
+	if st == nil or #front == 0 then
+		return { "No active fronts to report supply on right now." }
+	end
+
+	local cut, strained, ok = {}, {}, {}
+	for i = 1, #front do
+		local id = front[i].id
+		local r = st.regions[id]
+		local name = WarReport.regionName(id) .. " (" .. WarReport.factionAdjective(front[i].faction) .. ")"
+
+		if r ~= nil and r.supply_status == "cut" then
+			cut[#cut + 1] = name
+		elseif r ~= nil and r.supply_status == "degraded" then
+			strained[#strained + 1] = name
+		else
+			ok[#ok + 1] = name
+		end
+	end
+
+	local lines = { "Supply overview, active fronts:" }
+	if #cut > 0 then
+		lines[#lines + 1] = "  Cut off: " .. table.concat(cut, ", ")
+	end
+	if #strained > 0 then
+		lines[#lines + 1] = "  Strained: " .. table.concat(strained, ", ")
+	end
+	if #ok > 0 then
+		lines[#lines + 1] = "  Connected: " .. table.concat(ok, ", ")
+	end
+	return lines
 end
 
 --- Is this region on the front? Used by the waypoint layer to decide what is
