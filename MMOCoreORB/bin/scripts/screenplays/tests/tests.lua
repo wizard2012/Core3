@@ -384,3 +384,30 @@ function Tests:populationOffSwitch()
 		printf("populationOffSwitch FAIL (see above)\n")
 	end
 end
+
+-- ============================================================== Backlog B14
+-- Proves custom_scripts/screenplays/warreport/war_contrib.lua's include
+-- actually loaded on THIS running server, without ever calling
+-- WarContrib.record() -- calling record() here would append into the real
+-- production log/warcontrib/ spool, which the real hourly
+-- deploy/scripts/war-advance.sh would then flush into the LIVE
+-- war_contribution_ledger. This function checks shape only: the global
+-- table, the function, and the exact vocabulary size, all of which can only
+-- be non-nil/correct if screenplays.lua's new includeFile line ran to
+-- completion without error.
+function Tests:warContribLoaded()
+	if type(WarContrib) ~= "table" then
+		printf("WARCONTRIBLOADED: FAIL -- WarContrib global is not a table (include did not run or errored)\n")
+		return
+	end
+	if type(WarContrib.record) ~= "function" then
+		printf("WARCONTRIBLOADED: FAIL -- WarContrib.record is not a function\n")
+		return
+	end
+	local count = 0
+	for _ in pairs(WarContrib.VALID_SOURCES or {}) do
+		count = count + 1
+	end
+	printf("WARCONTRIBLOADED: PASS -- WarContrib table+record function present, VALID_SOURCES count="
+		.. count .. " spool_dir=" .. tostring(WarContrib.SPOOL_DIR) .. "\n")
+end

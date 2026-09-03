@@ -12,6 +12,7 @@ includeFile("../custom_scripts/screenplays/population/bartender_rumor.lua")
 
 -- War report surfaces. Loaded AFTER population so war_bartender.lua chains
 -- onto population/bartender_rumor.lua's runScreenHandlers wrapper.
+includeFile("../custom_scripts/screenplays/warreport/war_contrib.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_report.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_login.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_officer.lua")
