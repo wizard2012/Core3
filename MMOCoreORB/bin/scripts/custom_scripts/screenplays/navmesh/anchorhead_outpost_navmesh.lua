@@ -19,36 +19,52 @@
   tatooine_anchorhead.lua's coordinate tables -- they're fine, the missing
   mesh is the bug).
 
-  THE GUARD: WHY THIS ISN'T A NAIVE ScreenPlay:start() CALL
-  ------------------------------------------------------------
-  createNavMesh() (DirectorManager::createNavMesh) always creates a brand
-  NEW persistent NavArea row (object/region_navmesh.iff, objectdb
-  "navareas") -- there is no dedup-by-name in the C++, and the in-memory
-  PlanetManager navMeshAreas map it registers into (addNavArea) is rebuilt
-  from scratch every boot, so it can't detect "already created" across a
-  restart either. Every actual Lua call site (safety_measures.lua's three
-  spawnBrigandCamp*() calls, coa3Screenplay.lua's two mission meshes) is
-  UNGUARDED against this: safety_measures.lua's three createNavMesh calls
-  run from ScreenPlay:start(), which DirectorManager::startGlobalScreenPlays
-  calls unconditionally on every single server boot with no persisted
-  "already started" check (confirmed by reading that function -- it just
-  iterates every registered screenplay with start=true and calls start()).
-  For safety_measures.lua that isn't safe from creating a new persistent
-  NavArea row on every restart -- it just happens not to matter for stock
-  content that isn't going to run through hundreds of restarts.
-  coa3Screenplay.lua's calls are per-player mission instances (one mesh per
-  player mission run, not boot-time), a different situation entirely.
+  WHY THIS IS AN UNGUARDED start() CALL, LIKE safety_measures.lua
+  -----------------------------------------------------------------
+  createNavMesh() (DirectorManager::createNavMesh) creates the NavArea via
+  createObject(STRING_HASHCODE("object/region_navmesh.iff"), "navareas", 0)
+  -- that trailing 0 is persistenceLevel (ZoneServer.idl:197, default 2).
+  ObjectManager.cpp:881-889:
 
-  For content meant to persist across every restart of an actual running
-  server (this one), copying that unguarded pattern verbatim would stack a
-  duplicate NavArea row in navareas.db on every restart forever. So this
-  file adds its own guard using the SAME persistent primitive
-  safety_measures.lua already uses elsewhere in itself (writeData/readData,
-  screenplay.lua's wrapper over DirectorManager's persistent shared-memory
-  store -- NOT registerScreenPlay's in-memory screenPlays map, which does
-  NOT survive a restart): check a shared-memory flag before calling
-  createNavMesh, and set it right after. That makes the call idempotent
-  across restarts even though the underlying primitive is not.
+      object->setPersistent(persistenceLevel);
+      ...
+      if (persistenceLevel > 0) {
+          updatePersistentObject(object);
+      }
+
+  With persistenceLevel = 0 the NavArea is explicitly marked NON-persistent
+  and is never written to navareas.db. It is transient: it disappears on
+  every shutdown and MUST be recreated on every boot -- there is nothing to
+  dedup against because nothing survives a restart to dedup with. This
+  matches safety_measures.lua's own three createNavMesh calls, which are
+  likewise unguarded in ScreenPlay:start() (called on every boot,
+  unconditionally, by DirectorManager::startGlobalScreenPlays -- confirmed
+  by reading that function). Calling createNavMesh() unguarded here is
+  therefore CORRECT, not a bug to route around -- it is the required
+  behaviour, matching the established pattern exactly.
+
+  DO NOT ADD A PERSISTENT "already created" GUARD HERE.
+  An earlier version of this file added a writeData/readData idempotency
+  check before calling createNavMesh, reasoning (wrongly) that createNavMesh
+  always produces a persistent duplicate on every restart. It doesn't --
+  see above. That guard was not just unnecessary, it was a landmine:
+  writeData/readData resolve to writeSharedMemory/readSharedMemory, backed
+  by DirectorSharedMemory (DirectorManager.cpp:131), a plain in-memory
+  HashTable with no save/load path -- also non-persistent, and for the same
+  reason as the NavArea. The guard "worked" only because BOTH sides of it
+  reset to nothing on every boot; it happened to no-op in exactly the way
+  that made the mesh still get created. If anyone ever made
+  DirectorSharedMemory persistent, this pattern would flip silently: the
+  flag would survive, start() would see it set and skip createNavMesh
+  forever after the first boot, and the navmesh (which itself remains
+  transient and would NOT survive that same restart) would simply stop
+  existing -- patrol NPCs frozen again, with a comment nearby confidently
+  explaining why skipping was correct. If a future need ever arises to
+  avoid rebuilding this specific mesh on every boot, that requires making
+  the NavArea itself persistent (persistenceLevel > 0 at the call site, if
+  createNavMesh's Lua binding is ever extended to accept one) or gating on
+  a store that is actually durable -- not shared memory, and not layered on
+  top of a call that is itself transient by design.
 
   CENTRE / RADIUS
   ---------------
@@ -79,9 +95,11 @@
   NAME
   ----
   "swgwar_anchorhead_outpost" -- createNavMesh prefixes this with
-  "screenplay_<zoneName>_", so the persisted NavArea/PlanetManager key ends
-  up "screenplay_tatooine_swgwar_anchorhead_outpost", clearly identifying it
-  as this project's addition and not stock content.
+  "screenplay_<zoneName>_", so the persisted... actually the RUNTIME (see
+  above -- it's not persisted) NavArea/PlanetManager key ends up
+  "screenplay_tatooine_swgwar_anchorhead_outpost", clearly identifying it
+  as this project's addition and not stock content, for the lifetime of
+  each boot.
 
   `dynamic` ARGUMENT
   ------------------
@@ -108,7 +126,8 @@
   runs ~1s later on a TaskManager thread, not inline on the thread that
   called createNavMesh(), and not inline in ScreenPlay:start(). So this
   does not block zone boot; it costs a short burst of CPU on a background
-  task thread shortly after the screenplay starts.
+  task thread shortly after the screenplay starts, every boot (by design,
+  since the mesh is transient -- see above).
 
   WHAT I COULD NOT VERIFY WITHOUT A RUNNING SERVER
   -------------------------------------------------
@@ -130,8 +149,6 @@ AnchorheadOutpostNavmesh = ScreenPlay:new {
 	centerY = -5315,
 	radius = 80,
 	meshName = "swgwar_anchorhead_outpost",
-
-	createdFlagKey = "AnchorheadOutpostNavmesh:created",
 }
 
 registerScreenPlay("AnchorheadOutpostNavmesh", true)
@@ -141,15 +158,10 @@ function AnchorheadOutpostNavmesh:start()
 		return
 	end
 
-	-- Idempotency guard: createNavMesh() always creates a brand new
-	-- persistent NavArea row with no dedup of its own, and start() runs on
-	-- every server boot (see file header). Without this check, every
-	-- restart would stack another duplicate mesh in navareas.db.
-	if (readData(self.createdFlagKey) ~= 0) then
-		return
-	end
-
+	-- Unguarded by design: the NavArea createNavMesh() creates is
+	-- non-persistent (persistenceLevel = 0) and does not survive a
+	-- restart, so it must be recreated on every boot. See the header
+	-- comment above -- do not add a writeData/readData "already created"
+	-- check back here.
 	createNavMesh(self.planet, self.centerX, self.centerY, self.radius, true, self.meshName)
-
-	writeData(self.createdFlagKey, 1)
 end
