@@ -110,17 +110,26 @@ function WarRecruiter:markBattle(pPlayer, regionId)
 		return
 	end
 
-	-- Offset to match where WarBattle actually stages the fight, not the town
-	-- centre -- otherwise the waypoint lands in the middle of the settlement
-	-- and the player never finds the battle.
-	local offset = (WarBattle ~= nil and WarBattle.BATTLE_OFFSET_M) or 0
+	-- Point at wherever WarBattle actually staged the recruiter-anchor site,
+	-- not a locally recomputed offset. WarBattle.anchorPoint() is the SINGLE
+	-- place this coords+offset arithmetic exists (see war_battle.lua's
+	-- SITE_OVERRIDES comment) -- calling it here rather than recomputing
+	-- coords + BATTLE_OFFSET_M ourselves is what makes it structurally
+	-- impossible for this waypoint and the actual fight to drift apart,
+	-- including when a region has a SITE_OVERRIDES.anchorOffset. Fall back
+	-- to the bare town centre (offset 0) only if WarBattle itself is
+	-- unavailable, same as the old behaviour.
+	local wx, wy = coords[1], coords[2]
+	if WarBattle ~= nil and WarBattle.anchorPoint ~= nil then
+		wx, wy = WarBattle.anchorPoint(coords, regionId)
+	end
 
 	pcall(function()
 		PlayerObject(pGhost):addWaypoint(
 			zone,
 			"Front line: " .. WarReport.regionName(regionId),
 			"",
-			coords[1] + offset, 0, coords[2] + offset,
+			wx, 0, wy,
 			WarRecruiter.WAYPOINT_COLOR,
 			true, true, 0, 0)
 	end)
