@@ -4,3 +4,8 @@ luacov.stats.out
 .DS_Store
 .cache
 compile_commands.json
+
+# Core dumps: restart.sh runs the server under gdb, which leaves a ~550MB
+# core.<pid> in MMOCoreORB/bin on some shutdowns. Two have appeared and been
+# hand-removed already; one "git add -A" would commit one.
+MMOCoreORB/bin/core.*
