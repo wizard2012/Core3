@@ -55,6 +55,16 @@ includeFile("../custom_scripts/screenplays/starterpack/starter_pack_probe.lua")
 -- Bazaar stocking, stage S1 (binding + probe only -- see docs/DECISIONS.md).
 includeFile("../custom_scripts/screenplays/bazaar/bazaar_probe.lua")
 
+-- Bazaar stocking, stage S2: the actual stock policy. Config first (also
+-- includeFile()s gcw/recruiters/factionPerkData.lua for the deny-list -- see
+-- bazaar_config.lua's own header for why that's safe to re-include here),
+-- then the screenplay, then its S2 probe. Ghost sellers themselves are stage
+-- S3, a human step -- see bazaar_stock.lua's header; this loads and runs
+-- fine with zero of the three characters created, it just lists nothing.
+includeFile("../custom_scripts/screenplays/bazaar/bazaar_config.lua")
+includeFile("../custom_scripts/screenplays/bazaar/bazaar_stock.lua")
+includeFile("../custom_scripts/screenplays/bazaar/bazaar_stock_probe.lua")
+
 -- Squad Leader onboarding: free novice Squad Leader skill + GCW faction
 -- picker at login (see squadleader/sl_onboard.lua header). Reads
 -- recruiterScreenplay's faction hash codes at CALL time, not include time,

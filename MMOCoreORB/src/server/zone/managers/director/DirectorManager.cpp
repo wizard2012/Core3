@@ -85,6 +85,7 @@
 #include "server/zone/objects/player/sui/SuiBoxPage.h"
 #include "server/zone/objects/tangible/powerup/PowerupObject.h"
 #include "server/zone/objects/resource/ResourceSpawn.h"
+#include "server/zone/objects/resource/ResourceContainer.h"
 #include "server/zone/objects/tangible/component/Component.h"
 #include "server/zone/objects/pathfinding/NavArea.h"
 #include "server/zone/objects/player/sui/listbox/LuaSuiListBox.h"
@@ -569,6 +570,7 @@ void DirectorManager::initializeLuaEngine(Lua* luaEngine) {
 	luaEngine->registerFunction("bazaarBotList", bazaarBotList);
 	luaEngine->registerFunction("bazaarBotCancel", bazaarBotCancel);
 	luaEngine->registerFunction("bazaarBotCounts", bazaarBotCounts);
+	luaEngine->registerFunction("setResourceContainerQuantity", setResourceContainerQuantity);
 
 	luaEngine->setGlobalInt("POSITIONCHANGED", ObserverEventType::POSITIONCHANGED);
 	luaEngine->setGlobalInt("CLOSECONTAINER", ObserverEventType::CLOSECONTAINER);
@@ -4857,6 +4859,69 @@ int DirectorManager::bazaarBotCounts(lua_State* L) {
 	lua_pushinteger(L, totalBazaarForSale);
 
 	return 2;
+}
+
+// Bazaar stocking (stage S2) -- see docs/DECISIONS.md. ResourceContainer::setQuantity
+// (ResourceContainer.idl) is native and was never bound to Lua -- no LuaResourceContainer
+// class exists. This is a thin additive global wrapper, matching the shape of
+// bazaarBotList/bazaarBotCancel/bazaarBotCounts directly above (S1): a narrow
+// DirectorManager-registered function taking the object pointer plus arguments, not a new
+// Luna-bound class. Chosen over adding a full LuaResourceContainer class because a single
+// setter does not warrant the registration/CMake/Luna<> machinery a whole new bound class
+// requires, and this file already has direct precedent (S1, right above) for exposing a
+// narrow native capability this way instead of wrapping an entire object type.
+//
+// GUARDS (a fresh binding shipped this same session with both a null-dereference and an
+// unbounded-index crash that adversarial review caught -- neither is repeated here):
+//   - wrong-type/null object: dynamic_cast<ResourceContainer*> returns nullptr for anything
+//     that isn't actually a ResourceContainer (a null input included), checked before any
+//     dereference -- returns false rather than crashing or erroring into the caller.
+//   - quantity range: clamped to [1, ResourceContainer::MAXSIZE] (ResourceContainer.idl,
+//     MAXSIZE = 100000) rather than trusting the caller's value. 0 and negative are raised
+//     to 1 (a "listing" with 0 units makes no sense for this binding's only caller); values
+//     above MAXSIZE are capped to it rather than passed through.
+//
+// ignoreMax: always passed false. Every quantity band this stage's Lua policy configures
+// (custom_scripts/screenplays/bazaar/bazaar_config.lua) tops out at 900 -- three orders of
+// magnitude under MAXSIZE (100000) -- so there is no legitimate case for this binding's only
+// caller to need to bypass that cap, and the clamp above makes bypassing it a non-event even
+// if a future caller passed something absurd. If a real future need for more than MAXSIZE in
+// one container ever comes up, that should be its own deliberate change, not a quietly
+// flipped default here.
+int DirectorManager::setResourceContainerQuantity(lua_State* L) {
+	if (checkArgumentCount(L, 2) == 1) {
+		String err = "incorrect number of arguments passed to DirectorManager::setResourceContainerQuantity. Proper arguments is: (resourceContainer, quantity)";
+		printTraceError(L, err);
+		ERROR_CODE = INCORRECT_ARGUMENTS;
+		return 0;
+	}
+
+	SceneObject* obj = (SceneObject*) lua_touserdata(L, -2);
+	lua_Integer rawQuantity = lua_tointeger(L, -1);
+
+	if (obj == nullptr) {
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	ResourceContainer* container = dynamic_cast<ResourceContainer*>(obj);
+
+	if (container == nullptr) {
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	if (rawQuantity < 1) {
+		rawQuantity = 1;
+	} else if (rawQuantity > ResourceContainer::MAXSIZE) {
+		rawQuantity = ResourceContainer::MAXSIZE;
+	}
+
+	container->setQuantity((uint32) rawQuantity, true, false, true);
+
+	lua_pushboolean(L, true);
+
+	return 1;
 }
 
 int DirectorManager::creatureTemplateExists(lua_State* L) {

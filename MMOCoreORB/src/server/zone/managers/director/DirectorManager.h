@@ -217,6 +217,12 @@ namespace server {
 		static int bazaarBotCancel(lua_State* L);
 		static int bazaarBotCounts(lua_State* L);
 
+		// Bazaar stocking (stage S2) -- see docs/DECISIONS.md. ResourceContainer::
+		// setQuantity (ResourceContainer.idl) is native and was never bound to Lua
+		// (no LuaResourceContainer class exists); this is a thin additive wrapper,
+		// same shape as the three bindings directly above it.
+		static int setResourceContainerQuantity(lua_State* L);
+
 		static int creatureTemplateExists(lua_State* L);
 		static int printLuaError(lua_State* L);
 		static int logLua(lua_State* L);
