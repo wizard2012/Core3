@@ -458,3 +458,69 @@ function Tests:warDonateCheck()
 
 	printf("WARDONATECHECK: end\n")
 end
+
+
+--- Console-callable proof of what warreport/war_map.lua WOULD draw, without
+-- a game client and without touching any real player's waypoints. The
+-- console `test <function>` command (ServerCore.cpp) takes the whole
+-- remainder of the line as a zero-argument Lua function name -- there is no
+-- way to pass a planet as a separate argument -- so this loops over every
+-- planet WarReport knows about and prints each city's label/colour for all
+-- of them; scroll to the planet you want.
+--
+-- Run:
+--   docker exec -u swgemu swgwar-core3 bash -lc \
+--     "screen -S swgemu-server -X stuff \x27test warMapProbe\n\x27"
+--   docker exec -u swgemu swgwar-core3 bash -lc \
+--     "grep WARMAPPROBE ~/workspace/Core3/MMOCoreORB/bin/screenlog.0 | tail -40"
+function Tests:warMapProbe()
+	printf("WARMAPPROBE: begin\n")
+
+	if WarMap == nil then
+		printf("WARMAPPROBE: FAIL -- WarMap table is nil; war_map.lua did not load into this VM\n")
+		return
+	end
+	if WarReport == nil or WarReport.state() == nil then
+		printf("WARMAPPROBE: FAIL -- war state not readable on this thread\n")
+		return
+	end
+
+	printf("WARMAPPROBE: specialTypeID=" .. tostring(WarMap.SPECIAL_TYPE_ID)
+		.. " refreshIntervalMs=" .. tostring(WarMap.REFRESH_INTERVAL_MS) .. "\n")
+
+	local colorNames = {
+		[WAYPOINT_WHITE] = "WHITE", [WAYPOINT_BLUE] = "BLUE",
+		[WAYPOINT_GREEN] = "GREEN", [WAYPOINT_ORANGE] = "ORANGE",
+		[WAYPOINT_YELLOW] = "YELLOW", [WAYPOINT_PURPLE] = "PURPLE",
+	}
+
+	local st = WarReport.state()
+	local ids = WarReport.regionIds()
+	local planets = { "tatooine", "corellia", "naboo" }
+
+	for p = 1, #planets do
+		local planetName = planets[p]
+		printf("WARMAPPROBE: -- planet " .. planetName
+			.. " signature=" .. tostring(WarMap:signatureFor(planetName)) .. "\n")
+
+		for i = 1, #ids do
+			local id = ids[i]
+			if WarReport.PLANET_OF[id] == planetName then
+				local region = st.regions[id]
+				local coords = WarReport.COORDS[id]
+				if region ~= nil and coords ~= nil then
+					local label = WarMap:labelFor(id, region)
+					local color = WarMap:colorFor(region)
+					printf("WARMAPPROBE: " .. id
+						.. " coords=(" .. tostring(coords[1]) .. "," .. tostring(coords[2]) .. ")"
+						.. " color=" .. tostring(colorNames[color] or color)
+						.. " label=\"" .. label .. "\"\n")
+				else
+					printf("WARMAPPROBE: " .. id .. " -- missing region or coords, skipped (would not draw)\n")
+				end
+			end
+		end
+	end
+
+	printf("WARMAPPROBE: end\n")
+end
