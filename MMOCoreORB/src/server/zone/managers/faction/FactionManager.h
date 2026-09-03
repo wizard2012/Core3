@@ -62,6 +62,20 @@ public:
 	int getRankDelegateRatioTo(int rank);
 	int getFactionPointsCap(int rank);
 
+	/**
+	 * Promotes a player's faction rank by exactly one step.
+	 * Hard-clamped: never sets a rank that is out of range for the loaded
+	 * faction rank table (see B20 -- getFactionPointsCap returns -1 for any
+	 * rank >= factionRanks.getCount(), which would drive faction standing to
+	 * -1 if ever reached). No override/bypass parameter exists on purpose.
+	 * @pre: player locked or lockable by this thread
+	 * @post: player's factionRank unchanged if the clamp would be violated,
+	 *        otherwise incremented by one and the client notified.
+	 * @return true if the player was promoted, false if already at (or would
+	 *         exceed) the highest loaded rank -- a safe no-op, not an error.
+	 */
+	bool promoteFactionRank(CreatureObject* player);
+
 	bool isHighestRank(int rank) {
 		return rank >= factionRanks.getCount() - 1 || rank >= 15;
 	}

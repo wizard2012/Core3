@@ -291,6 +291,27 @@ int FactionManager::getFactionPointsCap(int rank) {
 	return Math::max(1000, getRankCost(rank) * 20);
 }
 
+bool FactionManager::promoteFactionRank(CreatureObject* player) {
+	if (player == nullptr)
+		return false;
+
+	int currentRank = player->getFactionRank();
+	int newRank = currentRank + 1;
+
+	// Hard clamp -- see B20. Never call setFactionRank with a rank that is
+	// out of range for the loaded rank table; getFactionPointsCap(rank)
+	// returns -1 for rank >= factionRanks.getCount(), which would drive the
+	// player's faction standing to -1. No bypass parameter, ever.
+	if (newRank >= factionRanks.getCount())
+		return false;
+
+	Locker locker(player);
+
+	player->setFactionRank(newRank, true);
+
+	return true;
+}
+
 bool FactionManager::isFaction(const String& faction) {
 	if (factionMap.contains(faction))
 		return true;
