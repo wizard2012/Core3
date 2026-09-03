@@ -44,9 +44,12 @@ WarReportLogin = ScreenPlay:new {
 	reportDelayMs = 12000,
 
 	-- Contest at or above which a region is worth a map marker. Matches
-	-- WarReport.frontRegions' own default so the text report and the
-	-- waypoints can never disagree about what counts as "the front".
-	frontThreshold = 25.0,
+	-- WarReport.frontRegions' own default (1.0, the same floor
+	-- war_battle.lua stages a fight at) so the text report, the waypoints,
+	-- and the battle system can never disagree about what counts as "the
+	-- front". Noise is controlled by WarReport.MAX_FRONT_REGIONS, not by
+	-- raising this back up.
+	frontThreshold = 1.0,
 
 	-- Waypoint colour. 2 is the standard blue used by
 	-- screenplays that mark objectives; see addWaypoint's `color` arg.

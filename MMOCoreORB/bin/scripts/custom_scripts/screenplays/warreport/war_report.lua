@@ -47,6 +47,14 @@ WarReport.NAME_OVERRIDES = {
 	nab_kaadara     = "Kaadara",
 }
 
+-- Contest floor and battle staging both live at 1.0 now (see
+-- warreport/war_battle.lua:71) so the surfaces and the battle system can
+-- never disagree about whether a front exists. With that floor a lot more
+-- regions qualify than under the old absolute 25.0 gate, so the noise
+-- control moves from the threshold to a rank cap instead: only the top
+-- MAX_FRONT_REGIONS contested regions are ever surfaced to a player.
+WarReport.MAX_FRONT_REGIONS = 3
+
 WarReport.PLANET_OF = {
 	cor_bela_vistal = "corellia", cor_coronet = "corellia",
 	cor_doaba = "corellia", cor_kor_vella = "corellia",
@@ -176,15 +184,17 @@ function WarReport.tally()
 	return out
 end
 
---- Regions under active contest, most-contested first. `threshold` defaults
--- to 25.0 -- below that the fighting is not worth a player's attention and
--- listing it would bury the real front in noise.
+--- Regions under active contest, most-contested first, capped to the top
+-- WarReport.MAX_FRONT_REGIONS. `threshold` defaults to 1.0 -- the same
+-- floor at which war_battle.lua stages a fight, so a region can never be a
+-- live battle while this list calls it quiet. Noise is controlled by the
+-- rank cap below, not by raising the threshold.
 function WarReport.frontRegions(threshold)
 	local st = WarReport.state()
 	if st == nil then
 		return {}
 	end
-	threshold = threshold or 25.0
+	threshold = threshold or 1.0
 
 	local front = {}
 	local ids = WarReport.regionIds()
@@ -204,6 +214,14 @@ function WarReport.frontRegions(threshold)
 		end
 		return a.contest > b.contest
 	end)
+
+	-- Rank, don't gate: cap the list rather than raising the threshold back
+	-- up, so the exact same region can never be "in battle" and "not a
+	-- front" at once.
+	while #front > WarReport.MAX_FRONT_REGIONS do
+		table.remove(front)
+	end
+
 	return front
 end
 
@@ -270,6 +288,8 @@ function WarReport.regionLine(regionId)
 		line = line .. ", under heavy attack"
 	elseif contest >= 25.0 then
 		line = line .. ", contested"
+	elseif contest >= 1.0 then
+		line = line .. ", skirmishing"
 	else
 		line = line .. ", quiet"
 	end
@@ -305,7 +325,9 @@ function WarReport.planetLines(planetId)
 end
 
 --- Is this region on the front? Used by the waypoint layer to decide what is
--- worth marking on a player's map.
+-- worth marking on a player's map. `threshold` defaults to 1.0, matching
+-- frontRegions() and war_battle.lua's staging floor -- there is no caller
+-- (checked repo-wide) that wants a stricter notion of "contested" here.
 function WarReport.isFront(regionId, threshold)
 	local st = WarReport.state()
 	if st == nil then
@@ -315,7 +337,7 @@ function WarReport.isFront(regionId, threshold)
 	if r == nil or type(r.contest) ~= "number" then
 		return false
 	end
-	return r.contest >= (threshold or 25.0)
+	return r.contest >= (threshold or 1.0)
 end
 
 --- World coordinates for each region's town centre, {x, y}.

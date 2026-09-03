@@ -198,3 +198,57 @@ function Tests:warBattleClear()
 	end
 	printf("WARBATTLE: cleared " .. tostring(WarBattle:clear()) .. " combatant(s)\n")
 end
+
+
+--- Verification probe for the front-region threshold/cap fix (contest floor
+-- dropped from an absolute 25.0 to the same 1.0 war_battle.lua stages at,
+-- with the list capped to WarReport.MAX_FRONT_REGIONS instead).
+function Tests:warFrontRegions()
+	printf("WARFRONTREGIONS: begin\n")
+
+	if WarReport == nil or WarReport.state() == nil then
+		printf("WARFRONTREGIONS: FAIL -- war state not readable on this thread\n")
+		return
+	end
+
+	local front = WarReport.frontRegions()
+	printf("WARFRONTREGIONS: count=" .. #front
+		.. " cap=" .. tostring(WarReport.MAX_FRONT_REGIONS) .. "\n")
+	for i = 1, #front do
+		printf("WARFRONTREGIONS: #" .. i .. " " .. tostring(front[i].id)
+			.. " contest=" .. tostring(front[i].contest)
+			.. " faction=" .. tostring(front[i].faction) .. "\n")
+	end
+
+	printf("WARFRONTREGIONS: end\n")
+end
+
+
+--- Renders the ACTUAL player-facing strings at current tick, for the
+-- threshold/ladder fix verification (login headline/front-line/region
+-- lines, and the bartender rumour) -- not just frontRegions()'s raw list.
+function Tests:warFrontRender()
+	printf("WARFRONTRENDER: begin\n")
+
+	if WarReport == nil or WarReport.state() == nil then
+		printf("WARFRONTRENDER: FAIL -- war state not readable on this thread\n")
+		return
+	end
+
+	printf("WARFRONTRENDER: headline = " .. tostring(WarReport.headline()) .. "\n")
+	printf("WARFRONTRENDER: frontLine = " .. tostring(WarReport.frontLine()) .. "\n")
+
+	local ids = { "nab_moenia", "tat_anchorhead", "tat_mos_eisley", "cor_doaba" }
+	for i = 1, #ids do
+		printf("WARFRONTRENDER: regionLine(" .. ids[i] .. ") = "
+			.. tostring(WarReport.regionLine(ids[i])) .. "\n")
+	end
+
+	if WarRumor ~= nil then
+		printf("WARFRONTRENDER: bartender line = " .. tostring(WarRumor:line()) .. "\n")
+	else
+		printf("WARFRONTRENDER: WarRumor table is nil\n")
+	end
+
+	printf("WARFRONTRENDER: end\n")
+end
