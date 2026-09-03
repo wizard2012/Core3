@@ -44,6 +44,18 @@
      giving Keren ambient life. Does NOT edit naboo_keren.lua or
      street_life.lua; this only produces the verified coordinate list a
      follow-up change would need.
+  5. POPULATION_AID_POSTS and POPULATION_CANTINAS (custom_scripts/
+     screenplays/population/population_config.lua) -- the medic/performer
+     standing-service sites. These are hand-picked, human-authored
+     coordinates that no tool has ever verified, same as #3/#4 above, and
+     they are read live (not hardcoded here), so this check reflects
+     whatever population_config.lua the running server actually has loaded
+     -- including tat_anchorhead's POPULATION_CANTINAS row (owner ruling,
+     2026-09-03, commit 80a8656fe5: co-located with the medic's own aid
+     post at +4m x, z inherited UNCHANGED from the unoffset point and never
+     floor-snapped -- exactly the kind of row this check exists to catch).
+     Rows with a non-zero `cell` are interior and are explicitly SKIPPED,
+     not tested -- same caveat as #3/#4's cell-relative rows.
 
   A row whose x/y falls inside a building interior (cell ~= 0, e.g.
   mobiles rows like {x=60, y=0.6, cell=1106372}) is skipped, not tested --
@@ -301,6 +313,41 @@ local function spawnsafetyAuditKeren()
 	end
 end
 
+-- ===================================================== population sites ===
+
+--- Audits one POPULATION_AID_POSTS/POPULATION_CANTINAS-shaped table: a map
+-- of regionId -> { zone, x, z, y, heading, cell }. Rows with a non-zero
+-- `cell` are interior coordinates (12 of 13 POPULATION_CANTINAS rows) --
+-- testing those against the outdoor navmesh would be meaningless and would
+-- read as a false FAIL, so they are explicitly SKIPPED with a line saying
+-- so, never silently dropped and never tested. Defensive by design: this
+-- is read from a sibling in-flight file this probe does not own, so a nil
+-- global, a non-table global, or a malformed row must degrade to a clean
+-- SKIP line, never a Lua error.
+local function spawnsafetyAuditPopulationTable(tableName, tbl)
+	if type(tbl) ~= "table" then
+		printf("SPAWNAUDIT: SKIP  " .. tableName .. " is nil or not a table (population_config.lua not loaded on this thread?)\n")
+		spawnsafetySkip = spawnsafetySkip + 1
+		return
+	end
+
+	for regionId, row in pairs(tbl) do
+		if type(row) ~= "table" then
+			printf("SPAWNAUDIT: SKIP  " .. tableName .. "." .. tostring(regionId) .. " is not a table row\n")
+			spawnsafetySkip = spawnsafetySkip + 1
+		elseif row.cell ~= nil and row.cell ~= 0 then
+			printf("SPAWNAUDIT: SKIP  " .. tableName .. "." .. tostring(regionId)
+				.. " cell=" .. tostring(row.cell) .. " (interior coordinate -- outdoor navmesh check would be meaningless)\n")
+			spawnsafetySkip = spawnsafetySkip + 1
+		elseif type(row.x) ~= "number" or type(row.z) ~= "number" or type(row.y) ~= "number" or type(row.zone) ~= "string" then
+			printf("SPAWNAUDIT: SKIP  " .. tableName .. "." .. tostring(regionId) .. " missing/non-numeric zone/x/z/y\n")
+			spawnsafetySkip = spawnsafetySkip + 1
+		else
+			spawnsafetyCheck(tableName .. "." .. tostring(regionId), row.zone, row.x, row.z, row.y)
+		end
+	end
+end
+
 -- ================================================================= main ===
 
 function Tests:spawnSafetyAudit()
@@ -336,6 +383,11 @@ function Tests:spawnSafetyAudit()
 
 	-- 4. Keren's open-world mobiles rows -- the payoff (see header/spawnsafetyAuditKeren).
 	spawnsafetyAuditKeren()
+
+	-- 5. Population service sites (medic aid posts, performer cantinas) --
+	-- hand-picked, never verified, read live from population_config.lua.
+	spawnsafetyAuditPopulationTable("POPULATION_AID_POSTS", POPULATION_AID_POSTS)
+	spawnsafetyAuditPopulationTable("POPULATION_CANTINAS", POPULATION_CANTINAS)
 
 	printf(string.format("SPAWNAUDIT: end -- pass=%d fail=%d skip=%d\n", spawnsafetyPass, spawnsafetyFail, spawnsafetySkip))
 end
