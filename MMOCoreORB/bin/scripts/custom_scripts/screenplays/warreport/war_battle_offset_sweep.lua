@@ -60,44 +60,48 @@
   defaults to root, which reports "No Sockets found" even on a healthy
   server (see CLAUDE.md's known traps).
 
-  This probe has NOT been run yet. Do not treat any candidate in this file
-  as verified -- these are proposals to test, not results, until a human
-  runs it against the live navmesh and reads the output.
+  RESULTS SO FAR (2026-09-03 run against the live navmesh)
+  ----------------------------------------------------------
+  - nab_theed anchorOffset: ALL CLEAR at (90,90), (100,100), (-80,80),
+    (80,-80). {90,90} was chosen (smallest change off the default {80,80})
+    and is now live in war_battle.lua's SITE_OVERRIDES. REMOVED from
+    ANCHOR_CANDIDATES below -- settled, no need to keep re-sweeping it.
+  - tat_bestine siteRadius: ALL CLEAR at 100 and 110. 100 was chosen (closer
+    in, matching this project's stated design direction) and is now live in
+    war_battle.lua's SITE_OVERRIDES. REMOVED from RADIUS_CANDIDATES below --
+    settled.
+  - nab_theed siteRadius: NONE of {90, 100, 110} came back fully clear.
+  - cor_tyrena siteRadius: NONE of {90, 100, 110} came back fully clear.
+    RADIUS_CANDIDATES below widens both to a 60-170 band (the 90-110 band
+    failing does not by itself say which direction, if any, helps) and the
+    per-candidate output now names which bearing(s) failed, plus flags any
+    bearing that fails at EVERY candidate radius tested for that region --
+    that pattern means a fixed obstacle at that bearing, not a radius
+    problem, and no radius will fix it.
+
+  This probe has been run once already (see RESULTS above for what is
+  settled). Do not treat any candidate still listed below as verified --
+  these are proposals still waiting on a fresh run.
 ]]
 
 -- ======================================================= candidate lists ==
 
--- nab_theed recruiter-anchor: candidate {x, y} offset pairs to replace the
--- default (BATTLE_OFFSET_M, BATTLE_OFFSET_M) diagonal with. Reasoning (see
--- the battle-site-offset handoff report): smaller/larger symmetric
--- diagonals first (cheapest to reason about, keeps the existing "diagonal"
--- shape), then asymmetric pairs exploiting nab_theed's KILL_BOUNDS rect
--- being wide in x (halfW=840) and narrow in y (halfH=448), then the two
--- flipped-sign quadrants. nab_theed is the only region whose
--- recruiter-anchor failed the audit -- the other three failures are
--- circle sites, covered by RADIUS_CANDIDATES below instead.
+-- nab_theed recruiter-anchor is SETTLED (see RESULTS above) -- no entries
+-- left to sweep. Leaving the table empty (rather than deleting the whole
+-- anchor-sweep code path) keeps this file ready to sweep a future
+-- recruiter-anchor failure at another region without rewriting anything.
 local OFFSETSWEEP_ANCHOR_CANDIDATES = {
-	nab_theed = {
-		{ x = 60,  y = 60  },
-		{ x = 70,  y = 70  },
-		{ x = 90,  y = 90  },
-		{ x = 100, y = 100 },
-		{ x = 60,  y = 90  },
-		{ x = 90,  y = 60  },
-		{ x = -80, y = 80  },
-		{ x = 80,  y = -80 },
-	},
 }
 
--- Candidate siteRadius overrides for the three regions whose circle sites
--- failed. All three failing points landed exactly on SITE_RADIUS_MAX=130
--- (see war_battle.lua's siteRadiusFor() -- every one of these regions'
--- computed radius clamps to the max), so pulling the radius in toward the
--- settled centre is the straightforward thing to try first.
+-- Candidate siteRadius overrides for the two regions still unresolved
+-- (tat_bestine is SETTLED -- see RESULTS above, removed from this table).
+-- The first sweep (90/100/110) all failed for both regions; that band
+-- alone doesn't say whether a smaller or larger radius would clear, so
+-- this widens to roughly 60-170 in both directions from the 130 the
+-- default computation clamps to.
 local OFFSETSWEEP_RADIUS_CANDIDATES = {
-	nab_theed   = { 90, 100, 110 },
-	cor_tyrena  = { 90, 100, 110 },
-	tat_bestine = { 90, 100, 110 },
+	nab_theed  = { 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170 },
+	cor_tyrena = { 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170 },
 }
 
 -- ================================================================ points ==
@@ -167,24 +171,31 @@ local function offsetsweepCheckPoint(label, planet, x, y)
 	return walkable and true or false
 end
 
---- Checks every point a candidate produces for a region and returns true
--- only if ALL of them passed -- one failing bearing fails the candidate,
--- even if every other bearing for it passed.
+--- Checks every point a candidate produces for a region. Returns whether
+-- ALL of them passed (one failing bearing fails the candidate, even if
+-- every other bearing for it passed) plus the list of point labels that
+-- failed, so the caller can report exactly which bearing(s) sank it rather
+-- than a bare pass/fail.
 local function offsetsweepCheckCandidate(regionId, planet, candidateLabel, points)
 	local allPass = true
+	local failedLabels = {}
 	for i = 1, #points do
 		local pass = offsetsweepCheckPoint(
 			regionId .. " " .. candidateLabel .. " " .. points[i].label,
 			planet, points[i].x, points[i].y)
 		if not pass then
 			allPass = false
+			failedLabels[#failedLabels + 1] = points[i].label
 		end
 	end
-	printf(string.format("OFFSETSWEEP: candidate %s / %-14s -- %s (%d point(s) checked)\n",
-		regionId, candidateLabel,
-		allPass and "ALL CLEAR" or "FAIL (at least one bearing off navmesh)",
-		#points))
-	return allPass
+	if allPass then
+		printf(string.format("OFFSETSWEEP: candidate %s / %-14s -- ALL CLEAR (%d point(s) checked)\n",
+			regionId, candidateLabel, #points))
+	else
+		printf(string.format("OFFSETSWEEP: candidate %s / %-14s -- FAIL, failing bearing(s): %s (%d/%d point(s) checked)\n",
+			regionId, candidateLabel, table.concat(failedLabels, ", "), #failedLabels, #points))
+	end
+	return allPass, failedLabels
 end
 
 -- =================================================================== main ==
@@ -201,10 +212,15 @@ function Tests:battleOffsetSweep()
 		return
 	end
 
-	-- regionId -> { anchor = {{label, pass}, ...}, radius = {{label, pass}, ...} }
+	-- regionId -> { anchor = {{label, pass}, ...},
+	--               radius = {{label, pass}, ...},
+	--               radiusCandidateCount = N,
+	--               radiusBearingFailCount = { [bearingLabel] = N, ... } }
 	local summary = {}
 	local function ensureSummary(regionId)
-		summary[regionId] = summary[regionId] or { anchor = {}, radius = {} }
+		summary[regionId] = summary[regionId] or {
+			anchor = {}, radius = {}, radiusCandidateCount = 0, radiusBearingFailCount = {},
+		}
 		return summary[regionId]
 	end
 
@@ -238,8 +254,13 @@ function Tests:battleOffsetSweep()
 				local radius = candidates[i]
 				local label = string.format("siteRadius(%g)", radius)
 				local points = offsetsweepCirclePoints(coords, radius)
-				local allPass = offsetsweepCheckCandidate(regionId, planet, label, points)
+				local allPass, failedLabels = offsetsweepCheckCandidate(regionId, planet, label, points)
 				s.radius[#s.radius + 1] = { label = label, pass = allPass }
+				s.radiusCandidateCount = s.radiusCandidateCount + 1
+				for f = 1, #failedLabels do
+					local bl = failedLabels[f]
+					s.radiusBearingFailCount[bl] = (s.radiusBearingFailCount[bl] or 0) + 1
+				end
 			end
 		end
 	end
@@ -271,6 +292,23 @@ function Tests:battleOffsetSweep()
 				printf("OFFSETSWEEP: " .. regionId .. " siteRadius candidates ALL CLEAR: " .. table.concat(clear, ", ") .. "\n")
 			else
 				printf("OFFSETSWEEP: " .. regionId .. " siteRadius candidates: NONE fully clear -- every candidate tested failed at least one bearing\n")
+			end
+
+			-- A bearing that fails at EVERY radius candidate tested for this
+			-- region cannot be fixed by any radius -- it is a fixed obstacle at
+			-- that bearing (a wall, cliff, water, etc.), not a distance
+			-- problem. Surface that explicitly rather than letting it hide
+			-- inside a wall of per-candidate FAIL lines.
+			local alwaysFails = {}
+			for bearingLabel, failCount in pairs(s.radiusBearingFailCount) do
+				if failCount >= s.radiusCandidateCount and s.radiusCandidateCount > 0 then
+					alwaysFails[#alwaysFails + 1] = bearingLabel
+				end
+			end
+			if #alwaysFails > 0 then
+				printf("OFFSETSWEEP: " .. regionId .. " -- bearing(s) failing at EVERY siteRadius candidate tested (" ..
+					s.radiusCandidateCount .. " candidates): " .. table.concat(alwaysFails, ", ") ..
+					" -- likely a fixed obstacle at that bearing; no radius will fix it\n")
 			end
 		end
 	end
