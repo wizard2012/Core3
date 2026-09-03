@@ -110,15 +110,67 @@ function PopulationServices:refreshKind(kind)
 		return
 	end
 
+	-- The owner's front-region guarantee (supersedes D15's scarcity-only
+	-- placement for active-battle cities specifically): the first
+	-- `guaranteed` provider ids of each kind are pinned directly to the
+	-- current ranked front regions (same signal war_battle.lua stages
+	-- fights at -- see PopulationPlacement.frontRegions()), one provider
+	-- per front, in rank order. This deliberately bypasses BOTH the
+	-- toward_front/away_from_front bias (a guarantee is a harder
+	-- requirement than a soft preference) AND min_separation = "planet"
+	-- for these slots only -- three front regions can legitimately all
+	-- land on the same planet (e.g. all three Tatooine cities hot at
+	-- once), and the guarantee must still hold in that case rather than
+	-- silently failing. Providers beyond `guaranteed` are the original
+	-- ambient roaming pool, unchanged, and continue to respect
+	-- min_separation among themselves for spread.
+	local front = PopulationPlacement.frontRegions()
+	local guaranteedCount = 0
+	if type(providerCfg.guaranteed) == "number" then
+		guaranteedCount = providerCfg.guaranteed
+	end
+
 	local usedPlanets = {}
 	for i = 1, providerCfg.count do
 		local providerId = kind .. "_" .. i
-		local ok, regionId = pcall(PopulationPlacement.computeSite, kind, providerId, warState, usedPlanets)
+		local regionId = nil
 
-		if ok and regionId ~= nil then
-			local planet = POPULATION_REGION_PLANET[regionId]
-			if planet ~= nil then
-				usedPlanets[planet] = true
+		if i <= guaranteedCount and front[i] ~= nil then
+			local candidate = front[i].id
+			if siteTableFor(kind, candidate) ~= nil then
+				regionId = candidate
+			else
+				-- No site of this kind exists at this front region at all
+				-- (e.g. tat_anchorhead has no cantina in this build --
+				-- see population_config.lua's POPULATION_CANTINAS comment).
+				-- The guarantee cannot be met by placement alone; flag it
+				-- rather than silently doing nothing.
+				printf("PopulationServices: front region " .. tostring(candidate) ..
+					" has no " .. kind .. " site configured -- guarantee cannot be met for " ..
+					providerId .. "\n")
+			end
+		end
+
+		if regionId == nil then
+			-- Either not a guaranteed slot, fewer active fronts than
+			-- guaranteed slots right now, or the guaranteed site above was
+			-- unavailable -- fall back to the normal roaming computation so
+			-- the slot still gives ambient coverage instead of sitting idle.
+			local ok, computed = pcall(PopulationPlacement.computeSite, kind, providerId, warState, usedPlanets)
+			if ok then
+				regionId = computed
+			end
+		end
+
+		if regionId ~= nil then
+			if i > guaranteedCount then
+				-- Only the ambient roamers track/avoid each other's
+				-- planets; guaranteed slots are deliberately exempt (see
+				-- above).
+				local planet = POPULATION_REGION_PLANET[regionId]
+				if planet ~= nil then
+					usedPlanets[planet] = true
+				end
 			end
 
 			self:applyPlacement(kind, providerId, regionId)
@@ -320,10 +372,46 @@ function PopulationServices:deliverMedic(pPlayer, regionId)
 	end
 
 	CreatureObject(pPlayer):subtractCashCredits(fee)
+
+	-- The actual heal (this used to be missing entirely -- enhanceCharacter()
+	-- below is a buff, not a heal; verified PlayerManagerImplementation.cpp:
+	-- 6666-6685 never touches current HAM damage or wound pools). Doctors
+	-- heal the physical pools; the performer (deliverPerformer, below)
+	-- clears MIND -- mirroring the real SWG medic/entertainer split this
+	-- file's header already documents. healDamage's signature is
+	-- (damageHealed, pool) -- see LuaCreatureObject::healDamage and its
+	-- existing callers in screenplays/tests/tests.lua -- and
+	-- CreatureObjectImplementation::healDamage clamps the result to
+	-- maxValue - wounds itself (verified CreatureObjectImplementation.cpp:
+	-- ~1261-1280), so passing an oversized amount is safe and just means
+	-- "heal to full"; it is never a subtraction or an overflow risk.
+	--
+	-- ORDER MATTERS: setWounds() must run BEFORE healDamage(). Verified in
+	-- CreatureObjectImplementation::setWounds -- clearing a wound only
+	-- raises the CEILING (maxHam - wounds); for a primary pool (HEALTH/
+	-- ACTION/MIND) it does NOT also raise current HAM back up to that new
+	-- ceiling. healDamage()'s own ceiling check
+	-- (maxValue = maxHamList.get(type) - wounds.get(type)) reads whatever
+	-- wounds are in effect AT CALL TIME, so healing before clearing wounds
+	-- would cap the heal at the OLD, still-wounded ceiling.
+	CreatureObject(pPlayer):setWounds(HEALTH, 0)
+	CreatureObject(pPlayer):setWounds(CONSTITUTION, 0)
+	CreatureObject(pPlayer):setWounds(STAMINA, 0)
+	CreatureObject(pPlayer):setWounds(ACTION, 0)
+	CreatureObject(pPlayer):setWounds(STRENGTH, 0)
+	CreatureObject(pPlayer):setWounds(QUICKNESS, 0)
+
+	CreatureObject(pPlayer):healDamage(999999, HEALTH)
+	CreatureObject(pPlayer):healDamage(999999, ACTION)
+	CreatureObject(pPlayer):healDamage(999999, MIND)
+
+	-- Keep the buff too -- real and working on its own, just not a heal by
+	-- itself.
 	CreatureObject(pPlayer):enhanceCharacter()
+
 	CreatureObject(pPlayer):addCooldown(self.MEDIC_COOLDOWN_NAME, POPULATION_COOLDOWN_MS.medic)
 
-	CreatureObject(pPlayer):sendSystemMessage("The medic patches you up and sends you on your way. (" .. fee .. " credits)")
+	CreatureObject(pPlayer):sendSystemMessage("The medic treats your wounds and patches you up. (" .. fee .. " credits)")
 
 	return true
 end

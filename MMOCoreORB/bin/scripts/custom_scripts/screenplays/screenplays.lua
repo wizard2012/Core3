@@ -9,6 +9,7 @@ includeFile("../custom_scripts/screenplays/population/population_config.lua")
 includeFile("../custom_scripts/screenplays/population/placement.lua")
 includeFile("../custom_scripts/screenplays/population/standing_services.lua")
 includeFile("../custom_scripts/screenplays/population/bartender_rumor.lua")
+includeFile("../custom_scripts/screenplays/population/population_probe.lua")
 
 -- Ambient street life: lines (pure data) first, then tunables, then the
 -- screenplay itself, then its console probes. Reads WarBridge/WarReport at

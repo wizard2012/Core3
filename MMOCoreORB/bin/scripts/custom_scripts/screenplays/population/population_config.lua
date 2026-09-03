@@ -29,13 +29,46 @@ POPULATION_SERVICES = {
 	performer = true,
 }
 
--- The roster (docs/DESIGN-POPULATION.md S4.7.1). Two of each: one would
--- make a single bad roll strand the only medic on the far side of the
--- map; four on a 13-region map is "there's always one nearby", which is
--- the ubiquitous design D15 replaced.
+-- The roster (docs/DESIGN-POPULATION.md S4.7.1). D15's scarcity choice
+-- (two of each, roaming with bias) is UNCHANGED for the ambient pool -- the
+-- reasoning still holds: one would make a single bad roll strand the only
+-- medic on the far side of the map, and ubiquitous placement is the design
+-- D15 explicitly rejected.
+--
+-- SUPERSEDING RULING (owner, 2026-09-02, overriding D15 for this one case):
+-- "In cities where there are active battles we need both an NPC entertainer
+-- and medic/doctor to heal all wounds." `guaranteed` below adds exactly
+-- that on top of the D15 pool, not instead of it: the first `guaranteed`
+-- provider ids of each kind are pinned to the current front regions
+-- (WarReport.frontRegions() -- the same signal war_battle.lua stages
+-- fights at), capped at WarReport.MAX_FRONT_REGIONS (3), see
+-- standing_services.lua refreshKind(). `count` is therefore
+-- `guaranteed` (one slot per possible simultaneous front, so all 3 fronts
+-- are covered even if they land on the same planet -- see min_separation
+-- note below) plus 2 ambient roamers retained for coverage away from the
+-- front, same as before.
+--
+-- min_separation = "planet" is deliberately NOT enough by itself to cover
+-- 3 simultaneous fronts: if all 3 ranked front regions happen to be on the
+-- same planet (e.g. every Tatooine city hot at once), "two of a kind never
+-- share a planet" would leave 2 of the 3 fronts unguaranteed no matter how
+-- high `count` is raised, since a third same-planet slot would always be
+-- rejected. Raising the count further does not fix this -- the constraint
+-- itself has to give. So guaranteed slots (only) are placed directly by
+-- rank and are exempt from min_separation; only the ambient roamers still
+-- enforce it among themselves. This is a deliberate, narrow relaxation of
+-- D15's spread rule for guaranteed slots only, not a removal of it.
+--
+-- KNOWN GAP: tat_anchorhead has no cantina at all in this build (see
+-- POPULATION_CANTINAS below -- 12 of 13 regions, verified asymmetry, not a
+-- bug). If tat_anchorhead becomes a front region, the performer guarantee
+-- cannot be met there by placement alone; refreshKind() logs this rather
+-- than failing silently. Fixing it for real needs a hand-picked interior
+-- cantina-equivalent spot for Anchorhead, which is out of scope here (no
+-- such coordinate exists in this codebase to reuse).
 POPULATION_PROVIDERS = {
-	medic     = { count = 2, kind = "aid_post", bias = "toward_front" },
-	performer = { count = 2, kind = "cantina",  bias = "away_from_front" },
+	medic     = { count = 5, guaranteed = 3, kind = "aid_post", bias = "toward_front" },
+	performer = { count = 5, guaranteed = 3, kind = "cantina",  bias = "away_from_front" },
 
 	circuit_ticks   = 72,   -- war ticks between moves (~3 days at the hourly tick)
 	salt            = "swgwar-population-v1", -- game-side only, NOT war_seed (S4.7.4)

@@ -264,6 +264,32 @@ function PopulationPlacement.ticksUntilNextCycle(warState)
 	return ticks - intoThisCycle
 end
 
+-- ==================================================== front regions ====
+--
+-- The owner's front-region guarantee (superseding D15's scarcity-only
+-- design for active-battle cities specifically -- see standing_services.lua
+-- refreshKind()) reuses war_battle.lua's own "active battle" signal
+-- (WarReport.frontRegions(): contest >= WarBattle.MIN_CONTEST (1.0), ranked,
+-- capped at WarReport.MAX_FRONT_REGIONS (3)) rather than deriving a second
+-- definition from WAR_STATE here. This thin wrapper just makes the call
+-- fail-safe the same way every other function in this file is: missing
+-- WarReport (not loaded into this Lua state, or a malformed war state
+-- underneath it) degrades to "no guaranteed slots this pass", never a
+-- Lua error.
+
+function PopulationPlacement.frontRegions()
+	if type(WarReport) ~= "table" or type(WarReport.frontRegions) ~= "function" then
+		return {}
+	end
+
+	local ok, result = pcall(WarReport.frontRegions)
+	if not ok or type(result) ~= "table" then
+		return {}
+	end
+
+	return result
+end
+
 -- =================================================== index <-> region ===
 
 function PopulationPlacement.regionIndex(regionId)
