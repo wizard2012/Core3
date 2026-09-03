@@ -346,7 +346,14 @@ end
 --- Placement radius for every non-primary site at a region: a fraction of
 -- that town's own radius, clamped so it never gets absurdly close to or far
 -- from the centre regardless of how big or small the town is.
-local function siteRadiusFor(regionId)
+--
+-- PROMOTED from `local function` to a WarBattle field (2026-09-03) so
+-- spawn_safety_probe.lua (and any other console probe) can call the real,
+-- live implementation -- SITE_OVERRIDES included -- instead of maintaining
+-- a separate copy that silently drifts out of sync every time this
+-- function changes. Behaviour is unchanged; this is a visibility promotion
+-- only.
+function WarBattle.siteRadiusFor(regionId)
 	local override = WarBattle.SITE_OVERRIDES[regionId]
 	if override ~= nil and override.siteRadius ~= nil then
 		return override.siteRadius
@@ -365,11 +372,14 @@ end
 -- first site of the very first region staged this cycle, which uses the
 -- exact legacy diagonal offset instead, to stay byte-for-byte compatible
 -- with war_recruiter.lua's own waypoint math (see PLACEMENT above).
-local function siteOrigin(coords, regionId, siteIndex, totalSites, isRecruiterAnchor)
+--
+-- PROMOTED from `local function` to a WarBattle field for the same reason
+-- as WarBattle.siteRadiusFor above -- see that comment.
+function WarBattle.siteOrigin(coords, regionId, siteIndex, totalSites, isRecruiterAnchor)
 	if isRecruiterAnchor then
 		return WarBattle.anchorPoint(coords, regionId)
 	end
-	local radius = siteRadiusFor(regionId)
+	local radius = WarBattle.siteRadiusFor(regionId)
 	local degrees = 45 + (siteIndex - 1) * (360 / totalSites)
 	local rad = degrees * math.pi / 180
 	return coords[1] + radius * math.cos(rad), coords[2] + radius * math.sin(rad)
@@ -499,7 +509,7 @@ function WarBattle:stageBattles()
 				end
 
 				local isRecruiterAnchor = (not primaryRegionWritten) and (s == 1)
-				local ox, oy = siteOrigin(coords, regionId, s, wanted, isRecruiterAnchor)
+				local ox, oy = WarBattle.siteOrigin(coords, regionId, s, wanted, isRecruiterAnchor)
 				local fielded = spawnSite(zone, regionId, s, defender, attacker, ox, oy)
 
 				if fielded > 0 then
