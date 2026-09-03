@@ -176,6 +176,7 @@ namespace server {
 		static int getZoneByName(lua_State* L);
 		static int isZoneEnabled(lua_State* L);
 		static int getFactionPointsCap(lua_State* L);
+		static int promoteFactionRank(lua_State* L);
 		static int getRegion(lua_State* L);
 		static int forcePeace(lua_State* L);
 		static int getObjectTemplatePathByCRC(lua_State* L);

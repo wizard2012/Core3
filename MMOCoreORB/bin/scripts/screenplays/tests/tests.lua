@@ -532,3 +532,94 @@ function Tests:getMaxConditionCheck()
 
 	SceneObject(subject):destroyObjectFromWorld()
 end
+
+-- B20/faction-rank-promote: offline-safe(ish) console probe for
+-- FactionManager::promoteFactionRank -- still needs a live server + a
+-- spawned test player to hold a real CreatureObject, so it is NOT a
+-- pure-offline unit test, but it needs no real player and no game client.
+--
+-- 1. Tabulates getRankCost(rank)/getFactionPointsCap(rank) for every rank
+--    0-21 (this is the cap-curve table B20 has been waiting on).
+-- 2. Proves the promoteFactionRank clamp at the boundary:
+--      - rank 20 -> promoteFactionRank -> true, new rank 21, cap(21) > 0
+--      - rank 21 -> promoteFactionRank -> false, rank unchanged at 21,
+--        cap(21) still not -1
+--      - calling it again at rank 21 is idempotent: still false, still 21,
+--        no crash, no corruption
+--
+-- Every assertion prints FACTIONRANKPROMOTE: PASS/FAIL <detail> so a run
+-- can be graded with a grep. Cleans up its own test player on every exit
+-- path, including early failures.
+-- console: test factionRankPromoteCheck
+function Tests:factionRankPromoteCheck()
+	printf("FACTIONRANKPROMOTE: -- cap curve, ranks 0-21 --\n")
+
+	for rank = 0, 21 do
+		local cost = getRankCost(rank)
+		local cap = getFactionPointsCap(rank)
+		printf(string.format("FACTIONRANKCAP: rank=%d cost=%d cap=%d\n", rank, cost, cap))
+	end
+
+	local subject = spawnSceneObject("tatooine", "object/creature/player/human_male.iff", 3614.894, 5, -4780.4487, 0, 0)
+
+	if subject == nil then
+		printf("FACTIONRANKPROMOTE: FAIL -- spawnSceneObject returned nil\n")
+		return
+	end
+
+	if not SceneObject(subject):isPlayerCreature() then
+		printf("FACTIONRANKPROMOTE: FAIL -- spawned object is not a PlayerCreature\n")
+		SceneObject(subject):destroyObjectFromWorld()
+		return
+	end
+
+	local ok, err = pcall(function()
+		-- Step 1: rank 20 -> 21 must succeed and must never yield cap == -1.
+		CreatureObject(subject):setFactionRank(20)
+
+		local promoted = promoteFactionRank(subject)
+		local rankAfterFirst = CreatureObject(subject):getFactionRank()
+		local capAfterFirst = getFactionPointsCap(rankAfterFirst)
+
+		if promoted ~= true then
+			printf("FACTIONRANKPROMOTE: FAIL -- rank 20 did not promote (returned " .. tostring(promoted) .. ")\n")
+		elseif rankAfterFirst ~= 21 then
+			printf("FACTIONRANKPROMOTE: FAIL -- expected rank 21 after promotion, got " .. tostring(rankAfterFirst) .. "\n")
+		elseif capAfterFirst == -1 or capAfterFirst <= 0 then
+			printf("FACTIONRANKPROMOTE: FAIL -- cap(21) is not a real positive number, got " .. tostring(capAfterFirst) .. "\n")
+		else
+			printf("FACTIONRANKPROMOTE: PASS -- rank 20 promoted to 21, cap(21)=" .. tostring(capAfterFirst) .. "\n")
+		end
+
+		-- Step 2: rank 21 -> attempted promotion to 22 must be refused.
+		local blocked = promoteFactionRank(subject)
+		local rankAfterSecond = CreatureObject(subject):getFactionRank()
+		local capAfterSecond = getFactionPointsCap(rankAfterSecond)
+
+		if blocked ~= false then
+			printf("FACTIONRANKPROMOTE: FAIL -- rank 21 promoted past the clamp (returned " .. tostring(blocked) .. ")\n")
+		elseif rankAfterSecond ~= 21 then
+			printf("FACTIONRANKPROMOTE: FAIL -- rank changed on a refused promotion, now " .. tostring(rankAfterSecond) .. "\n")
+		elseif capAfterSecond == -1 then
+			printf("FACTIONRANKPROMOTE: FAIL -- cap at the ceiling came back -1 (the exact B20 landmine)\n")
+		else
+			printf("FACTIONRANKPROMOTE: PASS -- rank 21 refused promotion to 22, cap(21) still " .. tostring(capAfterSecond) .. "\n")
+		end
+
+		-- Step 3: idempotence -- calling it again at the ceiling changes nothing.
+		local blockedAgain = promoteFactionRank(subject)
+		local rankAfterThird = CreatureObject(subject):getFactionRank()
+
+		if blockedAgain ~= false or rankAfterThird ~= 21 then
+			printf("FACTIONRANKPROMOTE: FAIL -- repeated call at the ceiling was not idempotent (returned " .. tostring(blockedAgain) .. ", rank " .. tostring(rankAfterThird) .. ")\n")
+		else
+			printf("FACTIONRANKPROMOTE: PASS -- repeated call at the ceiling is a safe no-op\n")
+		end
+	end)
+
+	if not ok then
+		printf("FACTIONRANKPROMOTE: FAIL -- test errored: " .. tostring(err) .. "\n")
+	end
+
+	SceneObject(subject):destroyObjectFromWorld()
+end

@@ -492,6 +492,7 @@ void DirectorManager::initializeLuaEngine(Lua* luaEngine) {
 	luaEngine->registerFunction("getRankDelegateRatioTo", getRankDelegateRatioTo);
 	luaEngine->registerFunction("isHighestRank", isHighestRank);
 	luaEngine->registerFunction("getFactionPointsCap", getFactionPointsCap);
+	luaEngine->registerFunction("promoteFactionRank", promoteFactionRank);
 	luaEngine->registerFunction("registerScreenPlay", registerScreenPlay);
 	luaEngine->registerFunction("getZoneByName", getZoneByName);
 	luaEngine->registerFunction("isZoneEnabled", isZoneEnabled);
@@ -3722,6 +3723,28 @@ int DirectorManager::getFactionPointsCap(lua_State* L) {
 	int rank = lua_tointeger(L, -1);
 
 	lua_pushinteger(L, FactionManager::instance()->getFactionPointsCap(rank));
+
+	return 1;
+}
+
+int DirectorManager::promoteFactionRank(lua_State* L) {
+	if (checkArgumentCount(L, 1) == 1) {
+		String err = "incorrect number of arguments passed to DirectorManager::promoteFactionRank";
+		printTraceError(L, err);
+		ERROR_CODE = INCORRECT_ARGUMENTS;
+		return 0;
+	}
+
+	CreatureObject* player = (CreatureObject*)lua_touserdata(L, -1);
+
+	if (player == nullptr) {
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	bool result = FactionManager::instance()->promoteFactionRank(player);
+
+	lua_pushboolean(L, result);
 
 	return 1;
 }
