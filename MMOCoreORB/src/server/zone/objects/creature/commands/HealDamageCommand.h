@@ -14,6 +14,7 @@
 #include "server/zone/objects/creature/buffs/DelayedBuff.h"
 #include "server/zone/packets/object/CombatAction.h"
 #include "server/zone/managers/collision/CollisionManager.h"
+#include "server/zone/objects/creature/commands/HealTargetPolicy.h"
 
 class HealDamageCommand : public QueueCommand {
 	float range;
@@ -399,7 +400,7 @@ public:
 
 		Locker clocker(targetCreature, creature);
 
-		if ((targetCreature->isAiAgent() && !targetCreature->isPet()) || targetCreature->isDroidObject() || targetCreature->isVehicleObject() || targetCreature->isDead() || targetCreature->isRidingMount() || targetCreature->isAttackableBy(creature))
+		if (HealTargetPolicy::shouldRedirectToSelf(creature, targetCreature))
 			targetCreature = creature;
 
 		uint64 pharmaceuticalObjectID = 0;

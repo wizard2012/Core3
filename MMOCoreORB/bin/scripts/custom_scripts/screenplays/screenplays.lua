@@ -32,6 +32,7 @@ includeFile("../custom_scripts/screenplays/warreport/war_report.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_map.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_login.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_contrib_hook.lua")
+includeFile("../custom_scripts/screenplays/warreport/war_heal.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_officer.lua")
 -- Reads WarOfficer.POSTS and the warofficer:npc:<region> shared-memory keys
 -- war_officer.lua writes, so it must load after that file.

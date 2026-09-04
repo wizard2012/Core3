@@ -447,10 +447,18 @@ local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFac
 		if pD ~= nil then
 			defenders[#defenders + 1] = pD
 			trackOid(SceneObject(pD):getObjectID())
+			-- Healing this NPC feeds war materiel: B11's ruling wants a path
+			-- for non-combatants, and a Medic had none. See war_heal.lua.
+			-- The observer dies with the object, which cleanup already reaps.
+			if WarHeal ~= nil and WarHeal.attach ~= nil then WarHeal.attach(pD) end
 		end
 		if pA ~= nil then
 			attackers[#attackers + 1] = pA
 			trackOid(SceneObject(pA):getObjectID())
+			-- Healing this NPC feeds war materiel: B11's ruling wants a path
+			-- for non-combatants, and a Medic had none. See war_heal.lua.
+			-- The observer dies with the object, which cleanup already reaps.
+			if WarHeal ~= nil and WarHeal.attach ~= nil then WarHeal.attach(pA) end
 		end
 	end
 

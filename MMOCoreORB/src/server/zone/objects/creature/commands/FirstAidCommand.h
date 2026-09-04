@@ -6,6 +6,7 @@
 #define FIRSTAIDCOMMAND_H_
 
 #include "server/zone/objects/scene/SceneObject.h"
+#include "server/zone/objects/creature/commands/HealTargetPolicy.h"
 
 class FirstAidCommand : public QueueCommand {
 	float mindCost;
@@ -109,7 +110,7 @@ public:
 
 		Locker clocker(creatureTarget, creature);
 
-		if ((creatureTarget->isAiAgent() && !creatureTarget->isPet()) || creatureTarget->isDroidObject() || creatureTarget->isDead() || creatureTarget->isRidingMount() || creatureTarget->isAttackableBy(creature))
+		if (HealTargetPolicy::shouldRedirectToSelf(creature, creatureTarget))
 			creatureTarget = creature;
 
 		if(!checkDistance(creature, creatureTarget, range))

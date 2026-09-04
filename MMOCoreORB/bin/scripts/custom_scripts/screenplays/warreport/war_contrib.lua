@@ -127,6 +127,7 @@ local VALID_SOURCES = {
 	pvp_kill                = true,
 	base_delivery           = true,
 	materiel_donation       = true,
+	materiel_support        = true,
 }
 WarContrib.VALID_SOURCES = VALID_SOURCES
 

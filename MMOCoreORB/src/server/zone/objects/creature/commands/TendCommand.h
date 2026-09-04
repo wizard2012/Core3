@@ -12,6 +12,7 @@
 #include "server/zone/ZoneServer.h"
 #include "server/zone/managers/player/PlayerManager.h"
 #include "QueueCommand.h"
+#include "server/zone/objects/creature/commands/HealTargetPolicy.h"
 
 class TendCommand : public QueueCommand {
 protected:
@@ -178,7 +179,7 @@ public:
 
 		Locker clocker(creatureTarget, creature);
 
-		if ((creatureTarget->isAiAgent() && !creatureTarget->isPet()) || creatureTarget->isDroidObject() || creatureTarget->isVehicleObject() || creatureTarget->isDead() || creatureTarget->isRidingMount() || creatureTarget->isAttackableBy(creature))
+		if (HealTargetPolicy::shouldRedirectToSelf(creature, creatureTarget))
 			creatureTarget = creature;
 
 		if(!checkDistance(creature, creatureTarget, range))

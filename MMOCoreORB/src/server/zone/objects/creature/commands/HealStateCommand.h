@@ -13,6 +13,7 @@
 #include "server/zone/objects/creature/events/InjuryTreatmentTask.h"
 #include "server/zone/objects/creature/buffs/DelayedBuff.h"
 #include "server/zone/managers/collision/CollisionManager.h"
+#include "server/zone/objects/creature/commands/HealTargetPolicy.h"
 
 class HealStateCommand : public QueueCommand {
 	float mindCost;
@@ -203,7 +204,7 @@ public:
 
 		Locker clocker(creatureTarget, creature);
 
-		if ((creatureTarget->isAiAgent() && !creatureTarget->isPet()) || creatureTarget->isDroidObject() || creatureTarget->isVehicleObject() || creatureTarget->isDead() || creatureTarget->isRidingMount() || creatureTarget->isAttackableBy(creature))
+		if (HealTargetPolicy::shouldRedirectToSelf(creature, creatureTarget))
 			creatureTarget = creature;
 
 		uint64 state = CreatureState::INVALID;
