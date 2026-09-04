@@ -37,11 +37,17 @@ public:
 
 		ManagedReference<GroupObject*> group = player->getGroup();
 
-		if (!checkGroupLeader(player, group))
+		if (!checkSquadLeader(player, group))
 			return GENERALERROR;
 
+		// B27: the squad is the leader, their player group when they have one,
+		// and every faction NPC following them. Collected ONCE and reused for
+		// both cost and effect so the HAM charged matches who is buffed.
+		Vector<ManagedReference<CreatureObject*> > squadMembers;
+		collectSquadMembers(player, group, squadMembers);
+
 		float skillMod = (float) creature->getSkillMod("steadyaim");
-		int hamCost = (int) (100.0f * (1.0f - (skillMod / 100.0f))) * calculateGroupModifier(group);
+		int hamCost = (int) (100.0f * (1.0f - (skillMod / 100.0f))) * calculateSquadModifier(squadMembers.size());
 
 		int healthCost = creature->calculateCostAdjustment(CreatureAttribute::STRENGTH, hamCost);
 		int actionCost = creature->calculateCostAdjustment(CreatureAttribute::QUICKNESS, hamCost);
@@ -54,7 +60,7 @@ public:
 
 		int amount = 5 + skillMod;
 
-		if (!doSteadyAim(player, group, amount))
+		if (!doSteadyAim(player, squadMembers, amount))
 			return GENERALERROR;
 
 		if (!ghost->getCommandMessageString(STRING_HASHCODE("steadyaim")).isEmpty() && creature->checkCooldownRecovery("command_message")) {
@@ -66,14 +72,14 @@ public:
 		return SUCCESS;
 	}
 
-	bool doSteadyAim(CreatureObject* leader, GroupObject* group, int amount) const {
-		if (leader == nullptr || group == nullptr)
+	bool doSteadyAim(CreatureObject* leader, const Vector<ManagedReference<CreatureObject*> >& members, int amount) const {
+		if (leader == nullptr)
 			return false;
 
-		for (int i = 0; i < group->getGroupSize(); i++) {
-			ManagedReference<CreatureObject*> member = group->getGroupMember(i);
+		for (int i = 0; i < members.size(); i++) {
+			ManagedReference<CreatureObject*> member = members.get(i);
 
-			if (member == nullptr || !member->isPlayerCreature())
+			if (member == nullptr)
 				continue;
 
 			if (!isValidGroupAbilityTarget(leader, member, false))

@@ -29,10 +29,17 @@ public:
 		ManagedReference<CreatureObject*> player = cast<CreatureObject*>(creature);
 		ManagedReference<GroupObject*> group = player->getGroup();
 
-		if (!checkGroupLeader(player, group))
+		if (!checkSquadLeader(player, group))
 			return GENERALERROR;
 
-		int hamCost = (int) (100.0f * calculateGroupModifier(group));
+		// B27: the squad is the leader, their player group when they have one,
+		// and every faction NPC following them. Collected ONCE and reused for
+		// both the cost and the effect, so the HAM charged always matches the
+		// set of creatures actually buffed.
+		Vector<ManagedReference<CreatureObject*> > squadMembers;
+		collectSquadMembers(player, group, squadMembers);
+
+		int hamCost = (int) (100.0f * calculateSquadModifier(squadMembers.size()));
 
 		int healthCost = creature->calculateCostAdjustment(CreatureAttribute::STRENGTH, hamCost);
 		int actionCost = creature->calculateCostAdjustment(CreatureAttribute::QUICKNESS, hamCost);
@@ -47,24 +54,24 @@ public:
 			player->sendSystemMessage("@cbt_spam:rally_fail_single"); //"You fail to rally the group!"
 			sendRallyCombatSpam(player, group, false);
 		} else {
-			if (!doRally(player, group))
+			if (!doRally(player, squadMembers))
 				return GENERALERROR;
 		}
 
 		return SUCCESS;
 	}
 
-	bool doRally(CreatureObject* leader, GroupObject* group) const {
-		if (leader == nullptr || group == nullptr)
+	bool doRally(CreatureObject* leader, const Vector<ManagedReference<CreatureObject*> >& members) const {
+		if (leader == nullptr)
 			return false;
 
 		int duration = 30;
 
 		leader->sendSystemMessage("@cbt_spam:rally_success_single"); //"You rally the group!"
-		sendRallyCombatSpam(leader, group, true);
+		sendRallyCombatSpam(leader, leader->getGroup(), true);
 
-		for (int i = 0; i < group->getGroupSize(); i++) {
-			ManagedReference<CreatureObject*> member = group->getGroupMember(i);
+		for (int i = 0; i < members.size(); i++) {
+			ManagedReference<CreatureObject*> member = members.get(i);
 
 			if (member == nullptr)
 				continue;
@@ -108,7 +115,10 @@ public:
 	}
 
 	void sendRallyCombatSpam(CreatureObject* leader, GroupObject* group, bool success) const {
-		if (leader == nullptr || group == nullptr)
+		// group may legitimately be nullptr now: a player commanding only NPC
+		// troops is ungrouped, and the stock `group == nullptr` early return
+		// would have swallowed the bystander spam for exactly that case.
+		if (leader == nullptr)
 			return;
 
 		Zone* zone = leader->getZone();
@@ -129,7 +139,7 @@ public:
 		  For bystanders, the defender is themselves.*/
 
 		//Send to group members if they are on the same planet.
-		for (int i = 0; i < group->getGroupSize(); i++) {
+		for (int i = 0; group != nullptr && i < group->getGroupSize(); i++) {
 			ManagedReference<CreatureObject*> member = group->getGroupMember(i);
 			if (member == nullptr || !member->isPlayerCreature() || member->getZone() != leader->getZone())
 				continue;
@@ -153,7 +163,7 @@ public:
 
 		for (int i = 0; i < closeObjects.size(); ++i) {
 			SceneObject* object = cast<SceneObject*>( closeObjects.get(i));
-			if (object == nullptr || !object->isPlayerCreature() || !checkDistance(leader, object, 70) || group->hasMember(object->getObjectID()))
+			if (object == nullptr || !object->isPlayerCreature() || !checkDistance(leader, object, 70) || (group != nullptr && group->hasMember(object->getObjectID())))
 				continue;
 
 			CreatureObject* receiver = cast<CreatureObject*>( object); //in range player who isn't in group.

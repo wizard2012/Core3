@@ -34,6 +34,141 @@ public:
 		return SUCCESS;
 	}
 
+	/**
+	 * Is `target` a faction NPC that war_squad.lua has attached to `leader`?
+	 *
+	 * B27 slice 1 (custom_scripts/screenplays/warreport/war_squad.lua) hands a
+	 * player up to 6 battle NPCs by calling AiAgent::setFollowObject(player) on
+	 * each. That follow pointer is the ONLY marker of squad membership -- the
+	 * troops are deliberately not adopted, not pets, and not group members, so
+	 * that war_battle.lua's cleanup still owns their lifetime. Reading the same
+	 * pointer here keeps a single source of truth instead of a second roster
+	 * that could drift from it.
+	 */
+	static bool isFollowingTrooper(CreatureObject* leader, CreatureObject* target) {
+		if (leader == nullptr || target == nullptr)
+			return false;
+
+		// Players and pets already have their own handling in
+		// isValidGroupAbilityTarget; this predicate is only about war NPCs.
+		if (target->isPlayerCreature() || target->isPet())
+			return false;
+
+		if (!target->isAiAgent())
+			return false;
+
+		AiAgent* agent = target->asAiAgent();
+
+		if (agent == nullptr)
+			return false;
+
+		ManagedReference<SceneObject*> followCopy = agent->getFollowObject().get();
+
+		if (followCopy == nullptr || followCopy != leader)
+			return false;
+
+		// Same faction only. Without this a leader would buff the very NPCs
+		// they are fighting, since enemy troops at a contested site are also
+		// AiAgents and can legitimately be following someone. Faction 0 is
+		// neutral wildlife and never joins a squad.
+		uint32 leaderFaction = leader->getFaction();
+
+		if (leaderFaction == 0 || target->getFaction() != leaderFaction)
+			return false;
+
+		return true;
+	}
+
+	/**
+	 * Every creature one Squad Leader ability should affect: the leader, their
+	 * player group when they have one, and every faction NPC currently
+	 * following them.
+	 *
+	 * WHY A COLLECTED LIST RATHER THAN group->getGroupMember(i) IN EACH
+	 * COMMAND: the stock loops are bounded by getGroupSize(), so with no group
+	 * the loop body never runs at all and followers could never be reached --
+	 * relaxing the target predicate alone would have changed nothing.
+	 */
+	void collectSquadMembers(CreatureObject* leader, GroupObject* group, Vector<ManagedReference<CreatureObject*> >& members) const {
+		if (leader == nullptr)
+			return;
+
+		members.add(leader);
+
+		if (group != nullptr) {
+			for (int i = 0; i < group->getGroupSize(); i++) {
+				ManagedReference<CreatureObject*> member = group->getGroupMember(i);
+
+				if (member == nullptr || member == leader)
+					continue;
+
+				members.add(member);
+			}
+		}
+
+		if (leader->getZone() == nullptr)
+			return;
+
+		CloseObjectsVector* closeVector = (CloseObjectsVector*) leader->getCloseObjects();
+
+		if (closeVector == nullptr)
+			return;
+
+		SortedVector<TreeEntry*> closeObjects;
+		closeVector->safeCopyReceiversTo(closeObjects, CloseObjectsVector::CREOTYPE);
+
+		for (int i = 0; i < closeObjects.size(); i++) {
+			SceneObject* object = static_cast<SceneObject*>(closeObjects.get(i));
+
+			if (object == nullptr || !object->isCreatureObject())
+				continue;
+
+			CreatureObject* creo = object->asCreatureObject();
+
+			if (!isFollowingTrooper(leader, creo))
+				continue;
+
+			members.add(creo);
+		}
+	}
+
+	/**
+	 * Permissive replacement for checkGroupLeader: being ungrouped is now
+	 * VALID. Owner's ruling -- a lone player at a front commands NPC troops,
+	 * and requiring a player group to use the profession everyone now has
+	 * would make the grant pointless. Still refuses a player who is in a group
+	 * they do not lead, which is the one case the stock message is right about.
+	 */
+	bool checkSquadLeader(CreatureObject* player, GroupObject* group) const {
+		if (player == nullptr)
+			return false;
+
+		if (group == nullptr)
+			return true;
+
+		if (group->getLeader() == nullptr || group->getLeader() != player) {
+			player->sendSystemMessage("@error_message:not_group_leader");
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * HAM-cost scale for a squad of `memberCount`. Same 1 + n/20 curve as
+	 * calculateGroupModifier, but driven by the collected squad size so NPC
+	 * troops cost their commander something, and floored at 1 so that using an
+	 * ability while ungrouped is never FREE -- calculateGroupModifier returns 0
+	 * for a null group, which combined with the relaxed leader check would have
+	 * made every ungrouped Squad Leader ability cost no HAM at all.
+	 */
+	float calculateSquadModifier(int memberCount) const {
+		if (memberCount < 1)
+			memberCount = 1;
+
+		return 1.0f + ((float) memberCount / 20.0f);
+	}
+
 	bool checkGroupLeader(CreatureObject* player, GroupObject* group) const {
 		if (player == nullptr)
 			return false;
@@ -60,6 +195,15 @@ public:
 
 		if (target == nullptr || target->isDead() || target->isIncapacitated()) {
 			return false;
+		}
+
+		// A followed faction NPC is a squad member regardless of `allowPet`.
+		// It returns early because every remaining check below is written for
+		// players: isHealableBy() consults player-only faction/duel state, and
+		// the building check would drop troops standing outside a structure
+		// their commander happens to be in.
+		if (isFollowingTrooper(leader, target)) {
+			return leader->getZone() == target->getZone();
 		}
 
 		if (allowPet) {

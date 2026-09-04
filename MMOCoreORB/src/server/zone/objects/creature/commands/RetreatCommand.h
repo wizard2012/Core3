@@ -72,11 +72,17 @@ public:
 
 		ManagedReference<GroupObject*> group = player->getGroup();
 
-		if (!checkGroupLeader(player, group))
+		if (!checkSquadLeader(player, group))
 			return GENERALERROR;
 
+		// B27: the squad is the leader, their player group when they have one,
+		// and every faction NPC following them. Collected ONCE and reused for
+		// both cost and effect so the HAM charged matches who is buffed.
+		Vector<ManagedReference<CreatureObject*> > squadMembers;
+		collectSquadMembers(player, group, squadMembers);
+
 		float groupBurstRunMod = (float) player->getSkillMod("group_burst_run");
-		int hamCost = (int) (100.0f * (1.0f - (groupBurstRunMod / 100.0f))) * calculateGroupModifier(group);
+		int hamCost = (int) (100.0f * (1.0f - (groupBurstRunMod / 100.0f))) * calculateSquadModifier(squadMembers.size());
 
 		int actionCost = creature->calculateCostAdjustment(CreatureAttribute::QUICKNESS, hamCost);
 		int mindCost = creature->calculateCostAdjustment(CreatureAttribute::FOCUS, hamCost);
@@ -84,10 +90,13 @@ public:
 		if (!inflictHAM(player, 0, actionCost, mindCost))
 			return GENERALERROR;
 
-		for (int i = 1; i < group->getGroupSize(); ++i) {
-			ManagedReference<CreatureObject*> member = group->getGroupMember(i);
+		// Starts at 1 deliberately: collectSquadMembers puts the leader at
+		// index 0, exactly as GroupObject did, and a leader does not order
+		// themselves to retreat.
+		for (int i = 1; i < squadMembers.size(); ++i) {
+			ManagedReference<CreatureObject*> member = squadMembers.get(i);
 
-			if (member == nullptr || !member->isPlayerCreature())
+			if (member == nullptr)
 				continue;
 
 			if (!isValidGroupAbilityTarget(creature, member, false))

@@ -39,10 +39,16 @@ public:
 
 		ManagedReference<GroupObject*> group = player->getGroup();
 
-		if (!checkGroupLeader(player, group))
+		if (!checkSquadLeader(player, group))
 			return GENERALERROR;
 
-		int hamCost = (int) (100.0f * calculateGroupModifier(group));
+		// B27: the squad is the leader, their player group when they have one,
+		// and every faction NPC following them. Collected ONCE and reused for
+		// both cost and effect so the HAM charged matches who is buffed.
+		Vector<ManagedReference<CreatureObject*> > squadMembers;
+		collectSquadMembers(player, group, squadMembers);
+
+		int hamCost = (int) (100.0f * calculateSquadModifier(squadMembers.size()));
 
 		int healthCost = creature->calculateCostAdjustment(CreatureAttribute::STRENGTH, hamCost);
 		int actionCost = creature->calculateCostAdjustment(CreatureAttribute::QUICKNESS, hamCost);
@@ -54,11 +60,11 @@ public:
 //		shoutCommand(player, group);
 
 		int wounds[2] = {0,0}; // members affected, total wounds
-		getWounds(player, group, wounds);
+		getWounds(player, squadMembers, wounds);
 		if (wounds[0] == 0)
 			return GENERALERROR;
 
-		if (!distributeWounds(player, group, wounds))
+		if (!distributeWounds(player, squadMembers, wounds))
 			return GENERALERROR;
 
 		if (!ghost->getCommandMessageString(STRING_HASHCODE("boostmorale")).isEmpty() && creature->checkCooldownRecovery("command_message")) {
@@ -70,18 +76,15 @@ public:
 		return SUCCESS;
 	}
 
-	void getWounds(CreatureObject* leader, GroupObject* group, int* wounds) const {
-		if (group == nullptr || leader == nullptr)
+	void getWounds(CreatureObject* leader, const Vector<ManagedReference<CreatureObject*> >& members, int* wounds) const {
+		if (leader == nullptr)
 			return;
 
-		for (int i = 0; i < group->getGroupSize(); i++) {
+		for (int i = 0; i < members.size(); i++) {
 
-			ManagedReference<CreatureObject*> member = group->getGroupMember(i);
+			ManagedReference<CreatureObject*> member = members.get(i);
 
 			if (member == nullptr)
-				continue;
-
-			if (!member->isPlayerCreature())
 				continue;
 
 			if (!isValidGroupAbilityTarget(leader, member, false))
@@ -98,22 +101,19 @@ public:
 		}
 	}
 
-	bool distributeWounds(CreatureObject* leader, GroupObject* group, int* wounds) const {
-		if (group == nullptr || leader == nullptr)
+	bool distributeWounds(CreatureObject* leader, const Vector<ManagedReference<CreatureObject*> >& members, int* wounds) const {
+		if (leader == nullptr)
 			return false;
 
 		int woundsPerMember = ceil((float)wounds[1]/(float)wounds[0]);
 		int woundsPerAttribute = ceil((float)woundsPerMember/9.f);
 
 		int totalWoundsApplied = 0;
-		for (int i = 0; i < group->getGroupSize(); i++) {
+		for (int i = 0; i < members.size(); i++) {
 
-			ManagedReference<CreatureObject*> member = group->getGroupMember(i);
+			ManagedReference<CreatureObject*> member = members.get(i);
 
 			if (member == nullptr)
-				continue;
-
-			if (!member->isPlayerCreature())
 				continue;
 
 			if (!isValidGroupAbilityTarget(leader, member, false))

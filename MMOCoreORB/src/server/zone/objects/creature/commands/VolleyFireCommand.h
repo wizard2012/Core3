@@ -29,11 +29,17 @@ public:
 		ManagedReference<CreatureObject*> player = creature;
 		ManagedReference<GroupObject*> group = player->getGroup();
 
-		if (!checkGroupLeader(player, group))
+		if (!checkSquadLeader(player, group))
 			return GENERALERROR;
 
+		// B27: the squad is the leader, their player group when they have one,
+		// and every faction NPC following them. Collected ONCE and reused for
+		// both cost and effect so the HAM charged matches who is buffed.
+		Vector<ManagedReference<CreatureObject*> > squadMembers;
+		collectSquadMembers(player, group, squadMembers);
+
 		float skillMod = (float) creature->getSkillMod("volley");
-		int hamCost = (int) (100.0f * (1.0f - (skillMod / 100.0f))) * calculateGroupModifier(group);
+		int hamCost = (int) (100.0f * (1.0f - (skillMod / 100.0f))) * calculateSquadModifier(squadMembers.size());
 
 		int healthCost = creature->calculateCostAdjustment(CreatureAttribute::STRENGTH, hamCost);
 		int actionCost = creature->calculateCostAdjustment(CreatureAttribute::QUICKNESS, hamCost);
@@ -44,7 +50,7 @@ public:
 
 		uint64 targetID = target;
 		if (attemptVolleyFire(player, &targetID, skillMod))
-			if (!doVolleyFire(player, group, &targetID))
+			if (!doVolleyFire(player, squadMembers, &targetID))
 				return GENERALERROR;
 
 		return SUCCESS;
@@ -74,14 +80,16 @@ public:
 		return ret == SUCCESS;
 	}
 
-	bool doVolleyFire(CreatureObject* leader, GroupObject* group, uint64* target) const {
-		if (leader == nullptr || group == nullptr)
+	bool doVolleyFire(CreatureObject* leader, const Vector<ManagedReference<CreatureObject*> >& members, uint64* target) const {
+		if (leader == nullptr)
 			return false;
 
-		for (int i = 0; i < group->getGroupSize(); i++) {
-			ManagedReference<CreatureObject*> member = group->getGroupMember(i);
+		for (int i = 0; i < members.size(); i++) {
+			ManagedReference<CreatureObject*> member = members.get(i);
 
-			if (!member->isPlayerCreature() || !member->isInRange(leader, 128.0))
+			// The 128m range check stays: volley fire is a coordinated shot,
+			// not an aura. Only the player-only half of the guard is dropped.
+			if (member == nullptr || !member->isInRange(leader, 128.0))
 				continue;
 
 			if (!isValidGroupAbilityTarget(leader, member, false))

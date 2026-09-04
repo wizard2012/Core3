@@ -49,6 +49,35 @@ function Tests:squadLeaderOnboardCheck()
 	local skillObj = skillManager:getSkill(SquadLeaderOnboard.noviceSkill)
 	printf("SQUADLEADERONBOARDCHECK: getSkill(" .. SquadLeaderOnboard.noviceSkill .. ") -> " .. tostring(skillObj ~= nil) .. "\n")
 
+	-- The whole-tree grant: every name in SquadLeaderOnboard.tree must resolve
+	-- to a real Skill on the RUNNING SkillManager. A name that does not resolve
+	-- makes forceAwardSkill return false for that box and the player silently
+	-- ends up with a partial profession -- exactly the kind of failure this
+	-- project keeps getting bitten by, so it is asserted rather than assumed.
+	if SquadLeaderOnboard.tree == nil then
+		printf("SQUADLEADERONBOARDCHECK: FAIL -- SquadLeaderOnboard.tree is nil; the whole-tree grant is not loaded\n")
+	else
+		local total, resolved, missing = 0, 0, ""
+
+		for _, skillName in ipairs(SquadLeaderOnboard.tree) do
+			total = total + 1
+			if skillManager:getSkill(skillName) ~= nil then
+				resolved = resolved + 1
+			else
+				missing = missing .. " " .. skillName
+			end
+		end
+
+		printf("SQUADLEADERONBOARDCHECK: tree entries=" .. tostring(total)
+			.. " resolved=" .. tostring(resolved) .. "\n")
+
+		if resolved == total and total == 18 then
+			printf("SQUADLEADERONBOARDCHECK: PASS all 18 Squad Leader boxes resolve\n")
+		else
+			printf("SQUADLEADERONBOARDCHECK: FAIL unresolved or wrong count --" .. missing .. "\n")
+		end
+	end
+
 	-- Faction hash resolution: the exact lookup handleFactionChoice does
 	-- at call time against recruiterScreenplay, proving load order holds.
 	if recruiterScreenplay == nil then

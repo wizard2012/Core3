@@ -37,10 +37,16 @@ public:
 
 		ManagedReference<GroupObject*> group = player->getGroup();
 
-		if (!checkGroupLeader(player, group))
+		if (!checkSquadLeader(player, group))
 			return GENERALERROR;
 
-		int hamCost = (int) (50.0f * calculateGroupModifier(group));
+		// B27: the squad is the leader, their player group when they have one,
+		// and every faction NPC following them. Collected ONCE and reused for
+		// both cost and effect so the HAM charged matches who is buffed.
+		Vector<ManagedReference<CreatureObject*> > squadMembers;
+		collectSquadMembers(player, group, squadMembers);
+
+		int hamCost = (int) (50.0f * calculateSquadModifier(squadMembers.size()));
 
 		int healthCost = creature->calculateCostAdjustment(CreatureAttribute::STRENGTH, hamCost);
 		int actionCost = creature->calculateCostAdjustment(CreatureAttribute::QUICKNESS, hamCost);
@@ -51,7 +57,7 @@ public:
 
 //		shoutCommand(player, group);
 
-		if (!doFormUp(player, group))
+		if (!doFormUp(player, squadMembers))
 			return GENERALERROR;
 
 		if (!ghost->getCommandMessageString(STRING_HASHCODE("formup")).isEmpty() && creature->checkCooldownRecovery("command_message")) {
@@ -63,15 +69,15 @@ public:
 		return SUCCESS;
 	}
 
-	bool doFormUp(CreatureObject* leader, GroupObject* group) const {
-		if (leader == nullptr || group == nullptr)
+	bool doFormUp(CreatureObject* leader, const Vector<ManagedReference<CreatureObject*> >& members) const {
+		if (leader == nullptr)
 			return false;
 
-		for (int i = 0; i < group->getGroupSize(); i++) {
+		for (int i = 0; i < members.size(); i++) {
 
-			ManagedReference<CreatureObject*> member = group->getGroupMember(i);
+			ManagedReference<CreatureObject*> member = members.get(i);
 
-			if (member == nullptr || !member->isPlayerCreature())
+			if (member == nullptr)
 				continue;
 
 			if (!isValidGroupAbilityTarget(leader, member, false))

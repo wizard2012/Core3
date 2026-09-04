@@ -3,8 +3,14 @@
 
   Squad Leader onboarding, owner's ruling (see docs/BACKLOG.md / the
   session that shipped this): every player gets the Squad Leader profession
-  for free, novice, and picks a GCW faction the first time they are
-  faction-neutral -- this server is basically focused on the GCW.
+  for free and picks a GCW faction the first time they are faction-neutral
+  -- this server is basically focused on the GCW.
+
+  RULING UPDATED 2026-09-04: the grant is now the FULL tree, not just
+  novice. "Everyone is a squad leader" -- all 18 boxes through
+  outdoors_squadleader_master, granted on login to new and existing
+  characters alike. See the `tree` field for the sync requirement against
+  squadLeaderZeroPointSkills.
 
   WHAT SHIPPED BEFORE THIS FILE (all live already, none of it touched here):
     - SkillManager::forceAwardSkill(skillName, creature, notifyClient) --
@@ -76,6 +82,44 @@ SquadLeaderOnboard = ScreenPlay:new {
 	-- squadLeaderZeroPointSkills (managers/skill_manager.lua) or ranking it
 	-- up would cost real skill points against the owner's ruling.
 	noviceSkill = "outdoors_squadleader_novice",
+
+	-- Every box in the Squad Leader tree, in dependency order: novice, the
+	-- four branch lines, then master. The owner's ruling changed from
+	-- "everyone gets Squad Leader novice for free" to "everyone IS a Master
+	-- Squad Leader", so this is the full grant list rather than one box.
+	-- noviceSkill above is kept because sl_probe.lua reads it (:34, :49).
+	--
+	-- MUST stay in sync with squadLeaderZeroPointSkills
+	-- (managers/skill_manager.lua). All 18 names are listed there, which is
+	-- what makes the whole tree cost 0 skill points, so granting it never
+	-- touches the profession cap. A name added HERE but not THERE would
+	-- silently start charging real skill points against that cap -- which is
+	-- exactly the per-setting drift trap CLAUDE.md records for
+	-- config-local.lua's MantisPass.
+	--
+	-- forceAwardSkill skips the prerequisite walk, so strict ordering is not
+	-- required for correctness; tree order is kept so that if a name ever
+	-- stops resolving, the failure is visible at the right place.
+	tree = {
+		"outdoors_squadleader_novice",
+		"outdoors_squadleader_movement_01",
+		"outdoors_squadleader_movement_02",
+		"outdoors_squadleader_movement_03",
+		"outdoors_squadleader_movement_04",
+		"outdoors_squadleader_offense_01",
+		"outdoors_squadleader_offense_02",
+		"outdoors_squadleader_offense_03",
+		"outdoors_squadleader_offense_04",
+		"outdoors_squadleader_defense_01",
+		"outdoors_squadleader_defense_02",
+		"outdoors_squadleader_defense_03",
+		"outdoors_squadleader_defense_04",
+		"outdoors_squadleader_support_01",
+		"outdoors_squadleader_support_02",
+		"outdoors_squadleader_support_03",
+		"outdoors_squadleader_support_04",
+		"outdoors_squadleader_master",
+	},
 
 	-- Delay before onboarding runs, ms. Same value and same reasoning as
 	-- WarReportLogin.reportDelayMs (warreport/war_login.lua): long enough
@@ -153,23 +197,40 @@ function SquadLeaderOnboard:onboardPlayer(pPlayer)
 	end
 end
 
---- Grant outdoors_squadleader_novice via forceAwardSkill if the player
--- doesn't already have it. hasSkill() IS the idempotency check -- no
--- persisted flag, so this is safe to run on every login forever.
+--- Grant the ENTIRE Squad Leader tree via forceAwardSkill, skipping any box
+-- the player already holds. hasSkill() per box IS the idempotency check --
+-- no persisted flag -- so this is safe to run on every login forever, and a
+-- player who somehow lost one box gets exactly that box back rather than a
+-- redundant re-grant of the other seventeen.
+--
+-- Deliberately NOT an early return on "has novice": the previous version
+-- returned as soon as novice was present, which for every existing character
+-- on this server is true. Keeping that check would have made the whole-tree
+-- grant a no-op for precisely the players who already logged in once.
 function SquadLeaderOnboard:grantSquadLeaderSkill(pPlayer)
 	local creature = CreatureObject(pPlayer)
+	local skillManager = LuaSkillManager()
 
-	if creature:hasSkill(SquadLeaderOnboard.noviceSkill) then
-		return
+	local granted, failed = 0, 0
+
+	for _, skillName in ipairs(SquadLeaderOnboard.tree) do
+		if not creature:hasSkill(skillName) then
+			if skillManager:forceAwardSkill(pPlayer, skillName) then
+				granted = granted + 1
+			else
+				failed = failed + 1
+				printf("SquadLeaderOnboard: forceAwardSkill(" .. skillName .. ") returned false\n")
+			end
+		end
 	end
 
-	local skillManager = LuaSkillManager()
-	local granted = skillManager:forceAwardSkill(pPlayer, SquadLeaderOnboard.noviceSkill)
+	if granted > 0 then
+		creature:sendSystemMessage("You have been commissioned as a Master Squad Leader. The full profession is yours, and it costs no skill points.")
+		printf("SquadLeaderOnboard: granted " .. tostring(granted) .. " Squad Leader box(es)\n")
+	end
 
-	if granted then
-		creature:sendSystemMessage("You have been recognized as a Squad Leader recruit. Train the profession like any other -- ranking it up costs no skill points.")
-	else
-		printf("SquadLeaderOnboard: forceAwardSkill(" .. SquadLeaderOnboard.noviceSkill .. ") returned false\n")
+	if failed > 0 then
+		printf("SquadLeaderOnboard: " .. tostring(failed) .. " Squad Leader box(es) FAILED to grant\n")
 	end
 end
 
