@@ -149,6 +149,22 @@ WarBattle.DEFAULT_TOWN_RADIUS = 150
 WarBattle.LINE_GAP_M = 10
 WarBattle.TROOPER_GAP_M = 4
 
+-- How far OUTSIDE the site the attacking side forms up, along the radial
+-- running from the town centre out through the site (2026-09-04, owner
+-- ruling). Previously both sides were spawned LINE_GAP_M apart -- ten metres
+-- -- which meant an assault on a town appeared fully formed inside that town,
+-- two ranks facing off like a diorama. Attackers now appear out past the
+-- settled edge and advance in, so a player watching a contested town sees
+-- troops coming for it.
+--
+-- Kept deliberately modest. This project has already been bitten by NPCs
+-- frozen on unpathable ground (see the Anchorhead createNavMesh work), and
+-- every extra metre outward is more chance of spawning somewhere the navmesh
+-- cannot path out of. 120m clears a town's built-up edge on the war cities
+-- measured here while staying inside the meshed area. If troops are ever seen
+-- standing still out in open country, THIS is the first dial to turn down.
+WarBattle.APPROACH_DISTANCE_M = 120
+
 -- How often the whole front is torn down and restaged. No separate
 -- "lifetime" timer any more -- see LIFECYCLE above.
 WarBattle.BATTLE_INTERVAL_MS = 4 * 60 * 1000
@@ -209,6 +225,44 @@ WarBattle.TROOPS = {
 	imperial = { "stormtrooper", "stormtrooper_rifleman", "sand_trooper" },
 	rebel    = { "rebel_trooper", "rebel_commando", "rebel_scout" },
 }
+
+-- PERSISTENCE (2026-09-04, owner ruling "make battles have consequence").
+--
+-- WHAT CHANGED. cycle() used to call clear() -- destroy EVERY tracked NPC --
+-- and then restage from nothing, every BATTLE_INTERVAL_MS. That is what made
+-- the war feel like scenery: a player could fight through a site, and four
+-- minutes later the dead were back and the survivors were gone, with the
+-- fight they had just won erased underneath them. It also meant no engagement
+-- could ever resolve, because none of them lasted long enough to.
+--
+-- Now cycle() reconciles instead. A site where BOTH sides still have living
+-- NPCs is left completely alone -- no despawn, no respawn, no reset. Only
+-- slots that are empty, one-sided, or too old are cleared and restaged.
+--
+-- WHAT REPLACES THE OLD LEAK GUARANTEE. The previous design was leak-proof by
+-- brute force: nothing outlived one interval. That guarantee is now carried by
+-- three things instead, and all three matter:
+--   1. Every unit is still recorded in OIDS_KEY, so clear() still owns it.
+--   2. ROSTER_KEY additionally records which region/site/faction each unit
+--      belongs to, so reconcile() can reason about a slot rather than a flat
+--      list. Rebuilt from survivors every cycle, so it cannot grow unbounded.
+--   3. MAX_SITE_AGE_CYCLES caps how long any slot may persist, so a permanent
+--      stalemate cannot pin NPCs alive forever.
+--
+-- ROSTER_KEY format: records separated by ";", fields within a record by "|":
+--   oid|regionId|siteIndex|faction
+-- OIDS_KEY deliberately keeps its old bare-comma-separated-OID format --
+-- war_squad.lua's stagedOids() parses it with tonumber() and would break on
+-- anything richer. Two views of the same set, one of them load-bearing for
+-- another module.
+WarBattle.ROSTER_KEY = "warbattle:roster"
+WarBattle.CYCLE_KEY = "warbattle:cycle"
+
+-- How many cycles a single engagement may persist before it is torn down and
+-- restaged regardless of who is still standing. At a 4-minute interval this is
+-- 20 minutes: long enough that a fight is a place you can go back to, short
+-- enough that the front still reshapes itself to what the simulation says.
+WarBattle.MAX_SITE_AGE_CYCLES = 5
 
 WarBattle.OIDS_KEY = "warbattle:oids"
 WarBattle.REGION_KEY = "warbattle:region"
@@ -323,6 +377,23 @@ local function trackOid(oid)
 		writeStringData(WarBattle.OIDS_KEY, tostring(oid))
 	else
 		writeStringData(WarBattle.OIDS_KEY, raw .. "," .. tostring(oid))
+	end
+end
+
+--- Record a unit in BOTH views: the flat OID list clear() and war_squad.lua
+-- consume, and the structured roster reconcile() needs. siteIndex 0 means a
+-- spread-layer garrison rather than a battle site.
+local function trackUnit(oid, regionId, siteIndex, faction)
+	trackOid(oid)
+
+	local rec = tostring(oid) .. "|" .. tostring(regionId) .. "|"
+		.. tostring(siteIndex) .. "|" .. tostring(faction)
+
+	local raw = readStringData(WarBattle.ROSTER_KEY)
+	if raw == nil or raw == "" then
+		writeStringData(WarBattle.ROSTER_KEY, rec)
+	else
+		writeStringData(WarBattle.ROSTER_KEY, raw .. ";" .. rec)
 	end
 end
 
@@ -452,7 +523,119 @@ function WarBattle:clear()
 		end
 	end
 	writeStringData(WarBattle.OIDS_KEY, "")
+	-- The roster is a second view of the same set; leaving it behind would
+	-- have reconcile() reasoning about units that no longer exist.
+	writeStringData(WarBattle.ROSTER_KEY, "")
 	return removed
+end
+
+--- Reconcile the standing war against what is still alive, instead of razing
+-- it. Returns (heldSites, heldGarrisons, captures):
+--   heldSites      { ["region:site"] = true }  slots to leave completely alone
+--   heldGarrisons  { [regionId] = true }       ditto for the spread layer
+--   captures       array of { region, faction } resolved this cycle
+--
+-- A slot is KEPT when both sides still have living units and it is younger
+-- than MAX_SITE_AGE_CYCLES. A slot with exactly one surviving side is a
+-- CAPTURE: that faction won the position, so it is recorded, the survivors
+-- stand down, and the slot is freed for restaging.
+function WarBattle:reconcile()
+	local heldSites, heldGarrisons, captures = {}, {}, {}
+
+	local cycleNo = (readData(WarBattle.CYCLE_KEY) or 0) + 1
+	writeData(WarBattle.CYCLE_KEY, cycleNo)
+
+	local raw = readStringData(WarBattle.ROSTER_KEY)
+	if raw == nil or raw == "" then
+		return heldSites, heldGarrisons, captures
+	end
+
+	local slots = {}
+	for rec in string.gmatch(raw, "([^;]+)") do
+		local oid, regionId, siteIndex, faction =
+			string.match(rec, "([^|]+)|([^|]+)|([^|]+)|([^|]+)")
+		oid = tonumber(oid)
+
+		if oid ~= nil and regionId ~= nil then
+			local key = regionId .. ":" .. siteIndex
+			if slots[key] == nil then
+				slots[key] = { region = regionId, site = siteIndex, alive = {}, units = {} }
+			end
+
+			-- Alive is defined as "the OID still resolves to an object".
+			-- A killed NPC is reaped by Core3 itself, so this is the signal
+			-- that something actually happened here.
+			if getSceneObject(oid) ~= nil then
+				local sl = slots[key]
+				sl.alive[faction] = (sl.alive[faction] or 0) + 1
+				sl.units[#sl.units + 1] = { oid = oid, faction = faction }
+			end
+		end
+	end
+
+	local keptRecs, keptOids = {}, {}
+
+	local function standDown(sl)
+		for _, u in ipairs(sl.units) do
+			local pObj = getSceneObject(u.oid)
+			if pObj ~= nil then
+				pcall(function() SceneObject(pObj):destroyObjectFromWorld(false) end)
+			end
+		end
+	end
+
+	for key, sl in pairs(slots) do
+		local sides, survivor = 0, nil
+		for f, n in pairs(sl.alive) do
+			if n > 0 then
+				sides = sides + 1
+				survivor = f
+			end
+		end
+
+		local bornKey = "warbattle:born:" .. key
+		local born = readData(bornKey)
+		if born == nil or born <= 0 then
+			born = cycleNo
+			writeData(bornKey, born)
+		end
+		local age = cycleNo - born
+
+		local isGarrison = (sl.site == "0")
+		-- A garrison is single-faction by definition, so "one side left" is
+		-- its healthy state, not a capture.
+		local stillContested = isGarrison and (sides >= 1) or (sides >= 2)
+
+		if stillContested and age < WarBattle.MAX_SITE_AGE_CYCLES then
+			if isGarrison then
+				heldGarrisons[sl.region] = true
+			else
+				heldSites[key] = true
+			end
+
+			for _, u in ipairs(sl.units) do
+				keptRecs[#keptRecs + 1] = tostring(u.oid) .. "|" .. tostring(sl.region)
+					.. "|" .. tostring(sl.site) .. "|" .. tostring(u.faction)
+				keptOids[#keptOids + 1] = tostring(u.oid)
+			end
+		else
+			if (not isGarrison) and sides == 1 and survivor ~= nil then
+				captures[#captures + 1] = { region = sl.region, faction = survivor }
+				-- Remembered so WarPresence can tell an arriving player that
+				-- ground changed hands here, which is the whole point of the
+				-- engagement having been allowed to resolve.
+				writeStringData("warbattle:lastcapture:" .. sl.region, tostring(survivor))
+			end
+
+			standDown(sl)
+			writeData(bornKey, 0)
+		end
+	end
+
+	writeStringData(WarBattle.ROSTER_KEY, table.concat(keptRecs, ";"))
+	writeStringData(WarBattle.OIDS_KEY, table.concat(keptOids, ","))
+
+	return heldSites, heldGarrisons, captures
 end
 
 -- ================================================================== spawn ==
@@ -482,21 +665,51 @@ end
 local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFaction, originX, originY)
 	local defenders, attackers = {}, {}
 
+	-- Approach geometry. The site already sits on a radial out from the town
+	-- centre (siteOrigin), so pushing further along that same radial puts the
+	-- attackers outside the town rather than in it, on the natural line of
+	-- advance. ux,uy is that outward unit vector; px,py is perpendicular to
+	-- it, used to spread the attacking line abreast across the approach
+	-- instead of strung out along it.
+	local townX, townY = originX, originY
+	local coords = (WarReport ~= nil) and WarReport.COORDS[regionId] or nil
+	if coords ~= nil then
+		townX, townY = coords[1], coords[2]
+	end
+
+	local ux, uy = originX - townX, originY - townY
+	local len = math.sqrt((ux * ux) + (uy * uy))
+	if len < 1 then
+		-- Site sits on the town centre (or no coords): pick an arbitrary but
+		-- stable radial so the attackers still come from somewhere outside.
+		ux, uy, len = 1, 0, 1
+	end
+	ux, uy = ux / len, uy / len
+	local px, py = -uy, ux
+
+	local approachX = originX + (ux * WarBattle.APPROACH_DISTANCE_M)
+	local approachY = originY + (uy * WarBattle.APPROACH_DISTANCE_M)
+	local halfLine = (WarBattle.SQUAD_SIZE - 1) / 2
+
 	for i = 1, WarBattle.SQUAD_SIZE do
 		local dTemplate = pickTemplate(defenderFaction, i, regionId .. "s" .. siteIndex .. "d")
 		local aTemplate = pickTemplate(attackerFaction, i, regionId .. "s" .. siteIndex .. "a")
 
 		local dx = originX + (i - 1) * WarBattle.TROOPER_GAP_M
 		local dy = originY
-		local ax = originX + (i - 1) * WarBattle.TROOPER_GAP_M
-		local ay = originY + WarBattle.LINE_GAP_M
+
+		-- Attackers: out along the radial, spread across it, centred on the
+		-- approach point.
+		local offset = (i - 1 - halfLine) * WarBattle.TROOPER_GAP_M
+		local ax = approachX + (offset * px)
+		local ay = approachY + (offset * py)
 
 		local pD = dTemplate and spawnMobile(zone, dTemplate, 0, dx, 0, dy, 0, 0) or nil
 		local pA = aTemplate and spawnMobile(zone, aTemplate, 0, ax, 0, ay, 180, 0) or nil
 
 		if pD ~= nil then
 			defenders[#defenders + 1] = pD
-			trackOid(SceneObject(pD):getObjectID())
+			trackUnit(SceneObject(pD):getObjectID(), regionId, siteIndex, defenderFaction)
 			-- Healing this NPC feeds war materiel: B11's ruling wants a path
 			-- for non-combatants, and a Medic had none. See war_heal.lua.
 			-- The observer dies with the object, which cleanup already reaps.
@@ -504,7 +717,7 @@ local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFac
 		end
 		if pA ~= nil then
 			attackers[#attackers + 1] = pA
-			trackOid(SceneObject(pA):getObjectID())
+			trackUnit(SceneObject(pA):getObjectID(), regionId, siteIndex, attackerFaction)
 			-- Healing this NPC feeds war materiel: B11's ruling wants a path
 			-- for non-combatants, and a Medic had none. See war_heal.lua.
 			-- The observer dies with the object, which cleanup already reaps.
@@ -523,6 +736,14 @@ local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFac
 	for i = 1, pairs_n do
 		pcall(function() AiAgent(defenders[i]):setDefender(attackers[i]) end)
 		pcall(function() AiAgent(attackers[i]):setDefender(defenders[i]) end)
+
+		-- setDefender alone would leave the attackers standing at their
+		-- start point trading fire across APPROACH_DISTANCE_M. Following
+		-- their target is what turns that into an advance -- same binding
+		-- war_squad.lua uses to walk troops after a commander
+		-- (LuaAiAgent.cpp registers setFollowObject), and Core3's own
+		-- retaliation keeps the fight going once they close.
+		pcall(function() AiAgent(attackers[i]):setFollowObject(defenders[i]) end)
 	end
 
 	return #defenders + #attackers
@@ -549,7 +770,7 @@ local function spawnGarrison(zone, regionId, faction, originX, originY)
 
 			if pG ~= nil then
 				spawned = spawned + 1
-				trackOid(SceneObject(pG):getObjectID())
+				trackUnit(SceneObject(pG):getObjectID(), regionId, 0, faction)
 				-- Same materiel path as a battle NPC (see spawnSite).
 				if WarHeal ~= nil and WarHeal.attach ~= nil then WarHeal.attach(pG) end
 			end
@@ -559,7 +780,9 @@ local function spawnGarrison(zone, regionId, faction, originX, originY)
 	return spawned
 end
 
-function WarBattle:stageBattles()
+function WarBattle:stageBattles(heldSites, heldGarrisons)
+	heldSites = heldSites or {}
+	heldGarrisons = heldGarrisons or {}
 	if WarReport == nil or WarReport.state() == nil then
 		printf("WarBattle: war state not readable on this thread -- no battles staged\n")
 		return 0, 0
@@ -606,9 +829,17 @@ function WarBattle:stageBattles()
 			local regionSitesStaged = 0
 			stagedRegions[regionId] = true
 			for s = 1, wanted do
-				if npcBudgetLeft < perSiteCost then
-					break
-				end
+				local slotKey = regionId .. ":" .. tostring(s)
+
+				if heldSites[slotKey] then
+					-- A live engagement from an earlier cycle is still
+					-- standing here. Leaving it entirely alone IS the feature:
+					-- the fight a player is in must not be deleted underneath
+					-- them. It still counts toward the region total so the
+					-- presence message and the log report the truth.
+					sitesStaged = sitesStaged + 1
+					regionSitesStaged = regionSitesStaged + 1
+				elseif npcBudgetLeft >= perSiteCost then
 
 				local isRecruiterAnchor = (not primaryRegionWritten) and (s == 1)
 				local ox, oy = WarBattle.siteOrigin(coords, regionId, s, wanted, isRecruiterAnchor)
@@ -630,6 +861,7 @@ function WarBattle:stageBattles()
 						writeStringData(WarBattle.REGION_KEY, regionId)
 						primaryRegionWritten = true
 					end
+				end
 				end
 			end
 
@@ -679,7 +911,8 @@ function WarBattle:stageBattles()
 			local coords = WarReport.COORDS[regionId]
 			local zone = WarReport.PLANET_OF[regionId]
 
-			if not stagedRegions[regionId] and r ~= nil and r.faction ~= nil
+			if not stagedRegions[regionId] and not heldGarrisons[regionId]
+					and r ~= nil and r.faction ~= nil
 					and coords ~= nil and zone ~= nil and isZoneEnabled(zone) then
 				-- Reuse the normal site placement so a garrison stands where a
 				-- battle would, rather than on top of the town centre.
@@ -723,7 +956,58 @@ end
 -- The reschedule happens unconditionally and outside the pcalls, so a
 -- staging error can never stop the loop or leave the front frozen.
 function WarBattle:cycle()
-	pcall(function() WarBattle:clear() end)
-	pcall(function() WarBattle:stageBattles() end)
+	local heldSites, heldGarrisons, captures = {}, {}, {}
+
+	-- Reconcile, do NOT clear. See PERSISTENCE above for why this is no longer
+	-- a blanket teardown and what carries the leak guarantee instead.
+	local ok = pcall(function()
+		heldSites, heldGarrisons, captures = WarBattle:reconcile()
+	end)
+	if not ok then
+		-- Never let a reconcile fault strand the war: fall back to the old
+		-- raze-and-restage, which is always safe if less satisfying.
+		printf("WarBattle: reconcile failed -- falling back to full clear\n")
+		pcall(function() WarBattle:clear() end)
+		heldSites, heldGarrisons, captures = {}, {}, {}
+	end
+
+	local heldCount = 0
+	for _ in pairs(heldSites) do heldCount = heldCount + 1 end
+
+	for i = 1, #captures do
+		printf(string.format("WarBattle: %s forces took a position at %s\n",
+			tostring(captures[i].faction), tostring(captures[i].region)))
+	end
+
+	printf(string.format("WarBattle: reconcile kept %d live engagement(s), %d capture(s)\n",
+		heldCount, #captures))
+
+	pcall(function() WarBattle:stageBattles(heldSites, heldGarrisons) end)
 	createEvent(WarBattle.BATTLE_INTERVAL_MS, "WarBattle", "cycle", nil, "")
+end
+
+--- Exercise exactly the path WarBattle:cycle() takes -- reconcile, then stage
+-- into whatever it did not keep -- WITHOUT rescheduling the recurring event,
+-- which calling cycle() directly would do (leaving two timer chains running).
+-- Run it twice: the first pass stages fresh, the second should report live
+-- engagements KEPT rather than restaging them.
+function Tests:warReconcileNow()
+	printf("WARRECONCILE: begin\n")
+
+	local held, heldG, caps = WarBattle:reconcile()
+
+	local n, g = 0, 0
+	for _ in pairs(held) do n = n + 1 end
+	for _ in pairs(heldG) do g = g + 1 end
+
+	printf("WARRECONCILE: kept " .. tostring(n) .. " live engagement(s), "
+		.. tostring(g) .. " garrison(s), " .. tostring(#caps) .. " capture(s)\n")
+
+	for i = 1, #caps do
+		printf("WARRECONCILE: capture " .. tostring(caps[i].faction)
+			.. " took " .. tostring(caps[i].region) .. "\n")
+	end
+
+	WarBattle:stageBattles(held, heldG)
+	printf("WARRECONCILE: end\n")
 end
