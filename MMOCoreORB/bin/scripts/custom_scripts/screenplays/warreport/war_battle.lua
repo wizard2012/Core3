@@ -263,6 +263,12 @@ function WarBattle:start()
 	-- First battle on a delay, for the same reason WarOfficer spawns late:
 	-- the war state may not be readable on this thread at start() time.
 	createEvent(45000, "WarBattle", "cycle", nil, "")
+
+	-- B27 slice 1: one owner for the war screenplays' lifecycle rather than
+	-- two competing ones. WarSquad only observes; it spawns nothing itself.
+	if WarSquad ~= nil and WarSquad.start ~= nil then
+		WarSquad:start()
+	end
 end
 
 -- ================================================================ helpers ==
@@ -519,6 +525,13 @@ function WarBattle:stageBattles()
 				local isRecruiterAnchor = (not primaryRegionWritten) and (s == 1)
 				local ox, oy = WarBattle.siteOrigin(coords, regionId, s, wanted, isRecruiterAnchor)
 				local fielded = spawnSite(zone, regionId, s, defender, attacker, ox, oy)
+
+				-- B27 slice 1: the proximity area an overt player has to be inside
+				-- for troops to fall in. Spawned per site, alongside the site, so
+				-- there is no second source of truth about where a battle is.
+				if fielded > 0 and WarSquad ~= nil and WarSquad.attachSite ~= nil then
+					WarSquad.attachSite(zone, ox, oy)
+				end
 
 				if fielded > 0 then
 					npcBudgetLeft = npcBudgetLeft - perSiteCost
