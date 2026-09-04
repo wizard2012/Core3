@@ -104,9 +104,18 @@ WarBattle = WarBattle or {}
 
 WarBattle.screenplayName = "WarBattle"
 
--- Squad size per side, per site. Kept small (3v3, not the original 4v4) so
--- that fielding several sites at once stays inside the NPC budget below.
-WarBattle.SQUAD_SIZE = 3
+-- Squad size per side, per site. RAISED 3 -> 6 (2026-09-04, owner ruling
+-- "the war doesn't feel real"): at 3v3 a "battle" was six NPCs in two short
+-- lines, which a player could and did walk straight past in a town that had
+-- three of them staged. 6v6 reads as an actual firefight, and it gives the
+-- B27 squad system something to command -- WarSquad.MAX_TROOPS is 6, so a
+-- single site can now furnish a full squad without stripping the site bare.
+--
+-- Footprint grows with this: a line is (SQUAD_SIZE-1) * TROOPER_GAP_M wide,
+-- so 8m at 3 becomes 20m at 6, against a LINE_GAP_M of 10 between the two
+-- lines. Sites sit on a placement circle of radius >= SITE_RADIUS_MIN (40),
+-- where four sites are ~63m apart, so 20m still clears its neighbours.
+WarBattle.SQUAD_SIZE = 6
 
 -- Shared default metres-from-town-centre diagonal for the recruiter-anchor
 -- site (both x and y). This is the DEFAULT only -- WarBattle.anchorOffset()
@@ -154,10 +163,45 @@ WarBattle.MIN_CONTEST = 1.0
 -- for more. Matches sitesForContest()'s own top tier.
 WarBattle.MAX_SITES_PER_REGION = 4
 
--- Hard cap on combatants alive across EVERY region at once. At
--- SQUAD_SIZE=3 (6 NPCs/site) this is 8 sites galaxy-wide, spent in
--- hottest-region-first, hottest-site-first order -- see BUDGET above.
-WarBattle.TOTAL_NPC_BUDGET = 48
+-- Hard cap on combatants alive across EVERY region at once. RAISED 48 -> 192
+-- (2026-09-04) alongside SQUAD_SIZE. At the old 48 the entire galactic war was
+-- eight sites: one tick measured cor_doaba taking 24 of the 48 on its own,
+-- nab_kaadara 18, cor_tyrena getting 1 of the 3 sites it wanted, and
+-- tat_mos_espa getting NONE with "budget left=0" -- so even genuinely
+-- contested regions were starved by the cap rather than by the simulation.
+--
+-- At SQUAD_SIZE=6 (12 NPCs/site) 192 is 16 sites galaxy-wide, spent in
+-- hottest-region-first, hottest-site-first order -- see BUDGET above. The
+-- simulation only runs 3 active fronts (warsim/config.lua max_active_fronts,
+-- deliberately: 4 was tried and reverted for causing stalemate), and
+-- MAX_SITES_PER_REGION is 4, so the realistic ceiling is 3 * 4 * 12 = 144.
+-- The headroom above that is intentional and belongs to the lower-intensity
+-- spread layer for uncontested regions.
+--
+-- THIS IS THE DIAL TO TURN DOWN FIRST if the server struggles: it is a hard
+-- cap on simultaneously-live combat AI, and nothing else in this file scales
+-- with it.
+WarBattle.TOTAL_NPC_BUDGET = 192
+
+-- SPREAD LAYER (2026-09-04, owner ruling). The simulation runs only 3 active
+-- fronts, so on any given tick TEN of the thirteen war regions have nothing
+-- staged in them at all -- an owner standing on Tatooine saw an empty planet
+-- while the whole war was on Corellia and Naboo.
+--
+-- WHAT THIS LAYER IS, AND WHAT IT DELIBERATELY IS NOT. It does NOT stage
+-- battles in uncontested regions. war_battle.lua's MIN_CONTEST comment is
+-- right that doing so would be "inventing a war the simulation does not
+-- have", and that rule is kept. Instead a held region gets a GARRISON: a
+-- patrol of the CONTROLLING faction only, no enemy, no combat. That is a
+-- truthful rendering of what the sim actually says about that region -- it is
+-- held, not contested -- and for an enemy-faction player it is still live
+-- content, because a garrison of the other side is attackable.
+--
+-- Separate budget on purpose: spending is fronts-first out of
+-- TOTAL_NPC_BUDGET, and this pool is only touched afterwards, so a busy war
+-- can never have its real battles crowded out by scenery.
+WarBattle.SPREAD_SQUAD_SIZE = 4
+WarBattle.SPREAD_NPC_BUDGET = 60
 
 -- Combatant templates. Verified present in the running server by the
 -- warBridgeCheck probe, which listed them among templates the cities spawn.
@@ -488,6 +532,33 @@ end
 -- hottest-first priority, spending WarBattle.TOTAL_NPC_BUDGET as it goes.
 -- See BUDGET above. Returns the number of sites actually staged and the
 -- number of NPCs spawned, for the caller's log line.
+--- Spawn a single-faction garrison patrol. Unlike spawnSite() this sets
+-- nobody on anybody: there is no opposing line, so no fight starts. Tracked
+-- through the same trackOid() list as everything else, so the existing
+-- clear-then-restage cycle owns its lifetime and this can leak nothing.
+local function spawnGarrison(zone, regionId, faction, originX, originY)
+	local spawned = 0
+
+	for i = 1, WarBattle.SPREAD_SQUAD_SIZE do
+		local template = pickTemplate(faction, i, regionId .. "g")
+		if template ~= nil then
+			-- Spread along one line only; a garrison reads as a patrol
+			-- standing about, not as two ranks squaring up.
+			local gx = originX + (i - 1) * WarBattle.TROOPER_GAP_M
+			local pG = spawnMobile(zone, template, 0, gx, 0, originY, 0, 0)
+
+			if pG ~= nil then
+				spawned = spawned + 1
+				trackOid(SceneObject(pG):getObjectID())
+				-- Same materiel path as a battle NPC (see spawnSite).
+				if WarHeal ~= nil and WarHeal.attach ~= nil then WarHeal.attach(pG) end
+			end
+		end
+	end
+
+	return spawned
+end
+
 function WarBattle:stageBattles()
 	if WarReport == nil or WarReport.state() == nil then
 		printf("WarBattle: war state not readable on this thread -- no battles staged\n")
@@ -502,8 +573,24 @@ function WarBattle:stageBattles()
 
 	local npcBudgetLeft = WarBattle.TOTAL_NPC_BUDGET
 	local perSiteCost = WarBattle.SQUAD_SIZE * 2
+	-- Reap the proximity/presence areas the PREVIOUS cycle spawned, before
+	-- staging fresh ones. WarSquad.attachSite() used to be called every cycle
+	-- with its return value discarded and nothing ever destroying the area --
+	-- ~120 orphaned areas an hour at a 4-minute cycle, each still carrying a
+	-- live ENTEREDAREA observer, so a player standing on a long-dead site
+	-- could still trip formup. Both modules now own an explicit reap.
+	if WarSquad ~= nil and WarSquad.clearAreas ~= nil then
+		pcall(function() WarSquad.clearAreas() end)
+	end
+	if WarPresence ~= nil and WarPresence.clear ~= nil then
+		pcall(function() WarPresence.clear() end)
+	end
+
 	local sitesStaged, npcsSpawned = 0, 0
 	local primaryRegionWritten = false
+	-- Regions the front pass touched, so the spread pass below never doubles
+	-- up a garrison on top of a live battle.
+	local stagedRegions = {}
 
 	for r = 1, #front do
 		local regionId = front[r].id
@@ -517,6 +604,7 @@ function WarBattle:stageBattles()
 			local wanted = math.min(sitesForContest(front[r].contest), WarBattle.MAX_SITES_PER_REGION)
 
 			local regionSitesStaged = 0
+			stagedRegions[regionId] = true
 			for s = 1, wanted do
 				if npcBudgetLeft < perSiteCost then
 					break
@@ -545,6 +633,16 @@ function WarBattle:stageBattles()
 				end
 			end
 
+			-- One town-sized presence area per region that actually got
+			-- sites, so a player arriving in a contested town is TOLD the war
+			-- is here and gets a waypoint. Before this, the only in-world
+			-- pointer at a live battle was war_recruiter.lua's markBattle(),
+			-- which fires solely from a recruiter conversation -- i.e. only
+			-- for players who already knew to go asking.
+			if regionSitesStaged > 0 and WarPresence ~= nil and WarPresence.attachRegion ~= nil then
+				pcall(function() WarPresence.attachRegion(zone, regionId, regionSitesStaged) end)
+			end
+
 			printf(string.format(
 				"WarBattle: %s (%s) contest=%.2f holder=%s -- %d/%d site(s) staged, budget left=%d\n",
 				tostring(regionId), tostring(zone), front[r].contest or 0, tostring(holder),
@@ -555,6 +653,51 @@ function WarBattle:stageBattles()
 			break
 		end
 	end
+
+	-- ---- SPREAD PASS ---------------------------------------------------
+	-- Everything the fronts did not touch. Runs on its own budget, after the
+	-- fronts have taken what they need. See SPREAD_NPC_BUDGET above for why
+	-- these are garrisons rather than battles.
+	local garrisonBudget = WarBattle.SPREAD_NPC_BUDGET
+	local garrisonsSpawned, garrisonRegions = 0, 0
+
+	pcall(function()
+		local st = WarReport.state()
+		if st == nil or st.regions == nil then
+			return
+		end
+
+		local ids = WarReport.regionIds()
+		for i = 1, #ids do
+			local regionId = ids[i]
+
+			if garrisonBudget < WarBattle.SPREAD_SQUAD_SIZE then
+				break
+			end
+
+			local r = st.regions[regionId]
+			local coords = WarReport.COORDS[regionId]
+			local zone = WarReport.PLANET_OF[regionId]
+
+			if not stagedRegions[regionId] and r ~= nil and r.faction ~= nil
+					and coords ~= nil and zone ~= nil and isZoneEnabled(zone) then
+				-- Reuse the normal site placement so a garrison stands where a
+				-- battle would, rather than on top of the town centre.
+				local ox, oy = WarBattle.siteOrigin(coords, regionId, 1, 1, false)
+				local n = spawnGarrison(zone, regionId, r.faction, ox, oy)
+
+				if n > 0 then
+					garrisonBudget = garrisonBudget - n
+					garrisonsSpawned = garrisonsSpawned + n
+					garrisonRegions = garrisonRegions + 1
+				end
+			end
+		end
+	end)
+
+	printf(string.format(
+		"WarBattle: spread staged %d garrison NPC(s) across %d held region(s), spread budget was %d\n",
+		garrisonsSpawned, garrisonRegions, WarBattle.SPREAD_NPC_BUDGET))
 
 	if not primaryRegionWritten then
 		writeStringData(WarBattle.REGION_KEY, "")

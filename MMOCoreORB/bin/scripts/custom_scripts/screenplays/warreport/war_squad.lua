@@ -42,6 +42,14 @@ WarSquad.AREA_RADIUS_M   = 48      -- Proximity for "nearby". Roughly one battle
 WarSquad.SQUAD_SECONDS   = 900     -- 15 min. In practice the battle cycle expires first.
 WarSquad.TICK_MS         = 10000   -- How often presence is re-evaluated into attachment.
 
+-- Persistent registry of every proximity area attachSite() has spawned, so
+-- they can be destroyed on the next cycle. A plain Lua table would NOT do:
+-- reload-lua.sh throws every in-memory table away (see war_login.lua's header)
+-- and an area whose OID we forgot is an area that can never be reaped. This
+-- closes a real leak -- attachSite() was called once per site per 4-minute
+-- cycle with its result discarded and nothing destroying it.
+WarSquad.AREAS_KEY = "warsquad:areas"
+
 -- commanderOid -> { troops = { npcOid, ... }, expiresAt = <ms> }
 WarSquad.squads = {}
 -- npcOid -> commanderOid, so a trooper is never claimed twice.
@@ -71,6 +79,14 @@ function WarSquad.attachSite(zoneName, x, y)
 		if pArea ~= nil then
 			createObserver(ENTEREDAREA, "WarSquad", "onEnteredArea", pArea)
 			createObserver(EXITEDAREA, "WarSquad", "onExitedArea", pArea)
+
+			local oid = SceneObject(pArea):getObjectID()
+			local raw = readStringData(WarSquad.AREAS_KEY)
+			if raw == nil or raw == "" then
+				writeStringData(WarSquad.AREAS_KEY, tostring(oid))
+			else
+				writeStringData(WarSquad.AREAS_KEY, raw .. "," .. tostring(oid))
+			end
 		end
 	end)
 
@@ -196,6 +212,30 @@ function WarSquad.claimFor(pPlayer)
 	end
 
 	return #squad.troops
+end
+
+--- Destroy every proximity area a previous cycle spawned. Called by
+-- war_battle.lua at the top of stageBattles(), before fresh sites go down.
+-- Safe when there are none, and safe if an area was already reaped.
+function WarSquad.clearAreas()
+	pcall(function()
+		local raw = readStringData(WarSquad.AREAS_KEY)
+		if raw == nil or raw == "" then
+			return
+		end
+
+		for token in string.gmatch(raw, "([^,]+)") do
+			local oid = tonumber(token)
+			if oid ~= nil then
+				local pArea = getSceneObject(oid)
+				if pArea ~= nil then
+					pcall(function() SceneObject(pArea):destroyObjectFromWorld(false) end)
+				end
+			end
+		end
+
+		writeStringData(WarSquad.AREAS_KEY, "")
+	end)
 end
 
 --- Release a commander's whole squad and put each trooper back.
