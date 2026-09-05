@@ -584,6 +584,14 @@ end
 
 --- Dead: reap the corpse and its key, and queue the clone.
 local function die(sim, st, t)
+	-- D27 slice 2: a SimPlayer body is a war casualty like any other war
+	-- NPC's: one crate to their side at the town they fell in.
+	pcall(function()
+		if st.state == "fight" and st.region ~= nil and st.region ~= ""
+				and WarContrib ~= nil and WarContrib.record ~= nil then
+			WarContrib.record(sim.faction, st.region, "casualty", 1, nil)
+		end
+	end)
 	despawn(st)
 	st.state = "clone"
 	st.dest = cloneCity(sim, st)

@@ -133,6 +133,13 @@ local VALID_SOURCES = {
 	-- allowlists -- this one and bridge/flush_contributions.lua's -- stood in
 	-- the way. DESIGN-VICTORY 274 gives it 5.00, provisional.
 	materiel_delivery       = true,
+	-- Ground reports (docs/DESIGN-WAR-V2.md 5.1, warsim/sim/channels.lua
+	-- REPORT): bodies and wiped lines, written by war_battle.lua's reconcile
+	-- and the SimPlayers' death path with no character id. The one
+	-- deliberate exception to "NPCs never write the ledger" (D27): the
+	-- ground reports what happened; the sim decides what it costs.
+	casualty                = true,
+	site_lost               = true,
 }
 WarContrib.VALID_SOURCES = VALID_SOURCES
 

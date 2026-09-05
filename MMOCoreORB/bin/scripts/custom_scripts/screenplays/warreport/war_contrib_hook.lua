@@ -219,6 +219,23 @@ function WarContribHook:onKilledCreature(pPlayer, pVictim, arg2)
 				.. ") faction=" .. tostring(factionStr) .. " region=" .. tostring(regionId)
 				.. " source=" .. tostring(source) .. "\n")
 		end
+
+		-- D27 slice 2 (owner ruling: name the player): remember who last
+		-- killed one of the war's own troops here, so that if the sim flips
+		-- this town on the next tick the broadcast can say whose fight it
+		-- was. Only war-spawned NPCs (war_battle.lua's roster) count.
+		pcall(function()
+			if isVictimPlayer or WarBattle == nil or WarBattle.OIDS_KEY == nil then
+				return
+			end
+			local oids = readStringData(WarBattle.OIDS_KEY) or ""
+			local vo = tostring(SceneObject(pVictim):getObjectID())
+			if string.find("," .. oids .. ",", "," .. vo .. ",", 1, true) == nil then
+				return
+			end
+			writeStringData("warbattle:lastkiller:" .. regionId, CreatureObject(pPlayer):getFirstName())
+			writeData("warbattle:lastkiller_ms:" .. regionId, getTimestampMilli())
+		end)
 	end)
 
 	if not ok then

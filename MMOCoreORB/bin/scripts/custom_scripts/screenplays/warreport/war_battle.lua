@@ -610,6 +610,76 @@ end
 -- true; probes pass false so that LOOKING at the war does not age it -- with
 -- the clock advancing on every call, `test warReconcileNow` was a cycle, and
 -- five probes in a row razed the front exactly like five real cycles would.
+--- Spool `counts` ({ ["region|faction"] = n }) as `source` rows. Never
+-- throws; a rejection is printed, not raised.
+function WarBattle.report(counts, source)
+	if WarContrib == nil or WarContrib.record == nil then
+		return
+	end
+	local keys = {}
+	for k, n in pairs(counts) do
+		if n and n > 0 then keys[#keys + 1] = k end
+	end
+	table.sort(keys)
+	for _, k in ipairs(keys) do
+		local region, faction = string.match(k, "^([^|]+)|(.+)$")
+		if region ~= nil and faction ~= nil then
+			local ok, recorded, why = pcall(WarContrib.record, faction, region, source, counts[k], nil)
+			if ok and recorded then
+				printf(string.format("WarBattle: %s %s at %s x%d -- recorded\n",
+					tostring(faction), tostring(source), tostring(region), counts[k]))
+			else
+				printf(string.format("WarBattle: %s %s at %s NOT recorded: %s\n",
+					tostring(faction), tostring(source), tostring(region), tostring(why or recorded)))
+			end
+		end
+	end
+end
+
+--- The fronts the ground fights at: the sim's exported list (war_state.lua
+-- schema 4, `fronts`), hottest first, each as { id, faction (holder),
+-- attacker, staging, intensity, contest }. Falls back to the contest-ranked
+-- top-N when the export predates schema 4. D27 slice 2: the ground stages
+-- where the war says the fronts are, at every one of them.
+function WarBattle.fronts()
+	local st = WarReport.state()
+	if st == nil then
+		return {}
+	end
+	local out = {}
+	if type(st.fronts) == "table" and #st.fronts > 0 then
+		for i = 1, #st.fronts do
+			local f = st.fronts[i]
+			local r = f ~= nil and st.regions[f.region] or nil
+			if r ~= nil and r.faction ~= nil then
+				local intensity = tonumber(f.intensity) or 0
+				out[#out + 1] = {
+					id = f.region, faction = r.faction, attacker = f.attacker, staging = f.staging,
+					intensity = intensity, contest = math.min(100, intensity * 100),
+					offensive = f.offensive == true,
+				}
+			end
+		end
+		table.sort(out, function(a, b)
+			if a.intensity ~= b.intensity then return a.intensity > b.intensity end
+			return a.id < b.id
+		end)
+		return out
+	end
+	return WarReport.frontRegions(WarBattle.MIN_CONTEST)
+end
+
+--- Sites a front earns: two at intensity >= FRONT_TWO_SITES_INTENSITY, else
+-- one (owner ruling 2026-09-05: every front gets a fight; the hottest get
+-- two). Legacy contest-ranked fronts keep the old tiering.
+WarBattle.FRONT_TWO_SITES_INTENSITY = 0.5
+local function sitesForFront(front)
+	if front.intensity ~= nil then
+		return (front.intensity >= WarBattle.FRONT_TWO_SITES_INTENSITY) and 2 or 1
+	end
+	return sitesForContest(front.contest)
+end
+
 function WarBattle:reconcile(advanceClock)
 	local heldSites, heldGarrisons, captures = {}, {}, {}
 
@@ -625,6 +695,9 @@ function WarBattle:reconcile(advanceClock)
 	end
 
 	local slots = {}
+	-- D27 slice 2: bodies. A roster unit that is dead or gone this cycle
+	-- is a casualty the ground reports once (it leaves the roster below).
+	local casualties = {}
 	for rec in string.gmatch(raw, "([^;]+)") do
 		local f = {}
 		for field in string.gmatch(rec .. "|", "([^|]*)|") do
@@ -636,11 +709,12 @@ function WarBattle:reconcile(advanceClock)
 		if oid ~= nil and regionId ~= nil and regionId ~= "" and siteIndex ~= nil and siteIndex ~= "" then
 			local key = regionId .. ":" .. siteIndex
 			if slots[key] == nil then
-				slots[key] = { region = regionId, site = siteIndex, alive = {}, units = {} }
+				slots[key] = { region = regionId, site = siteIndex, alive = {}, units = {}, seen = {} }
 			end
 			if ox ~= nil and oy ~= nil and slots[key].ox == nil then
 				slots[key].ox, slots[key].oy = ox, oy
 			end
+			slots[key].seen[faction] = true
 
 			-- Alive means the body is alive, not that the OID resolves. A
 			-- corpse is not a combatant: a killed NPC keeps resolving until
@@ -651,13 +725,18 @@ function WarBattle:reconcile(advanceClock)
 			-- bodies are left for Core3 to reap; they are simply not counted
 			-- and not stood down.
 			local pUnit = getSceneObject(oid)
+			local alive = false
 			if pUnit ~= nil then
 				local okd, dead = pcall(function() return CreatureObject(pUnit):isDead() end)
-				if not (okd and dead) then
-					local sl = slots[key]
-					sl.alive[faction] = (sl.alive[faction] or 0) + 1
-					sl.units[#sl.units + 1] = { oid = oid, faction = faction }
-				end
+				alive = not (okd and dead)
+			end
+			if alive then
+				local sl = slots[key]
+				sl.alive[faction] = (sl.alive[faction] or 0) + 1
+				sl.units[#sl.units + 1] = { oid = oid, faction = faction }
+			else
+				local ck = tostring(regionId) .. "|" .. tostring(faction)
+				casualties[ck] = (casualties[ck] or 0) + 1
 			end
 		end
 	end
@@ -758,9 +837,17 @@ function WarBattle:reconcile(advanceClock)
 	end
 
 	-- Pass 2b: resolve (capture, wipe-out, or this cycle's share of age-outs).
+	local lostLines = {}
 	for _, sl in ipairs(resolved) do
 		if (not sl.isGarrison) and sl.sides == 1 and sl.survivor ~= nil then
 			captures[#captures + 1] = { region = sl.region, faction = sl.survivor }
+			-- D27 slice 2: the other side's line was wiped -- a lost fight.
+			for fac, _ in pairs(sl.seen or {}) do
+				if fac ~= sl.survivor then
+					local lk = tostring(sl.region) .. "|" .. tostring(fac)
+					lostLines[lk] = (lostLines[lk] or 0) + 1
+				end
+			end
 			-- The "took a position here" note for WarPresence is written
 			-- below, when the winners' garrison actually stands, so that the
 			-- garrison aging out can clear it -- a note nothing clears was
@@ -776,6 +863,16 @@ function WarBattle:reconcile(advanceClock)
 			-- again, and the "took a position here" note is stale.
 			pcall(function() deleteStringData("warbattle:lastcapture:" .. sl.region) end)
 		end
+		-- D27 slice 2: a garrison (captured ground or a held town's) with
+		-- nobody left standing was wiped: the holder lost a fight here. This
+		-- is how a raid on a quiet town becomes a lost fight the sim can
+		-- act on when the holder is dry.
+		if sl.isGarrison and sl.sides == 0 then
+			for fac, _ in pairs(sl.seen or {}) do
+				local lk = tostring(sl.region) .. "|" .. tostring(fac)
+				lostLines[lk] = (lostLines[lk] or 0) + 1
+			end
+		end
 
 		standDown(sl)
 		writeData(sl.bornKey, 0)
@@ -783,6 +880,13 @@ function WarBattle:reconcile(advanceClock)
 
 	writeStringData(WarBattle.ROSTER_KEY, table.concat(keptRecs, ";"))
 	writeStringData(WarBattle.OIDS_KEY, table.concat(keptOids, ","))
+
+	-- D27 slice 2: report bodies and lost lines to the sim (warsim/sim/
+	-- channels.lua REPORT). No character id: the ground reports, the sim
+	-- decides what it costs (economy.lua) and whether a dry town falls
+	-- (capture.lua). Sorted so the log reads the same way every cycle.
+	WarBattle.report(casualties, "casualty")
+	WarBattle.report(lostLines, "site_lost")
 
 	-- Layer 2: the winners hold the ground. Own cap; never touches the front
 	-- or spread budgets. Skipped silently when the record predates ox/oy.
@@ -1106,9 +1210,9 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 		return 0, 0
 	end
 
-	local front = WarReport.frontRegions(WarBattle.MIN_CONTEST)
+	local front = WarBattle.fronts()
 	if #front == 0 then
-		printf("WarBattle: no contested region above MIN_CONTEST -- front is quiet\n")
+		printf("WarBattle: the war reports no fronts -- nothing to stage\n")
 		return 0, 0
 	end
 
@@ -1141,8 +1245,8 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 		if coords ~= nil and zone ~= nil and isZoneEnabled(zone) then
 			local holder = front[r].faction
 			local defender = holder
-			local attacker = (holder == "rebel") and "imperial" or "rebel"
-			local wanted = math.min(sitesForContest(front[r].contest), WarBattle.MAX_SITES_PER_REGION)
+			local attacker = front[r].attacker or ((holder == "rebel") and "imperial" or "rebel")
+			local wanted = math.min(sitesForFront(front[r]), WarBattle.MAX_SITES_PER_REGION)
 
 			local regionSitesStaged = 0
 			local regionHeldSlots = 0

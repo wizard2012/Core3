@@ -53,6 +53,13 @@ WarAnnounce = WarAnnounce or {}
 -- Shared-memory key holding the last tick whose flips have been announced.
 WarAnnounce.CLAIM_KEY = "swgwar:announce:lastTick"
 
+-- D27 slice 2 (owner ruling: name the player): how recently a player must
+-- have killed one of the war's troops at a town for the flip broadcast to
+-- name them. One hour: the sim ticks every 15 minutes and the ground cycles
+-- every 4, so a fight that broke a line is at most a few ticks old when the
+-- town changes hands.
+WarAnnounce.LINE_BREAKER_MS = 60 * 60 * 1000
+
 --- "Bestine has fallen to the Rebellion." -- past tense, faction-neutral
 -- phrasing, no numbers. The detail lives with the officer; this is the
 -- headline a player hears while doing something else.
@@ -69,7 +76,18 @@ function WarAnnounce:lineFor(flip)
 		return nil
 	end
 
-	return name .. " has fallen to " .. captor .. "."
+	local line = name .. " has fallen to " .. captor .. "."
+	-- If a player's fight broke the line here within the hour, say whose.
+	-- Written by war_contrib_hook.lua when a player kills a war-spawned NPC.
+	pcall(function()
+		local who = readStringData("warbattle:lastkiller:" .. tostring(flip.region))
+		local when = readData("warbattle:lastkiller_ms:" .. tostring(flip.region))
+		if who ~= nil and who ~= "" and when ~= nil and when > 0
+				and (getTimestampMilli() - when) <= WarAnnounce.LINE_BREAKER_MS then
+			line = line .. " The line broke under " .. tostring(who) .. "."
+		end
+	end)
+	return line
 end
 
 --- Claim this tick for announcement. Returns true for exactly one caller.
