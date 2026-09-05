@@ -811,11 +811,30 @@ function Tests:warSquadAbilityCheck()
 			printf(string.format("WARSQUADABILITY: %-30s live=%d reached=%d collected=%d %s\n",
 				stage, live, reached, count, pass and "OK" or "FAIL"))
 		end
+		local function followEmpty()
+			local n = 0
+			for _, oid in ipairs(troops) do
+				local p = getSceneObject(oid)
+				if p ~= nil then
+					local okf, f = pcall(function() return AiAgent(p):getFollowObject() end)
+					if okf and f == nil then n = n + 1 end
+				end
+			end
+			return n
+		end
 		measure("taken (following)", true)
 		for _, kind in ipairs({ "hold", "fallback" }) do
 			local m, w = WarCommand.order(pCmdr, kind)
 			printf(string.format("WARSQUADABILITY: order %s: %d %s\n", kind, m, tostring(w)))
 			measure(kind == "hold" and "hold (no follow)" or "fallback (following)", true)
+			if kind == "hold" then
+				-- Hold drops the pointer (clearFollowObject). With no player in
+				-- range the tree does not run, so every pointer stays empty; a
+				-- player nearby lets it re-target, hence a note, not a failure.
+				local e = followEmpty()
+				printf(string.format("WARSQUADABILITY: %-30s empty=%d of %d %s\n", "hold: follow pointers",
+					e, #troops, (e == #troops) and "OK" or "note (a player in range lets the tree re-target)"))
+			end
 		end
 		local enemies = enemiesAt(squad.slot, squad.faction)
 		if #enemies > 0 then
@@ -838,16 +857,27 @@ function Tests:warSquadAbilityCheck()
 		-- store restoreFollowObject puts back is empty and the pointer stayed
 		-- on the ex-commander. Reproduce it here: clear each follow, re-take,
 		-- fall back, then release with the enemy list forced empty.
-		local cleared = 0
+		local cleared, dropped = 0, 0
 		for _, oid in ipairs(troops) do
 			local p = getSceneObject(oid)
 			if p ~= nil then
 				local okc = pcall(function() AiAgent(p):clearFollowObject() end)
-				if okc then cleared = cleared + 1 end
+				if okc then
+					cleared = cleared + 1
+					local okf, f = pcall(function() return AiAgent(p):getFollowObject() end)
+					if okf and f == nil then dropped = dropped + 1 end
+				end
 			end
 		end
+		-- Strict control (verifier, 2026-09-05): the pointer must be EMPTY here.
+		-- Were clearFollowObject a no-op, the re-take would store the enemy the
+		-- attack stage set, restore would put it back, and the forced dismiss
+		-- below would read 0 for the wrong reason.
+		if dropped < cleared or cleared == 0 then fails = fails + 1 end
+		printf(string.format("WARSQUADABILITY: %-30s cleared=%d empty=%d %s\n", "clearFollowObject",
+			cleared, dropped, (cleared > 0 and dropped == cleared) and "OK" or "FAIL"))
 		local n2, why2 = WarCommand.take(pCmdr, pSgt)
-		printf(string.format("WARSQUADABILITY: re-take for the no-enemy case: %d troop(s) %s (cleared %d)\n", n2, tostring(why2), cleared))
+		printf(string.format("WARSQUADABILITY: re-take for the no-enemy case: %d troop(s) %s\n", n2, tostring(why2)))
 		if n2 > 0 then
 			local squad2 = WarCommand.squadOf(cmdrOid)
 			troops = (squad2 ~= nil) and squad2.troops or troops
