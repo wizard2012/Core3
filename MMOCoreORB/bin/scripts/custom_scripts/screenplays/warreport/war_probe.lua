@@ -524,3 +524,114 @@ function Tests:warMapProbe()
 
 	printf("WARMAPPROBE: end\n")
 end
+
+--- Are the war NPCs actually fighting? Per site (region:site) from
+-- war_battle's roster: bodies that resolve, how many are in combat, how
+-- many have taken damage, how many are dead. A site where nobody is in
+-- combat and nobody is hurt after ten minutes is a standoff, not a battle.
+function Tests:warSiteHealthCheck()
+	printf("WARSITEHEALTH: begin\n")
+	local raw = (WarBattle ~= nil and WarBattle.ROSTER_KEY ~= nil) and readStringData(WarBattle.ROSTER_KEY) or nil
+	if raw == nil or raw == "" then
+		printf("WARSITEHEALTH: no roster\n")
+		return
+	end
+	local sites = {}
+	for rec in string.gmatch(raw, "([^;]+)") do
+		local oid, region, site, fac = string.match(rec, "^(%d+)|([%w_]+)|([%w_]+)|([%w_]+)")
+		if oid ~= nil then
+			local key = region .. ":" .. site
+			local s = sites[key] or { total = 0, alive = 0, combat = 0, hurt = 0, dead = 0, byFaction = {} }
+			sites[key] = s
+			s.total = s.total + 1
+			local p = getSceneObject(tonumber(oid))
+			if p ~= nil then
+				local cre = CreatureObject(p)
+				local ok, isDead = pcall(function() return cre:isDead() end)
+				if ok and isDead then
+					s.dead = s.dead + 1
+				else
+					s.alive = s.alive + 1
+					s.byFaction[fac] = (s.byFaction[fac] or 0) + 1
+					local okc, inCombat = pcall(function() return cre:isInCombat() end)
+					if okc and inCombat then s.combat = s.combat + 1 end
+					local okh, cur, max = pcall(function() return cre:getHAM(HEALTH), cre:getMaxHAM(HEALTH) end)
+					if okh and cur ~= nil and max ~= nil and cur < max then s.hurt = s.hurt + 1 end
+				end
+			end
+		end
+	end
+	local keys = {}
+	for k, _ in pairs(sites) do keys[#keys + 1] = k end
+	table.sort(keys)
+	for _, k in ipairs(keys) do
+		local s = sites[k]
+		local fparts = {}
+		for f, n in pairs(s.byFaction) do fparts[#fparts + 1] = f .. "=" .. n end
+		table.sort(fparts)
+		printf(string.format("WARSITEHEALTH: %-22s tracked=%d alive=%d dead=%d inCombat=%d hurt=%d (%s)\n",
+			k, s.total, s.alive, s.dead, s.combat, s.hurt, table.concat(fparts, ",")))
+	end
+	printf("WARSITEHEALTH: end\n")
+end
+
+--- Where are the two sides of each site standing, relative to the site
+-- origin stored in the roster? Attackers start APPROACH_DISTANCE_M (120)
+-- out; if they are still ~120 m out ten minutes later they never advanced,
+-- which is a standoff, not a battle. Prints per site and faction: alive,
+-- min/avg/max distance to the origin, how many are in combat, how many
+-- have a follow target.
+function Tests:warSiteDistanceCheck()
+	printf("WARSITEDIST: begin\n")
+	local raw = (WarBattle ~= nil and WarBattle.ROSTER_KEY ~= nil) and readStringData(WarBattle.ROSTER_KEY) or nil
+	if raw == nil or raw == "" then
+		printf("WARSITEDIST: no roster\n")
+		return
+	end
+	local sites = {}
+	for rec in string.gmatch(raw, "([^;]+)") do
+		local oid, region, site, fac, ox, oy = string.match(rec, "^(%d+)|([%w_]+)|([%w_]+)|([%w_]+)|([%-%d%.]*)|([%-%d%.]*)")
+		if oid ~= nil then
+			local key = region .. ":" .. site
+			local s = sites[key] or { ox = tonumber(ox), oy = tonumber(oy), f = {} }
+			sites[key] = s
+			local fs = s.f[fac] or { n = 0, min = 1e9, max = 0, sum = 0, combat = 0, following = 0 }
+			s.f[fac] = fs
+			local p = getSceneObject(tonumber(oid))
+			if p ~= nil and s.ox ~= nil and s.oy ~= nil then
+				local cre = CreatureObject(p)
+				local okd, dead = pcall(function() return cre:isDead() end)
+				if not (okd and dead) then
+					local so = SceneObject(p)
+					local dx, dy = so:getWorldPositionX() - s.ox, so:getWorldPositionY() - s.oy
+					local d = math.sqrt(dx * dx + dy * dy)
+					fs.n = fs.n + 1
+					fs.sum = fs.sum + d
+					if d < fs.min then fs.min = d end
+					if d > fs.max then fs.max = d end
+					local okc, c = pcall(function() return cre:isInCombat() end)
+					if okc and c then fs.combat = fs.combat + 1 end
+					local okf, fo = pcall(function() return AiAgent(p):getFollowObject() end)
+					if okf and fo ~= nil then fs.following = fs.following + 1 end
+				end
+			end
+		end
+	end
+	local keys = {}
+	for k, _ in pairs(sites) do keys[#keys + 1] = k end
+	table.sort(keys)
+	for _, k in ipairs(keys) do
+		local s = sites[k]
+		local facs = {}
+		for f, _ in pairs(s.f) do facs[#facs + 1] = f end
+		table.sort(facs)
+		for _, f in ipairs(facs) do
+			local fs = s.f[f]
+			if fs.n > 0 then
+				printf(string.format("WARSITEDIST: %-20s %-8s alive=%d dist min=%.0f avg=%.0f max=%.0f inCombat=%d following=%d\n",
+					k, f, fs.n, fs.min, fs.sum / fs.n, fs.max, fs.combat, fs.following))
+			end
+		end
+	end
+	printf("WARSITEDIST: end\n")
+end

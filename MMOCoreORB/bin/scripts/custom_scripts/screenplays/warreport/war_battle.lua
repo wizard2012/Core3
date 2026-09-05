@@ -160,10 +160,33 @@ WarBattle.TROOPER_GAP_M = 4
 -- Kept deliberately modest. This project has already been bitten by NPCs
 -- frozen on unpathable ground (see the Anchorhead createNavMesh work), and
 -- every extra metre outward is more chance of spawning somewhere the navmesh
--- cannot path out of. 120m clears a town's built-up edge on the war cities
--- measured here while staying inside the meshed area. If troops are ever seen
--- standing still out in open country, THIS is the first dial to turn down.
-WarBattle.APPROACH_DISTANCE_M = 120
+-- cannot path out of. If troops are ever seen standing still out in open
+-- country, THIS is the first dial to turn down.
+--
+-- 120 -> 80 (measured 2026-09-05, `test warSiteDistanceCheck`): at 120 m
+-- the attacking line at Mos Eisley site 3 was still at exactly 120 m ten
+-- minutes in, following=6, hurt=0, while the defenders had walked OUT to
+-- 56-65 m -- rifle range -- and were shooting them. AiAgent's FOLLOWING
+-- state leashes an agent that is more than MAX_OOS_RANGE (75 m) from its
+-- HOME with no line of sight to its target, and home was the attacker's own
+-- spawn point 120 m out; every step toward the town was a step out of
+-- range of home. Two changes, together: form up at 80 m, and set every
+-- attacker's home to the ground it is taking (spawnSite), so the same rule
+-- now pulls a lost attacker INTO the town rather than back out of it.
+WarBattle.APPROACH_DISTANCE_M = 80
+
+-- A line that has not moved STALL_CHECK_MS after forming up is not
+-- advancing and never will (measured 2026-09-05: Mos Eisley's attackers at
+-- exactly 80 m for three minutes with following=6, twice, and a Doaba line
+-- at 48 m likewise -- both endpoints on the navmesh, no path between them;
+-- Kaadara's lines, same code, resolved every site in that time). Rather
+-- than let a site stand as a diorama for five cycles, checkAdvance() puts a
+-- stalled line down at STALL_FALLBACK_M -- outside the site, inside rifle
+-- range -- and the fight starts. The advance is lost for that site; the
+-- battle is not.
+WarBattle.STALL_CHECK_MS   = 75 * 1000
+WarBattle.STALL_TOLERANCE_M = 6
+WarBattle.STALL_FALLBACK_M = 24
 
 -- How often the whole front is torn down and restaged. No separate
 -- "lifetime" timer any more -- see LIFECYCLE above.
@@ -619,13 +642,22 @@ function WarBattle:reconcile(advanceClock)
 				slots[key].ox, slots[key].oy = ox, oy
 			end
 
-			-- Alive is defined as "the OID still resolves to an object".
-			-- A killed NPC is reaped by Core3 itself, so this is the signal
-			-- that something actually happened here.
-			if getSceneObject(oid) ~= nil then
-				local sl = slots[key]
-				sl.alive[faction] = (sl.alive[faction] or 0) + 1
-				sl.units[#sl.units + 1] = { oid = oid, faction = faction }
+			-- Alive means the body is alive, not that the OID resolves. A
+			-- corpse is not a combatant: a killed NPC keeps resolving until
+			-- Core3 reaps it, and while it did, a site with one side wiped
+			-- still counted as two-sided -- "kept 12 live engagement(s),
+			-- 0 capture(s)" for every cycle of a night in which sites were
+			-- resolving inside three minutes (measured 2026-09-05). Dead
+			-- bodies are left for Core3 to reap; they are simply not counted
+			-- and not stood down.
+			local pUnit = getSceneObject(oid)
+			if pUnit ~= nil then
+				local okd, dead = pcall(function() return CreatureObject(pUnit):isDead() end)
+				if not (okd and dead) then
+					local sl = slots[key]
+					sl.alive[faction] = (sl.alive[faction] or 0) + 1
+					sl.units[#sl.units + 1] = { oid = oid, faction = faction }
+				end
 			end
 		end
 	end
@@ -807,6 +839,41 @@ end
 --- Spawn one defender/attacker line pair at (originX, originY). Returns the
 -- number of NPCs actually fielded (0, 2*n, or a lopsided partial count on a
 -- spawnMobile failure -- the caller only checks for zero-on-both-sides).
+--- The furthest of APPROACH_DISTANCE_M, 48 and 24 m along the radial whose
+-- point is on the navmesh (isPointWalkable, B21), so the attacking line
+-- forms up where an advance can actually be walked. Measured 2026-09-05:
+-- Mos Eisley's site ring sits at SITE_RADIUS_MAX (130 m) and 80 m further
+-- out is past the city's meshed edge -- its attackers stood at exactly 80 m
+-- with following=6 and hurt=0 for three minutes while Kaadara and Doaba,
+-- whose approach points are meshed, resolved every site in that time.
+-- Logs once per site when it has to pull in. 24 m is still outside the
+-- site (the defenders stand on a TROOPER_GAP_M line at the origin) and
+-- inside rifle range, so a fight starts even where nothing can path.
+function WarBattle.formUpDistance(zone, originX, originY, ux, uy, regionId, siteIndex)
+	if type(isPointWalkable) ~= "function" or type(getWorldFloor) ~= "function" then
+		return WarBattle.APPROACH_DISTANCE_M
+	end
+	local candidates = { WarBattle.APPROACH_DISTANCE_M, 48, 24 }
+	for i = 1, #candidates do
+		local d = candidates[i]
+		local x, y = originX + ux * d, originY + uy * d
+		local okz, z = pcall(getWorldFloor, x, y, zone)
+		if okz and type(z) == "number" then
+			local ok, walkable = pcall(isPointWalkable, zone, x, z, y)
+			if ok and walkable == true then
+				if i > 1 then
+					printf(string.format("WarBattle: %s site %s forms up at %d m (the %d m approach point is off the navmesh)\n",
+						tostring(regionId), tostring(siteIndex), d, WarBattle.APPROACH_DISTANCE_M))
+				end
+				return d
+			end
+		end
+	end
+	printf(string.format("WarBattle: %s site %s -- no meshed form-up point on the radial; using 24 m\n",
+		tostring(regionId), tostring(siteIndex)))
+	return 24
+end
+
 local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFaction, originX, originY)
 	local defenders, attackers = {}, {}
 
@@ -832,8 +899,9 @@ local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFac
 	ux, uy = ux / len, uy / len
 	local px, py = -uy, ux
 
-	local approachX = originX + (ux * WarBattle.APPROACH_DISTANCE_M)
-	local approachY = originY + (uy * WarBattle.APPROACH_DISTANCE_M)
+	local approach = WarBattle.formUpDistance(zone, originX, originY, ux, uy, regionId, siteIndex)
+	local approachX = originX + (ux * approach)
+	local approachY = originY + (uy * approach)
 	local halfLine = (WarBattle.SQUAD_SIZE - 1) / 2
 
 	for i = 1, WarBattle.SQUAD_SIZE do
@@ -863,6 +931,9 @@ local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFac
 		if pA ~= nil then
 			attackers[#attackers + 1] = pA
 			trackUnit(SceneObject(pA):getObjectID(), regionId, siteIndex, attackerFaction, originX, originY)
+			-- Home is the objective, not the form-up point -- see
+			-- APPROACH_DISTANCE_M for the leash rule this satisfies.
+			pcall(function() AiAgent(pA):setHomeLocation(originX, 0, originY, nil) end)
 			-- Healing this NPC feeds war materiel: B11's ruling wants a path
 			-- for non-combatants, and a Medic had none. See war_heal.lua.
 			-- The observer dies with the object, which cleanup already reaps.
@@ -891,7 +962,96 @@ local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFac
 		pcall(function() AiAgent(attackers[i]):setFollowObject(defenders[i]) end)
 	end
 
+	-- One-shot: did they actually advance? See STALL_CHECK_MS.
+	createEvent(WarBattle.STALL_CHECK_MS, "WarBattle", "checkAdvance", nil,
+		table.concat({ regionId, tostring(siteIndex), attackerFaction,
+			string.format("%.2f", originX), string.format("%.2f", originY),
+			string.format("%.4f", ux), string.format("%.4f", uy), string.format("%.1f", approach) }, "|"))
+
 	return #defenders + #attackers
+end
+
+--- Scheduled STALL_CHECK_MS after a site is staged. If most of the attacking
+-- line is still at its form-up distance, it is moved to STALL_FALLBACK_M
+-- along the same radial, spread abreast, and set on the defenders again.
+function WarBattle:checkAdvance(pObj, args)
+	local ok, err = pcall(function()
+		local f = {}
+		for field in string.gmatch(tostring(args) .. "|", "([^|]*)|") do
+			f[#f + 1] = field
+		end
+		local regionId, siteIndex, attackerFaction = f[1], f[2], f[3]
+		local originX, originY = tonumber(f[4]), tonumber(f[5])
+		local ux, uy, approach = tonumber(f[6]), tonumber(f[7]), tonumber(f[8])
+		if regionId == nil or originX == nil or ux == nil or approach == nil then
+			return
+		end
+		local zone = (WarReport ~= nil) and WarReport.PLANET_OF[regionId] or nil
+		if zone == nil then
+			return
+		end
+
+		local raw = readStringData(WarBattle.ROSTER_KEY)
+		if raw == nil or raw == "" then
+			return
+		end
+		local attackers, defenders = {}, {}
+		for rec in string.gmatch(raw, "([^;]+)") do
+			local oid, region, site, fac = string.match(rec, "^(%d+)|([%w_]+)|([%w_]+)|([%w_]+)")
+			if oid ~= nil and region == regionId and site == siteIndex then
+				local p = getSceneObject(tonumber(oid))
+				if p ~= nil then
+					local okd, dead = pcall(function() return CreatureObject(p):isDead() end)
+					if not (okd and dead) then
+						if fac == attackerFaction then
+							attackers[#attackers + 1] = p
+						else
+							defenders[#defenders + 1] = p
+						end
+					end
+				end
+			end
+		end
+		if #attackers == 0 or #defenders == 0 then
+			return
+		end
+
+		local stalled = 0
+		for _, p in ipairs(attackers) do
+			local so = SceneObject(p)
+			local dx, dy = so:getWorldPositionX() - originX, so:getWorldPositionY() - originY
+			if math.sqrt(dx * dx + dy * dy) >= (approach - WarBattle.STALL_TOLERANCE_M) then
+				stalled = stalled + 1
+			end
+		end
+		if stalled * 2 < #attackers then
+			return -- most of the line moved; it is advancing
+		end
+
+		local px, py = -uy, ux
+		local halfLine = (#attackers - 1) / 2
+		local baseX = originX + ux * WarBattle.STALL_FALLBACK_M
+		local baseY = originY + uy * WarBattle.STALL_FALLBACK_M
+		for i, p in ipairs(attackers) do
+			local offset = (i - 1 - halfLine) * WarBattle.TROOPER_GAP_M
+			local x, y = baseX + offset * px, baseY + offset * py
+			local z = 0
+			if type(getWorldFloor) == "function" then
+				local okz, zz = pcall(getWorldFloor, x, y, zone)
+				if okz and type(zz) == "number" then z = zz end
+			end
+			pcall(function() SceneObject(p):teleport(x, z, y, 0) end)
+			local target = defenders[((i - 1) % #defenders) + 1]
+			pcall(function() AiAgent(p):setDefender(target) end)
+			pcall(function() AiAgent(p):setFollowObject(target) end)
+			pcall(function() AiAgent(target):setDefender(p) end)
+		end
+		printf(string.format("WarBattle: %s site %s -- assault stalled at %d m (%d/%d unmoved); line moved to %d m\n",
+			tostring(regionId), tostring(siteIndex), math.floor(approach), stalled, #attackers, WarBattle.STALL_FALLBACK_M))
+	end)
+	if not ok then
+		printf("WarBattle: checkAdvance failed: " .. tostring(err) .. "\n")
+	end
 end
 
 --- Stage every site at every qualifying front region, in strict

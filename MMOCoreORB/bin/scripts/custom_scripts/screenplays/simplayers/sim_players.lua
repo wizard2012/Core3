@@ -262,12 +262,37 @@ end
 
 local function despawn(st)
 	local p = resolve(st)
-	if p ~= nil then
+	if st.oid ~= nil and st.oid ~= 0 then
+		-- Always, resolvable or not: a stale "<oid>:sim:id" per death was
+		-- the leak the verifier found.
 		pcall(function() deleteStringData(tostring(st.oid) .. ":sim:id") end)
+	end
+	if p ~= nil then
 		pcall(function() SceneObject(p):destroyObjectFromWorld(false) end)
 	end
 	st.oid = 0
 	st.misses = 0
+end
+
+--- The body's truth, not the pointer's. A corpse keeps resolving until Core3
+-- reaps it, and a body pulled out of the world resolves with an empty zone
+-- name -- both read as "alive" to getSceneObject() alone, which left a dead
+-- SimPlayer in `fight` with combat=false, earning XP (verifier, 2026-09-05).
+-- Returns (pointer, "alive" | "dead" | "missing").
+local function bodyState(st)
+	local p = resolve(st)
+	if p == nil then
+		return nil, "missing"
+	end
+	local ok, dead = pcall(function() return CreatureObject(p):isDead() end)
+	if ok and dead then
+		return p, "dead"
+	end
+	local okz, zone = pcall(function() return SceneObject(p):getZoneName() end)
+	if okz and (zone == nil or zone == "") then
+		return p, "dead"
+	end
+	return p, "alive"
 end
 
 --- Where to stand at rest: the cantina if the city has one, else the pad.
@@ -557,6 +582,16 @@ local function cloneCity(sim, st)
 	return placeable(sim.home) and sim.home or "tat_mos_eisley"
 end
 
+--- Dead: reap the corpse and its key, and queue the clone.
+local function die(sim, st, t)
+	despawn(st)
+	st.state = "clone"
+	st.dest = cloneCity(sim, st)
+	st.until_ms = t + cfg().CLONE_MS
+	st.misses = 0
+	SimPlayers.save(sim.id, st)
+end
+
 -- ------------------------------------------------------------- escort -----
 
 function SimPlayers.recruit(sim, st, pNpc, pPlayer)
@@ -639,17 +674,13 @@ function SimPlayers.step(sim, st, idx)
 		return
 	end
 
-	local p = resolve(st)
+	local p, body = bodyState(st)
 
 	if st.state == "escort" then
 		local pPlayer = (st.escort ~= 0) and getSceneObject(st.escort) or nil
-		if p == nil then
+		if body ~= "alive" then
 			-- Died while following: clone as from a fight.
-			st.state = "clone"
-			st.dest = cloneCity(sim, st)
-			st.until_ms = t + c.CLONE_MS
-			st.oid = 0
-			SimPlayers.save(sim.id, st)
+			die(sim, st, t)
 			return
 		end
 		local lost = (pPlayer == nil)
@@ -673,14 +704,16 @@ function SimPlayers.step(sim, st, idx)
 	end
 
 	if st.state == "fight" then
+		if body == "dead" then
+			die(sim, st, t)
+			return
+		end
 		if p == nil then
+			-- Unresolvable is not yet dead (cross-thread miss); twice is.
 			st.misses = (st.misses or 0) + 1
 			if st.misses >= c.MISSES_BEFORE_DEAD then
-				st.state = "clone"
-				st.dest = cloneCity(sim, st)
-				st.until_ms = t + c.CLONE_MS
-				st.oid = 0
-				st.misses = 0
+				die(sim, st, t)
+				return
 			end
 			SimPlayers.save(sim.id, st)
 			return
@@ -705,9 +738,15 @@ function SimPlayers.step(sim, st, idx)
 	end
 
 	-- rest
-	if p == nil then
-		-- Killed or reaped while resting: come back at the same spot.
-		st.misses = (st.misses or 0) + 1
+	if body ~= "alive" then
+		-- Killed or reaped while resting: come back at the same spot. A
+		-- corpse is reaped first so it does not lie in the cantina.
+		if body == "dead" then
+			despawn(st)
+			st.misses = c.MISSES_BEFORE_DEAD
+		else
+			st.misses = (st.misses or 0) + 1
+		end
 		if st.misses >= c.MISSES_BEFORE_DEAD then
 			spawnBody(sim, st, restSpot(st.region, idx), true)
 		end

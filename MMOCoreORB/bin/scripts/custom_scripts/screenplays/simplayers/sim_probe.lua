@@ -36,6 +36,14 @@ function Tests:simPlayersDump()
 		local p = (st.oid ~= nil and st.oid ~= 0) and getSceneObject(st.oid) or nil
 		local where = "n/a"
 		if p ~= nil then
+			-- A corpse resolves; report it as not alive, like step() does.
+			local okd, dead = pcall(function() return CreatureObject(p):isDead() end)
+			if okd and dead then
+				where = "DEAD (corpse still in world)"
+				p = nil
+			end
+		end
+		if p ~= nil then
 			local ok, s = pcall(function()
 				local so = SceneObject(p)
 				return string.format("%s cell=%s x=%.0f y=%.0f name=%s combat=%s",
@@ -108,3 +116,6 @@ function Tests:simPlayersEnsureChain()
 	local ok, err = pcall(function() return SimPlayers:ensureChain() end)
 	printf("SIMPLAYERS: ensureChain ok=" .. tostring(ok) .. " result=" .. tostring(err) .. "\n")
 end
+
+--- Are the war NPCs actually fighting? Per site (region:site) from
+-- war_battles
