@@ -39,6 +39,7 @@ namespace ai {
 		int getFollowObject(lua_State* L);
 		int storeFollowObject(lua_State* L);
 		int restoreFollowObject(lua_State* L);
+		int clearFollowObject(lua_State* L);
 		int getTargetOfTargetID(lua_State* L);
 		int getMovementState(lua_State* L);
 		int setMovementState(lua_State* L);

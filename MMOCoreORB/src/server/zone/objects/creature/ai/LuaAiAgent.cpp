@@ -37,6 +37,7 @@ Luna<LuaAiAgent>::RegType LuaAiAgent::Register[] = {
 		{ "getFollowObject", &LuaAiAgent::getFollowObject },
 		{ "storeFollowObject", &LuaAiAgent::storeFollowObject },
 		{ "restoreFollowObject", &LuaAiAgent::restoreFollowObject },
+		{ "clearFollowObject", &LuaAiAgent::clearFollowObject },
 		{ "getTargetOfTargetID", &LuaAiAgent::getTargetOfTargetID },
 		{ "getTargetID", &LuaCreatureObject::getTargetID },
 		{ "getObjectID", &LuaSceneObject::getObjectID },
@@ -221,6 +222,25 @@ int LuaAiAgent::storeFollowObject(lua_State* L) {
 
 int LuaAiAgent::restoreFollowObject(lua_State* L) {
 	realObject->restoreFollowObject();
+	return 0;
+}
+
+/**
+ * B34 D2 (measured 2026-09-05): AiAgent:setFollowObject(nil) is a no-op by
+ * the IDL's own guard (`obj != null && followObject != obj`), so nothing
+ * reachable from Lua could ever drop a follow pointer -- "Hold here" and a
+ * dismissed line's hand-back (war_command.lua) both relied on it, and
+ * restoreFollowObject() with nothing stored only paths home and leaves the
+ * pointer where it was. This drops the pointer (setTargetObject(null) is
+ * the IDL path that assigns followObject unconditionally) and paths the
+ * agent home; the next setDefender/setFollowObject re-points it as usual.
+ */
+int LuaAiAgent::clearFollowObject(lua_State* L) {
+	Locker locker(realObject);
+
+	realObject->setTargetObject(nullptr);
+	realObject->setMovementState(AiAgent::PATHING_HOME);
+
 	return 0;
 }
 

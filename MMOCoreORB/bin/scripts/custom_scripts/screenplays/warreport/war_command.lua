@@ -28,7 +28,10 @@
 
   THE WAKE-UP APPLIES HERE TOO (DESIGN-BATTLES 3.4): every order ends in
   AiAgent:executeBehavior(). "Attack my target" is WarBattle.engage(), the
-  one place a body is set on a target.
+  one place a body is set on a target. And AiAgent:setFollowObject(nil) is
+  a NO-OP (the IDL guards on obj != null, measured 2026-09-05), so "Hold
+  here" and the hand-back on release drop the pointer with
+  AiAgent:clearFollowObject(), a binding added for D2.
 
   RADIAL: SceneObject:setObjectMenuComponent("WarCommandMenuComponent") on
   every line body at spawn (war_battle.lua), the same runtime mechanism as
@@ -394,7 +397,9 @@ function WarCommand.order(pPlayer, kind)
 			pcall(function()
 				local so, a = SceneObject(u.p), AiAgent(u.p)
 				a:setHomeLocation(so:getWorldPositionX(), so:getWorldPositionZ(), so:getWorldPositionY(), nil)
-				a:setFollowObject(nil)
+				-- setFollowObject(nil) is a no-op (the IDL guards on obj != null;
+				-- measured 2026-09-05): clearFollowObject is the binding that drops it.
+				a:clearFollowObject()
 				a:executeBehavior()
 			end)
 		end
@@ -451,7 +456,7 @@ end
 -- targets, and a body handed back with none stood frozen for good, since
 -- the stuck rule saw wounded survivors and never fired); attackers advance,
 -- the holder's line stands.
-function WarCommand.release(commanderOid, why)
+function WarCommand.release(commanderOid, why, forceNoEnemies)
 	local squad = WarCommand.squadOf(commanderOid)
 	if squad == nil then
 		dropCommander(commanderOid)
@@ -464,14 +469,29 @@ function WarCommand.release(commanderOid, why)
 	if holder ~= nil then
 		advance = (holder ~= squad.faction)
 	end
-	local enemies = enemiesAt(squad.slot, squad.faction)
+	-- forceNoEnemies is probe-only: warSquadAbilityCheck reproduces a
+	-- one-sided site (nothing to hand the line back to) on a two-sided one.
+	local enemies = forceNoEnemies and {} or enemiesAt(squad.slot, squad.faction)
 	local n = 0
 	local voice = nil
 	for i, oid in ipairs(squad.troops) do
 		writeData(troopKey(oid), 0)
 		local p = getSceneObject(oid)
 		if p ~= nil then
-			pcall(function() AiAgent(p):restoreFollowObject() end)
+			pcall(function()
+				local a = AiAgent(p)
+				a:restoreFollowObject()
+				-- restoreFollowObject with nothing stored only sets PATHING_HOME
+				-- and leaves the pointer where it was (verifier, 2026-09-05: a
+				-- line dismissed at a site with no enemy left kept following,
+				-- and so kept receiving the abilities of, its ex-commander).
+				-- If it still names the commander, drop it (clearFollowObject:
+				-- setFollowObject(nil) is a no-op by the IDL's own guard).
+				local f = a:getFollowObject()
+				if f ~= nil and SceneObject(f):getObjectID() == commanderOid then
+					a:clearFollowObject()
+				end
+			end)
 			if #enemies > 0 then
 				WarBattle.engage(p, enemies[((i - 1) % #enemies) + 1], advance)
 			else
@@ -707,6 +727,7 @@ function Tests:warSquadAbilityCheck()
 		for k, _ in pairs(slots) do keys[#keys + 1] = k end
 		table.sort(keys)
 		local pSgt, slotKey, faction = nil, nil, nil
+		local fallback = nil
 		for _, k in ipairs(keys) do
 			local sl = slots[k]
 			if sl.site ~= "0" and string.sub(tostring(sl.site), 1, 1) ~= "c" then
@@ -716,11 +737,23 @@ function Tests:warSquadAbilityCheck()
 						local p = getSceneObject(oid)
 						if p ~= nil then
 							local okd, dead = pcall(function() return CreatureObject(p):isDead() end)
-							if not (okd and dead) then pSgt, slotKey, faction = p, k, fac end
+							if not (okd and dead) then
+								-- Prefer a line that has an enemy line to attack,
+								-- so the attack stage runs (verifier, 2026-09-05:
+								-- the first live sergeant was at a one-sided site).
+								if #enemiesAt(k, fac) > 0 then
+									pSgt, slotKey, faction = p, k, fac
+								elseif fallback == nil then
+									fallback = { p = p, k = k, fac = fac }
+								end
+							end
 						end
 					end
 				end
 			end
+		end
+		if pSgt == nil and fallback ~= nil then
+			pSgt, slotKey, faction = fallback.p, fallback.k, fallback.fac
 		end
 		if pSgt == nil then
 			printf("WARSQUADABILITY: no live sergeant at any site\n")
@@ -800,6 +833,36 @@ function Tests:warSquadAbilityCheck()
 		end
 		WarCommand.release(cmdrOid, "dismissed")
 		measure("dismissed", false)
+		-- The verifier's case (2026-09-05): a line dismissed where no enemy
+		-- is left. Its bodies were taken while following nothing, so the
+		-- store restoreFollowObject puts back is empty and the pointer stayed
+		-- on the ex-commander. Reproduce it here: clear each follow, re-take,
+		-- fall back, then release with the enemy list forced empty.
+		local cleared = 0
+		for _, oid in ipairs(troops) do
+			local p = getSceneObject(oid)
+			if p ~= nil then
+				local okc = pcall(function() AiAgent(p):clearFollowObject() end)
+				if okc then cleared = cleared + 1 end
+			end
+		end
+		local n2, why2 = WarCommand.take(pCmdr, pSgt)
+		printf(string.format("WARSQUADABILITY: re-take for the no-enemy case: %d troop(s) %s (cleared %d)\n", n2, tostring(why2), cleared))
+		if n2 > 0 then
+			local squad2 = WarCommand.squadOf(cmdrOid)
+			troops = (squad2 ~= nil) and squad2.troops or troops
+			WarCommand.order(pCmdr, "fallback")
+			measure("fallback again (following)", true)
+			WarCommand.release(cmdrOid, "dismissed", true)
+			measure("dismissed, no enemy line", false)
+			-- Put the line back on the enemy, as a real release here would.
+			if #enemies > 0 then
+				for i, oid in ipairs(troops) do
+					local p = getSceneObject(oid)
+					if p ~= nil then WarBattle.engage(p, enemies[((i - 1) % #enemies) + 1], true) end
+				end
+			end
+		end
 		printf(string.format("WARSQUADABILITY: %d fail(s)\n", fails))
 	end)
 	WarCommand.ALLOW_NPC_COMMANDER = false
