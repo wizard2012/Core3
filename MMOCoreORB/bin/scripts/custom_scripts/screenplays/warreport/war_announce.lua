@@ -232,3 +232,14 @@ end)
 pcall(function()
 	WarAnnounce:run()
 end)
+
+--- Prints what THIS thread currently holds for WAR_FLIPS and the shared
+-- claim, WITHOUT resetting anything -- unlike warAnnounceRun, which resets
+-- the claim first and therefore cannot tell you whether the reload path
+-- ever fired on its own.
+function Tests:warFlipsTick()
+	local t = (WAR_FLIPS ~= nil) and tostring(WAR_FLIPS.tick) or "nil"
+	local n = (WAR_FLIPS ~= nil and type(WAR_FLIPS.flips) == "table") and tostring(#WAR_FLIPS.flips) or "nil"
+	local c = (WarAnnounce ~= nil) and tostring(readSharedMemory(WarAnnounce.CLAIM_KEY)) or "nil"
+	printf("WARFLIPSTICK: thread WAR_FLIPS.tick=" .. t .. " flips=" .. n .. " shared_claim=" .. c .. "\n")
+end
