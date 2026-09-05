@@ -401,6 +401,10 @@ local function engage(sim, st, pNpc)
 	pcall(function() AiAgent(pNpc):setDefender(best) end)
 	pcall(function() AiAgent(pNpc):setFollowObject(best) end)
 	pcall(function() AiAgent(best):setDefender(pNpc) end)
+	-- The wake-up (WarBattle.engage): setDefender never schedules the AI
+	-- when no player is in range. Measured 2026-09-05.
+	pcall(function() AiAgent(pNpc):executeBehavior() end)
+	pcall(function() AiAgent(best):executeBehavior() end)
 	return true
 end
 

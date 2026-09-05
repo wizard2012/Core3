@@ -185,6 +185,36 @@ function WarVoice.courierAlready(regionName)
 	return string.format("You are already carrying a crate for %s. Deliver that one first.", tostring(regionName))
 end
 
+-- Battle chatter (docs/DESIGN-BATTLES.md 3.3): what a line says at contact,
+-- when a wave arrives, when it falls back, when it breaks. Spoken by the
+-- squad's sergeant in spatial chat; prefixed with the front's officer when
+-- the sim exported one for that side ("Captain Tannor: hold the line!").
+WarVoice.BATTLE = {
+	contact  = { imperial = "Contact! Rebel line ahead -- advance!",           rebel = "Contact front! Imperial line -- move up!" },
+	hold     = { imperial = "Hold this line. Nobody falls back without orders.", rebel = "Hold here! Make them come to us!" },
+	wave     = { imperial = "Reinforcements on the line! Close it up!",        rebel = "Fresh squad coming in -- form on me!" },
+	fallback = { imperial = "Fall back to the marker and regroup!",            rebel = "Fall back! Regroup at the marker!" },
+	breaking = { imperial = "The line is breaking -- hold, damn you!",         rebel = "They are through -- every man for himself!" },
+	-- Slice C: walkers.
+	walker      = { imperial = "Walker support is up -- advance behind the AT-ST!", rebel = "Our walker is up -- push with it!" },
+	walker_down = { imperial = "The walker is down! Hold the line!",               rebel = "We lost the walker -- hold what we have!" },
+}
+
+function WarVoice.battle(kind, faction, officer)
+	local tbl = WarVoice.BATTLE[kind]
+	if tbl == nil then
+		return nil
+	end
+	local line = pick(tbl, faction, nil)
+	if line == nil then
+		return nil
+	end
+	if officer ~= nil and officer ~= "" then
+		return tostring(officer) .. ": " .. line
+	end
+	return line
+end
+
 function WarVoice.courierNothing()
 	return "Every friendly garrison is supplied. Come back when a line is cut."
 end

@@ -63,6 +63,7 @@ includeFile("../custom_scripts/screenplays/warreport/war_battle_offset_sweep.lua
 -- follows it here since both touch the same recruiter conversation surface.
 includeFile("../custom_scripts/screenplays/warreport/war_donate.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_probe.lua")
+includeFile("../custom_scripts/screenplays/warreport/war_template_probe.lua")
 
 -- New-player starter pack (mechanism only; NOT wired into character
 -- creation yet -- owner wants to tune contents first, see

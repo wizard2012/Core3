@@ -129,6 +129,55 @@ WarBattle.WAVE_SIZE_FRAC = 0.5      -- a wave is this fraction of the line
 WarBattle.WAVES_MAX_PER_SIDE = 3    -- per site; after that the line it has is the line it dies with
 WarBattle.WAVES_ENABLED = true      -- the switch docs/DESIGN-BATTLES.md section 5 names
 
+-- Slice B: squads with a sergeant and roles; a TEND pass between battle
+-- cycles that reinforces and orders retreats (a 4-minute reconcile catches
+-- almost no line in its half-strength window -- measured: two of six
+-- sites resolved inside one cycle with no wave); chatter.
+WarBattle.TEND_INTERVAL_MS = 75 * 1000
+WarBattle.TEND_NPC_BUDGET = 48       -- bodies one tend pass may add, all fronts
+WarBattle.RETREAT_FRAC = 0.35        -- a side at or below this fraction of its line...
+WarBattle.RETREAT_ENEMY_FRAC = 0.6   -- ...while the other side is above this, falls back (if a wave is still due)
+WarBattle.RETREAT_COOLDOWN_MS = 5 * 60 * 1000
+-- Stuck sites (measured 2026-09-05, Theed site 1: bodies spawned at z=0
+-- under the city's 6 m ground and the stall fallback put the attackers in
+-- a canal; line of sight failed both ways and 24 bodies stood in combat
+-- with nobody hurt for as long as the site stood). A two-sided site with
+-- nobody hurt and nobody dead for STUCK_PASSES tend passes is quiet: the
+-- attackers are closed to STUCK_CLOSE_M of the defenders on walkable
+-- ground; if it stays quiet as long again the site breaks off and the
+-- region's site ring turns SITE_TURN_DEG so the next cycle stages on
+-- different ground.
+WarBattle.STUCK_PASSES = 3
+WarBattle.STUCK_CLOSE_M = 10
+WarBattle.SITE_TURN_DEG = 30
+-- Slice C: walkers (docs/DESIGN-BATTLES.md section 2). One per side at a
+-- front whose intensity is at or above WALKER_INTENSITY or that is an
+-- offensive; the line attacking a capital under siege gets the AT-AT
+-- (Imperial only -- the Rebels keep their liberated AT-ST). A walker
+-- stands WALKER_BACK_M behind its line, counts WALKER_CRATES casualties
+-- when it falls (reconcile), and never waves. Two bodies per hot site on
+-- top of the lines; not charged to the site budget.
+WarBattle.WALKERS_ENABLED = true
+WarBattle.WALKER_INTENSITY = 0.75
+WarBattle.WALKER_CRATES = 4
+WarBattle.WALKER_BACK_M = 10
+WarBattle.WALKERS = { imperial = "war_at_st", rebel = "war_at_st_liberated", siege = "war_at_at" }
+WarBattle.ROLES_ENABLED = true
+-- The war's own templates (custom_scripts/mobile/war/war_troops.lua, boot-
+-- loaded). spawnTroop() falls back to TROOPS if a name is not loaded yet.
+WarBattle.ROLES = {
+	imperial = { sergeant = "war_imperial_sergeant", medic = "war_imperial_medic", marksman = "war_imperial_marksman",
+	             heavy = "war_imperial_heavy", rifleman = "war_imperial_rifleman" },
+	rebel    = { sergeant = "war_rebel_sergeant", medic = "war_rebel_medic", marksman = "war_rebel_marksman",
+	             heavy = "war_rebel_heavy", rifleman = "war_rebel_rifleman" },
+}
+-- Position in the line -> role. One sergeant, then a medic, a marksman and a
+-- heavy per rank; the rest riflemen. A wave is riflemen led by a medic.
+WarBattle.LINE_PATTERN = {
+	"sergeant", "medic", "marksman", "heavy", "rifleman", "rifleman", "rifleman", "rifleman",
+	"rifleman", "medic", "marksman", "heavy", "rifleman", "rifleman", "rifleman", "rifleman",
+}
+
 -- Shared default metres-from-town-centre diagonal for the recruiter-anchor
 -- site (both x and y). This is the DEFAULT only -- WarBattle.anchorOffset()
 -- (see SITE_OVERRIDES below) is what siteOrigin() and war_recruiter.lua's
@@ -414,6 +463,8 @@ function WarBattle:start()
 	-- First battle on a delay, for the same reason WarOfficer spawns late:
 	-- the war state may not be readable on this thread at start() time.
 	createEvent(45000, "WarBattle", "cycle", nil, "")
+	-- Slice B: the tend chain (waves, retreats) between cycles.
+	createEvent(60000, "WarBattle", "tendSites", nil, "")
 
 	-- B27 slice 1: one owner for the war screenplays' lifecycle rather than
 	-- two competing ones. WarSquad only observes; it spawns nothing itself.
@@ -436,7 +487,7 @@ end
 --- Record a unit in BOTH views: the flat OID list clear() and war_squad.lua
 -- consume, and the structured roster reconcile() needs. siteIndex 0 means a
 -- spread-layer garrison rather than a battle site.
-local function trackUnit(oid, regionId, siteIndex, faction, originX, originY)
+local function trackUnit(oid, regionId, siteIndex, faction, originX, originY, kind)
 	trackOid(oid)
 
 	-- Six fields. ox/oy are the SITE origin (where the defenders stood), so a
@@ -447,6 +498,8 @@ local function trackUnit(oid, regionId, siteIndex, faction, originX, originY)
 		.. tostring(siteIndex) .. "|" .. tostring(faction) .. "|"
 		.. (originX ~= nil and string.format("%.1f", originX) or "") .. "|"
 		.. (originY ~= nil and string.format("%.1f", originY) or "")
+		-- Seventh field, slice C: "w" marks a walker (WALKER_CRATES on death).
+		.. ((kind == "w") and "|w" or "")
 
 	local raw = readStringData(WarBattle.ROSTER_KEY)
 	if raw == nil or raw == "" then
@@ -560,7 +613,13 @@ function WarBattle.siteOrigin(coords, regionId, siteIndex, totalSites, isRecruit
 		return WarBattle.anchorPoint(coords, regionId)
 	end
 	local radius = WarBattle.siteRadiusFor(regionId)
-	local degrees = 45 + (siteIndex - 1) * (360 / totalSites)
+	-- A region whose site broke off as stuck (tendOnce) has its ring turned
+	-- so the next site stands on different ground. Wraps after a full turn.
+	local turns = 0
+	if type(readData) == "function" then
+		turns = readData("warbattle:siteturn:" .. tostring(regionId)) or 0
+	end
+	local degrees = 45 + (siteIndex - 1) * (360 / totalSites) + turns * WarBattle.SITE_TURN_DEG
 	local rad = degrees * math.pi / 180
 	return coords[1] + radius * math.cos(rad), coords[2] + radius * math.sin(rad)
 end
@@ -742,13 +801,15 @@ function WarBattle:reconcile(advanceClock)
 				local okd, dead = pcall(function() return CreatureObject(pUnit):isDead() end)
 				alive = not (okd and dead)
 			end
+			local kind = (f[7] == "w") and "w" or nil
 			if alive then
 				local sl = slots[key]
 				sl.alive[faction] = (sl.alive[faction] or 0) + 1
-				sl.units[#sl.units + 1] = { oid = oid, faction = faction }
+				sl.units[#sl.units + 1] = { oid = oid, faction = faction, kind = kind }
 			else
 				local ck = tostring(regionId) .. "|" .. tostring(faction)
-				casualties[ck] = (casualties[ck] or 0) + 1
+				-- Slice C: a fallen walker is WALKER_CRATES bodies to the sim.
+				casualties[ck] = (casualties[ck] or 0) + ((kind == "w") and WarBattle.WALKER_CRATES or 1)
 			end
 		end
 	end
@@ -845,7 +906,7 @@ function WarBattle:reconcile(advanceClock)
 		for _, u in ipairs(sl.units) do
 			keptRecs[#keptRecs + 1] = tostring(u.oid) .. "|" .. tostring(sl.region)
 				.. "|" .. tostring(sl.site) .. "|" .. tostring(u.faction)
-				.. "|" .. oxs .. "|" .. oys
+				.. "|" .. oxs .. "|" .. oys .. ((u.kind == "w") and "|w" or "")
 			keptOids[#keptOids + 1] = tostring(u.oid)
 		end
 	end
@@ -892,6 +953,12 @@ function WarBattle:reconcile(advanceClock)
 		writeData(sl.bornKey, 0)
 		writeData("warbattle:waves:" .. sl.key .. ":imperial", 0)
 		writeData("warbattle:waves:" .. sl.key .. ":rebel", 0)
+		for _, fac in ipairs({ "imperial", "rebel" }) do
+			writeData("warbattle:retreat:" .. sl.key .. ":" .. fac, 0)
+			writeData("warbattle:broke:" .. sl.key .. ":" .. fac, 0)
+			writeData("warbattle:sgt:" .. sl.key .. ":" .. fac, 0)
+			writeData("warbattle:walkerdown:" .. sl.key .. ":" .. fac, 0)
+		end
 	end
 
 	writeStringData(WarBattle.ROSTER_KEY, table.concat(keptRecs, ";"))
@@ -1014,6 +1081,106 @@ function WarBattle.siteGeometry(zone, regionId, siteIndex, originX, originY)
 	return ux, uy, -uy, ux, approach, originX + (ux * approach), originY + (uy * approach)
 end
 
+--- The role the i-th body of a line plays.
+local function roleAt(i)
+	return WarBattle.LINE_PATTERN[i] or "rifleman"
+end
+
+--- Spawn one body of `faction` in `role` at x,y. Tries the war template
+-- for the role, then falls back to the stock pool (TROOPS) so a server
+-- that has not restarted since the templates landed still fields a line.
+--- The world floor at x,y (terrain or the building/bridge on it), or 0
+-- when the binding is missing. A body spawned at z=0 under a raised city
+-- (Theed's ground is 6 m up) has no line of sight to anything and never
+-- fires -- measured 2026-09-05.
+function WarBattle.floorAt(zone, x, y)
+	if type(getWorldFloor) ~= "function" then
+		return 0
+	end
+	local ok, z = pcall(getWorldFloor, x, y, zone)
+	if ok and type(z) == "number" then
+		return z
+	end
+	return 0
+end
+
+--- The first of `candidates` (metres along ux,uy from originX,originY)
+-- whose point is on the navmesh, as (distance, x, y, z); nil when none is.
+function WarBattle.walkableAlong(zone, originX, originY, ux, uy, candidates)
+	if type(isPointWalkable) ~= "function" then
+		local d = candidates[1]
+		local x, y = originX + ux * d, originY + uy * d
+		return d, x, y, WarBattle.floorAt(zone, x, y)
+	end
+	for i = 1, #candidates do
+		local d = candidates[i]
+		local x, y = originX + ux * d, originY + uy * d
+		local z = WarBattle.floorAt(zone, x, y)
+		local ok, walkable = pcall(isPointWalkable, zone, x, z, y)
+		if ok and walkable == true then
+			return d, x, y, z
+		end
+	end
+	return nil
+end
+
+local function spawnTroop(zone, faction, role, x, y, heading, salt, i)
+	local pool = WarBattle.ROLES[faction]
+	local template = (WarBattle.ROLES_ENABLED and pool ~= nil) and pool[role] or nil
+	local z = WarBattle.floorAt(zone, x, y)
+	local p = template and spawnMobile(zone, template, 0, x, z, y, heading, 0) or nil
+	if p == nil then
+		local fallback = pickTemplate(faction, i, salt)
+		p = fallback and spawnMobile(zone, fallback, 0, x, z, y, heading, 0) or nil
+	end
+	return p
+end
+
+--- A line's sergeant, if one stands. Slot key is "<region>:<site>".
+local function sergeantOf(slotKey, faction)
+	local oid = readData("warbattle:sgt:" .. slotKey .. ":" .. faction)
+	if oid == nil or oid <= 0 then
+		return nil
+	end
+	local p = getSceneObject(oid)
+	if p == nil then
+		return nil
+	end
+	local okd, dead = pcall(function() return CreatureObject(p):isDead() end)
+	if okd and dead then
+		return nil
+	end
+	return p
+end
+
+--- Battle chatter through a body (the sergeant when there is one). Never
+-- throws; a missing voice line says nothing.
+local function shout(pBody, kind, faction, officer)
+	if pBody == nil or WarVoice == nil or WarVoice.battle == nil then
+		return
+	end
+	local line = WarVoice.battle(kind, faction, officer)
+	if line ~= nil then
+		pcall(function() spatialChat(pBody, line) end)
+		printf("WarBattle: " .. tostring(faction) .. " says: " .. line .. "\n")
+	end
+end
+
+--- The sim's exported officer for the DEFENDING side at a front, by name.
+local function officerAt(regionId)
+	local st = (WarReport ~= nil) and WarReport.state() or nil
+	if st == nil or type(st.fronts) ~= "table" then
+		return nil
+	end
+	for i = 1, #st.fronts do
+		local f = st.fronts[i]
+		if f ~= nil and f.region == regionId then
+			return f.officer
+		end
+	end
+	return nil
+end
+
 --- Where the i-th body of a line stands. Defenders form ranks of
 -- LINE_RANK along the site's x axis, ranks stepping back in y; attackers
 -- form ranks abreast across the radial at the approach point, ranks
@@ -1031,18 +1198,46 @@ local function linePosition(i, isAttacker, originX, originY, ux, uy, px, py, app
 	return approachX + (offset * px) + (ux * back), approachY + (offset * py) + (uy * back)
 end
 
+--- Set `pBody` on `pTarget` and WAKE ITS AI. MEASURED 2026-09-05:
+-- AiAgent:setDefender / setFollowObject set the combat state, the follow
+-- target and FOLLOWING, but never schedule the agent's behaviour event
+-- (AiAgentImplementation::activateAiBehavior does that, and nothing on the
+-- setDefender path calls it for an NPC set on an NPC with no player in
+-- range). Every "24 in combat, nobody hurt, no weapon drawn" site was that;
+-- the sites that resolved were woken by chance (notifyDissapear -- any
+-- despawn in range -- calls activateAiBehavior on every agent nearby).
+-- LuaAiAgent:executeBehavior() is the wake-up; with a follow object set,
+-- the no-players gate passes and the tree runs. `follow` = advance on the
+-- target (attackers); defenders stand and fire. The target is set back on
+-- the body and woken too, so a standing line answers the first shot.
+function WarBattle.engage(pBody, pTarget, follow)
+	if pBody == nil or pTarget == nil then
+		return
+	end
+	pcall(function() AiAgent(pBody):setDefender(pTarget) end)
+	if follow then
+		pcall(function() AiAgent(pBody):setFollowObject(pTarget) end)
+	end
+	pcall(function() AiAgent(pBody):executeBehavior() end)
+	pcall(function() AiAgent(pTarget):setDefender(pBody) end)
+	pcall(function() AiAgent(pTarget):executeBehavior() end)
+end
+
 --- Slice A: a reinforcement wave of `count` bodies for `faction` at an
 -- existing site -- defenders at the site origin, attackers at the approach
 -- point -- set on `enemies` (live enemy bodies from the roster). Returns
 -- the number fielded.
-local function spawnWave(zone, regionId, siteIndex, faction, isAttacker, originX, originY, count, enemies)
+local function spawnWave(zone, regionId, siteIndex, faction, isAttacker, originX, originY, count, enemies, friends)
 	local ux, uy, px, py, approach, approachX, approachY =
 		WarBattle.siteGeometry(zone, regionId, siteIndex, originX, originY)
+	local slotKey = regionId .. ":" .. tostring(siteIndex)
+	local sergeant = sergeantOf(slotKey, faction)
 	local fielded, bodies = 0, {}
 	for i = 1, count do
-		local template = pickTemplate(faction, i + 50, regionId .. "s" .. tostring(siteIndex) .. (isAttacker and "wa" or "wd"))
+		local role = (i == 1) and "medic" or "rifleman"
 		local x, y = linePosition(i, isAttacker, originX, originY, ux, uy, px, py, approachX, approachY, count)
-		local p = template and spawnMobile(zone, template, 0, x, 0, y, isAttacker and 180 or 0, 0) or nil
+		local p = spawnTroop(zone, faction, role, x, y, isAttacker and 180 or 0,
+			regionId .. "s" .. tostring(siteIndex) .. (isAttacker and "wa" or "wd"), i + 50)
 		if p ~= nil then
 			fielded = fielded + 1
 			bodies[#bodies + 1] = p
@@ -1054,14 +1249,17 @@ local function spawnWave(zone, regionId, siteIndex, faction, isAttacker, originX
 		end
 	end
 	if #enemies > 0 then
-		for i, p in ipairs(bodies) do
-			local target = enemies[((i - 1) % #enemies) + 1]
-			pcall(function() AiAgent(p):setDefender(target) end)
-			if isAttacker then
-				pcall(function() AiAgent(p):setFollowObject(target) end)
-			end
-			pcall(function() AiAgent(target):setDefender(p) end)
+		-- The wave and the survivors alike: set on the enemy, and (attackers)
+		-- following the sergeant if one stands, else their target.
+		local everyone = {}
+		for _, p in ipairs(bodies) do everyone[#everyone + 1] = p end
+		for _, p in ipairs(friends or {}) do everyone[#everyone + 1] = p end
+		for i, p in ipairs(everyone) do
+			WarBattle.engage(p, enemies[((i - 1) % #enemies) + 1], isAttacker)
 		end
+	end
+	if fielded > 0 then
+		shout(bodies[1], "wave", faction, (not isAttacker) and officerAt(regionId) or nil)
 	end
 	if isAttacker and fielded > 0 then
 		createEvent(WarBattle.STALL_CHECK_MS, "WarBattle", "checkAdvance", nil,
@@ -1070,6 +1268,292 @@ local function spawnWave(zone, regionId, siteIndex, faction, isAttacker, originX
 				string.format("%.4f", ux), string.format("%.4f", uy), string.format("%.1f", approach) }, "|"))
 	end
 	return fielded
+end
+
+--- Slice B: every live two-sided battle slot from the roster, with alive
+-- counts and live bodies per faction. No roster rewrite, no reports --
+-- reconcile() owns those; this is a read for the tend pass.
+function WarBattle.liveSlots()
+	local slots = {}
+	local raw = readStringData(WarBattle.ROSTER_KEY)
+	if raw == nil or raw == "" then
+		return slots
+	end
+	for rec in string.gmatch(raw, "([^;]+)") do
+		local f = {}
+		for field in string.gmatch(rec .. "|", "([^|]*)|") do
+			f[#f + 1] = field
+		end
+		local oid, regionId, siteIndex, faction = tonumber(f[1]), f[2], f[3], f[4]
+		local ox, oy = tonumber(f[5]), tonumber(f[6])
+		if oid ~= nil and regionId ~= nil and regionId ~= "" and siteIndex ~= nil and siteIndex ~= "" then
+			local key = regionId .. ":" .. siteIndex
+			local sl = slots[key]
+			if sl == nil then
+				sl = { key = key, region = regionId, site = siteIndex, alive = {}, units = {}, seen = {}, hurt = 0, dead = 0, walkerDown = {} }
+				slots[key] = sl
+			end
+			if ox ~= nil and oy ~= nil and sl.ox == nil then sl.ox, sl.oy = ox, oy end
+			sl.seen[faction] = true
+			local p = getSceneObject(oid)
+			if p ~= nil then
+				local okd, dead = pcall(function() return CreatureObject(p):isDead() end)
+				if okd and dead then
+					sl.dead = sl.dead + 1
+					if f[7] == "w" then sl.walkerDown[faction] = true end
+				else
+					sl.alive[faction] = (sl.alive[faction] or 0) + 1
+					sl.units[#sl.units + 1] = { oid = oid, faction = faction, p = p, kind = (f[7] == "w") and "w" or nil }
+					-- Hurt = health below its maximum. NPCs do not heal in
+					-- combat, so "nobody hurt" means "nobody has fired".
+					local okh, h = pcall(function()
+						local c = CreatureObject(p)
+						return c:getHAM(0) < c:getMaxHAM(0)
+					end)
+					if okh and h then sl.hurt = sl.hurt + 1 end
+				end
+			end
+		end
+	end
+	return slots
+end
+
+--- Slice B: fall back and regroup. Survivors of `faction` at a slot are
+-- moved to their own form-up ranks and taken out of the fight until the
+-- next wave re-engages them. Once per RETREAT_COOLDOWN_MS per side.
+local function retreatSide(zone, sl, faction, isAttacker, lineSize)
+	local key = "warbattle:retreat:" .. sl.key .. ":" .. faction
+	local last = readData(key) or 0
+	local nowMs = getTimestampMilli()
+	if last > 0 and (nowMs - last) < WarBattle.RETREAT_COOLDOWN_MS then
+		return false
+	end
+	local ux, uy, px, py, approach, approachX, approachY =
+		WarBattle.siteGeometry(zone, sl.region, sl.site, sl.ox, sl.oy)
+	local i = 0
+	for _, u in ipairs(sl.units) do
+		if u.faction == faction then
+			i = i + 1
+			local x, y = linePosition(i, isAttacker, sl.ox, sl.oy, ux, uy, px, py, approachX, approachY, lineSize)
+			local z = 0
+			if type(getWorldFloor) == "function" then
+				local okz, zz = pcall(getWorldFloor, x, y, zone)
+				if okz and type(zz) == "number" then z = zz end
+			end
+			pcall(function() AiAgent(u.p):removeDefenders() end)
+			pcall(function() SceneObject(u.p):teleport(x, z, y, 0) end)
+		end
+	end
+	writeData(key, nowMs)
+	shout(sergeantOf(sl.key, faction) or (sl.units[1] and sl.units[1].p), "fallback", faction,
+		(not isAttacker) and officerAt(sl.region) or nil)
+	printf(string.format("WarBattle: %s fell back at %s site %s (%d left of %d)\n",
+		tostring(faction), tostring(sl.region), tostring(sl.site), i, lineSize))
+	return true
+end
+
+--- Stuck sites. Returns true when the site broke off this pass (its bodies
+-- are gone). See STUCK_PASSES.
+function WarBattle.tendStuck(zone, sl, holder, attacker)
+	local quiet = (sl.hurt == 0 and sl.dead == 0)
+	local qkey = "warbattle:quiet:" .. sl.key
+	local lkey = "warbattle:stuck:" .. sl.key
+	if not quiet then
+		writeData(qkey, 0)
+		return false
+	end
+	local passes = (readData(qkey) or 0) + 1
+	writeData(qkey, passes)
+	if passes < WarBattle.STUCK_PASSES then
+		return false
+	end
+	writeData(qkey, 0)
+	local level = (readData(lkey) or 0) + 1
+	writeData(lkey, level)
+
+	if level == 1 then
+		-- Close the attackers to STUCK_CLOSE_M of the defenders' line, on
+		-- walkable ground, everyone at the floor, and set them on each other.
+		local ux, uy, px, py = WarBattle.siteGeometry(zone, sl.region, sl.site, sl.ox, sl.oy)
+		local d = WarBattle.walkableAlong(zone, sl.ox, sl.oy, ux, uy, { WarBattle.STUCK_CLOSE_M, 16, 24 })
+			or WarBattle.STUCK_CLOSE_M
+		local baseX, baseY = sl.ox + ux * d, sl.oy + uy * d
+		local defenders, attackers = {}, {}
+		for _, u in ipairs(sl.units) do
+			if u.faction == attacker then attackers[#attackers + 1] = u.p else defenders[#defenders + 1] = u.p end
+		end
+		for i, p in ipairs(defenders) do
+			local so = SceneObject(p)
+			local x, y = so:getWorldPositionX(), so:getWorldPositionY()
+			pcall(function() so:teleport(x, WarBattle.floorAt(zone, x, y), y, 0) end)
+		end
+		local halfLine = (#attackers - 1) / 2
+		for i, p in ipairs(attackers) do
+			local offset = (i - 1 - halfLine) * WarBattle.TROOPER_GAP_M
+			local x, y = baseX + offset * px, baseY + offset * py
+			pcall(function() SceneObject(p):teleport(x, WarBattle.floorAt(zone, x, y), y, 0) end)
+		end
+		for i, p in ipairs(attackers) do
+			WarBattle.engage(p, defenders[((i - 1) % #defenders) + 1], true)
+		end
+		shout(sergeantOf(sl.key, attacker) or attackers[1], "contact", attacker, nil)
+		printf(string.format("WarBattle: %s site %s quiet for %d passes (nobody hurt); attackers closed to %d m\n",
+			tostring(sl.region), tostring(sl.site), WarBattle.STUCK_PASSES, d))
+		return false
+	end
+
+	-- Still quiet after closing: no ground here. Break the site off (no
+	-- capture, no report) and turn the region's ring for the next cycle.
+	local turns = ((readData("warbattle:siteturn:" .. sl.region) or 0) + 1) % math.floor(360 / WarBattle.SITE_TURN_DEG)
+	writeData("warbattle:siteturn:" .. sl.region, turns)
+	writeData(lkey, 0)
+	-- Off the roster FIRST: reconcile() reports every roster body that is
+	-- dead or gone as a casualty, and nobody died here.
+	WarBattle.dropSlot(sl.key)
+	local removed = 0
+	for _, u in ipairs(sl.units) do
+		local ok = pcall(function() SceneObject(u.p):destroyObjectFromWorld(false) end)
+		if ok then removed = removed + 1 end
+	end
+	printf(string.format("WarBattle: %s site %s stuck (nobody hurt after closing); broke off, %d bodies gone, ring turned to %d x %d deg\n",
+		tostring(sl.region), tostring(sl.site), removed, turns, WarBattle.SITE_TURN_DEG))
+	return true
+end
+
+--- Remove one slot's records from the roster and reset its per-slot keys,
+-- the way reconcile() does for a resolved slot -- without any report. The
+-- bodies stay in OIDS_KEY, so clear() still owns whatever is left of them.
+function WarBattle.dropSlot(key)
+	local raw = readStringData(WarBattle.ROSTER_KEY)
+	local kept = {}
+	if raw ~= nil and raw ~= "" then
+		for rec in string.gmatch(raw, "([^;]+)") do
+			local region, site = string.match(rec, "^%d+|([%w_]+)|([%w_]+)")
+			if region == nil or (region .. ":" .. site) ~= key then
+				kept[#kept + 1] = rec
+			end
+		end
+	end
+	writeStringData(WarBattle.ROSTER_KEY, table.concat(kept, ";"))
+	writeData("warbattle:born:" .. key, 0)
+	for _, fac in ipairs({ "imperial", "rebel" }) do
+		writeData("warbattle:waves:" .. key .. ":" .. fac, 0)
+		writeData("warbattle:retreat:" .. key .. ":" .. fac, 0)
+		writeData("warbattle:broke:" .. key .. ":" .. fac, 0)
+		writeData("warbattle:sgt:" .. key .. ":" .. fac, 0)
+		writeData("warbattle:walkerdown:" .. key .. ":" .. fac, 0)
+	end
+end
+
+--- Slice B: one tend pass over every live battle -- retreats, then waves.
+-- Returns bodies spawned. Called by tendSites() on its own timer and by
+-- the warTendNow probe.
+function WarBattle.tendOnce()
+	if not WarBattle.WAVES_ENABLED then
+		return 0
+	end
+	local st = (WarReport ~= nil) and WarReport.state() or nil
+	if st == nil then
+		return 0
+	end
+	local fronts = {}
+	for _, f in ipairs(WarBattle.fronts()) do fronts[f.id] = f end
+
+	local slots = WarBattle.liveSlots()
+	local keys = {}
+	for k, _ in pairs(slots) do keys[#keys + 1] = k end
+	table.sort(keys)
+
+	local budget = WarBattle.TEND_NPC_BUDGET
+	local spawned = 0
+	for _, key in ipairs(keys) do
+		local sl = slots[key]
+		local isGarrison = (sl.site == "0") or (string.sub(tostring(sl.site), 1, 1) == "c")
+		local r = st.regions[sl.region]
+		local zone = (WarReport ~= nil) and WarReport.PLANET_OF[sl.region] or nil
+		if (not isGarrison) and r ~= nil and zone ~= nil and sl.ox ~= nil then
+			local holder = r.faction
+			local f = fronts[sl.region]
+			local attacker = (f ~= nil and f.attacker ~= nil) and f.attacker or ((holder == "rebel") and "imperial" or "rebel")
+			local lineSize = (f ~= nil and f.offensive == true) and WarBattle.LINE_SIZE_OFFENSIVE or WarBattle.LINE_SIZE
+			local aH, aA = sl.alive[holder] or 0, sl.alive[attacker] or 0
+			if aH > 0 and aA > 0 and WarBattle.tendStuck(zone, sl, holder, attacker) then
+				aH, aA = 0, 0 -- the site broke off this pass; nothing to reinforce
+			end
+			if aH > 0 and aA > 0 then
+				local sides = {
+					{ faction = holder, isAttacker = false, alive = aH, enemy = aA },
+					{ faction = attacker, isAttacker = true, alive = aA, enemy = aH },
+				}
+				for _, side in ipairs(sides) do
+					local wkey = "warbattle:waves:" .. sl.key .. ":" .. side.faction
+					local used = readData(wkey) or 0
+					local wavesLeft = used < WarBattle.WAVES_MAX_PER_SIDE
+					-- Slice C: the walker fell -- said once per side per site.
+					if sl.walkerDown[side.faction] then
+						local dkey = "warbattle:walkerdown:" .. sl.key .. ":" .. side.faction
+						if (readData(dkey) or 0) == 0 then
+							writeData(dkey, 1)
+							shout(sergeantOf(sl.key, side.faction) or (sl.units[1] and sl.units[1].p), "walker_down", side.faction, nil)
+							printf(string.format("WarBattle: %s walker down at %s site %s\n",
+								tostring(side.faction), tostring(sl.region), tostring(sl.site)))
+						end
+					end
+					-- retreat: thin, outmatched, and a wave still due
+					if wavesLeft and side.alive <= WarBattle.RETREAT_FRAC * lineSize
+							and side.enemy >= WarBattle.RETREAT_ENEMY_FRAC * lineSize then
+						pcall(retreatSide, zone, sl, side.faction, side.isAttacker, lineSize)
+					end
+					-- breaking: thin and nothing left to send
+					if (not wavesLeft) and side.alive <= WarBattle.RETREAT_FRAC * lineSize then
+						local bkey = "warbattle:broke:" .. sl.key .. ":" .. side.faction
+						if (readData(bkey) or 0) == 0 then
+							writeData(bkey, 1)
+							shout(sergeantOf(sl.key, side.faction) or (sl.units[1] and sl.units[1].p), "breaking", side.faction, nil)
+						end
+					end
+					-- wave
+					if wavesLeft and side.alive <= WarBattle.WAVE_TRIGGER_FRAC * lineSize then
+						local waveSize = math.min(math.ceil(WarBattle.WAVE_SIZE_FRAC * lineSize), lineSize - side.alive)
+						if waveSize > 0 and budget - spawned >= waveSize then
+							local enemies, friends = {}, {}
+							for _, u in ipairs(sl.units) do
+								if u.faction == side.faction then friends[#friends + 1] = u.p else enemies[#enemies + 1] = u.p end
+							end
+							local okn, n = pcall(spawnWave, zone, sl.region, sl.site, side.faction, side.isAttacker,
+								sl.ox, sl.oy, waveSize, enemies, friends)
+							if okn and n and n > 0 then
+								writeData(wkey, used + 1)
+								spawned = spawned + n
+								printf(string.format("WarBattle: wave %d/%d for %s at %s site %s: +%d (had %d of %d)\n",
+									used + 1, WarBattle.WAVES_MAX_PER_SIDE, tostring(side.faction), tostring(sl.region),
+									tostring(sl.site), n, side.alive, lineSize))
+							elseif not okn then
+								printf("WarBattle: spawnWave failed: " .. tostring(n) .. "\n")
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	return spawned
+end
+
+function WarBattle:tendSites()
+	local ok, err = pcall(WarBattle.tendOnce)
+	if not ok then
+		printf("WarBattle: tendSites failed: " .. tostring(err) .. "\n")
+	end
+	createEvent(WarBattle.TEND_INTERVAL_MS, "WarBattle", "tendSites", nil, "")
+end
+
+--- One tend pass, now, without touching the timer chain.
+function Tests:warTendNow()
+	printf("WARTEND: begin\n")
+	local ok, n = pcall(WarBattle.tendOnce)
+	printf("WARTEND: " .. (ok and (tostring(n) .. " body(ies) spawned") or ("failed: " .. tostring(n))) .. "\n")
+	printf("WARTEND: end\n")
 end
 
 --- Slice A: reinforce a held (live) site's thinned sides. `held` is
@@ -1087,14 +1571,15 @@ local function reinforceSite(zone, regionId, siteIndex, holder, attacker, held, 
 		local key = "warbattle:waves:" .. slotKey .. ":" .. side.faction
 		local used = readData(key) or 0
 		if alive > 0 and alive <= trigger and used < WarBattle.WAVES_MAX_PER_SIDE and budgetLeft - spawned >= waveSize then
-			local enemies = {}
+			local enemies, friends = {}, {}
 			for _, u in ipairs(held.units) do
-				if u.faction ~= side.faction then
-					local p = getSceneObject(u.oid)
-					if p ~= nil then enemies[#enemies + 1] = p end
+				local p = getSceneObject(u.oid)
+				if p ~= nil then
+					if u.faction ~= side.faction then enemies[#enemies + 1] = p else friends[#friends + 1] = p end
 				end
 			end
-			local n = spawnWave(zone, regionId, siteIndex, side.faction, side.isAttacker, held.ox, held.oy, waveSize, enemies)
+			local room = math.min(waveSize, lineSize - alive)
+			local n = spawnWave(zone, regionId, siteIndex, side.faction, side.isAttacker, held.ox, held.oy, room, enemies, friends)
 			if n > 0 then
 				writeData(key, used + 1)
 				spawned = spawned + n
@@ -1107,7 +1592,56 @@ local function reinforceSite(zone, regionId, siteIndex, holder, attacker, held, 
 	return spawned
 end
 
-local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFaction, originX, originY, lineSize)
+--- Slice C: which walker template each side of a front fields, or nil for
+-- none. `front` is a WarBattle.fronts() entry.
+function WarBattle.walkersFor(front, regionId, defenderFaction, attackerFaction)
+	if not WarBattle.WALKERS_ENABLED or front == nil then
+		return nil
+	end
+	local hot = (tonumber(front.intensity) or 0) >= WarBattle.WALKER_INTENSITY or front.offensive == true
+	if not hot then
+		return nil
+	end
+	local st = (WarReport ~= nil) and WarReport.state() or nil
+	local r = (st ~= nil) and st.regions[regionId] or nil
+	local siege = r ~= nil and r.is_capital == true and type(r.siege) == "table" and r.siege.active == true
+	local attackerTpl = WarBattle.WALKERS[attackerFaction]
+	if siege and attackerFaction == "imperial" then
+		attackerTpl = WarBattle.WALKERS.siege
+	end
+	return { defender = WarBattle.WALKERS[defenderFaction], attacker = attackerTpl }
+end
+
+--- Spawn one walker for `faction` WALKER_BACK_M behind its line, set on
+-- `enemies`. Tracked with the "w" mark. Returns the pointer or nil.
+local function spawnWalker(zone, regionId, siteIndex, faction, isAttacker, template, originX, originY,
+		ux, uy, approachX, approachY, enemies)
+	if template == nil or template == "" then
+		return nil
+	end
+	local x, y
+	if isAttacker then
+		x, y = approachX + ux * WarBattle.WALKER_BACK_M, approachY + uy * WarBattle.WALKER_BACK_M
+	else
+		x, y = originX - ux * WarBattle.WALKER_BACK_M, originY - uy * WarBattle.WALKER_BACK_M
+	end
+	local p = spawnMobile(zone, template, 0, x, WarBattle.floorAt(zone, x, y), y, isAttacker and 180 or 0, 0)
+	if p == nil then
+		printf(string.format("WarBattle: walker %s did not spawn at %s site %s (template not loaded?)\n",
+			tostring(template), tostring(regionId), tostring(siteIndex)))
+		return nil
+	end
+	trackUnit(SceneObject(p):getObjectID(), regionId, siteIndex, faction, originX, originY, "w")
+	if isAttacker then
+		pcall(function() AiAgent(p):setHomeLocation(originX, 0, originY, nil) end)
+	end
+	if enemies ~= nil and #enemies > 0 then
+		WarBattle.engage(p, enemies[1], isAttacker)
+	end
+	return p
+end
+
+local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFaction, originX, originY, lineSize, walkers)
 	lineSize = lineSize or WarBattle.LINE_SIZE
 	local defenders, attackers = {}, {}
 
@@ -1137,17 +1671,20 @@ local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFac
 	local approachX = originX + (ux * approach)
 	local approachY = originY + (uy * approach)
 
+	local slotKey = regionId .. ":" .. tostring(siteIndex)
 	for i = 1, lineSize do
-		local dTemplate = pickTemplate(defenderFaction, i, regionId .. "s" .. siteIndex .. "d")
-		local aTemplate = pickTemplate(attackerFaction, i, regionId .. "s" .. siteIndex .. "a")
-
 		-- Ranks (slice A): defenders in ranks along the site, attackers in
-		-- ranks abreast across the approach.
+		-- ranks abreast across the approach. Roles (slice B) by position.
 		local dx, dy = linePosition(i, false, originX, originY, ux, uy, px, py, approachX, approachY, lineSize)
 		local ax, ay = linePosition(i, true, originX, originY, ux, uy, px, py, approachX, approachY, lineSize)
+		local role = roleAt(i)
 
-		local pD = dTemplate and spawnMobile(zone, dTemplate, 0, dx, 0, dy, 0, 0) or nil
-		local pA = aTemplate and spawnMobile(zone, aTemplate, 0, ax, 0, ay, 180, 0) or nil
+		local pD = spawnTroop(zone, defenderFaction, role, dx, dy, 0, regionId .. "s" .. siteIndex .. "d", i)
+		local pA = spawnTroop(zone, attackerFaction, role, ax, ay, 180, regionId .. "s" .. siteIndex .. "a", i)
+		if i == 1 then
+			if pD ~= nil then writeData("warbattle:sgt:" .. slotKey .. ":" .. defenderFaction, SceneObject(pD):getObjectID()) end
+			if pA ~= nil then writeData("warbattle:sgt:" .. slotKey .. ":" .. attackerFaction, SceneObject(pA):getObjectID()) end
+		end
 
 		if pD ~= nil then
 			defenders[#defenders + 1] = pD
@@ -1177,18 +1714,33 @@ local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFac
 	-- Set them on each other. setDefender is the mechanism syren.lua uses to
 	-- put an AI into combat with a target; pointing both sides at each other
 	-- starts the fight, and Core3's own retaliation keeps it going.
-	local pairs_n = math.min(#defenders, #attackers)
-	for i = 1, pairs_n do
-		pcall(function() AiAgent(defenders[i]):setDefender(attackers[i]) end)
-		pcall(function() AiAgent(attackers[i]):setDefender(defenders[i]) end)
+	for i = 1, #attackers do
+		-- Each attacker follows its own target (the advance); the defender
+		-- is set back on it. Both woken -- see WarBattle.engage.
+		WarBattle.engage(attackers[i], defenders[((i - 1) % #defenders) + 1], true)
+	end
+	shout(attackers[1], "contact", attackerFaction, nil)
+	shout(defenders[1], "hold", defenderFaction, officerAt(regionId))
 
-		-- setDefender alone would leave the attackers standing at their
-		-- start point trading fire across APPROACH_DISTANCE_M. Following
-		-- their target is what turns that into an advance -- same binding
-		-- war_squad.lua uses to walk troops after a commander
-		-- (LuaAiAgent.cpp registers setFollowObject), and Core3's own
-		-- retaliation keeps the fight going once they close.
-		pcall(function() AiAgent(attackers[i]):setFollowObject(defenders[i]) end)
+	-- Slice C: walkers behind the lines.
+	local walkersUp = 0
+	if type(walkers) == "table" then
+		local pW = spawnWalker(zone, regionId, siteIndex, defenderFaction, false, walkers.defender,
+			originX, originY, ux, uy, approachX, approachY, attackers)
+		if pW ~= nil then
+			walkersUp = walkersUp + 1
+			shout(defenders[1], "walker", defenderFaction, nil)
+		end
+		pW = spawnWalker(zone, regionId, siteIndex, attackerFaction, true, walkers.attacker,
+			originX, originY, ux, uy, approachX, approachY, defenders)
+		if pW ~= nil then
+			walkersUp = walkersUp + 1
+			shout(attackers[1], "walker", attackerFaction, nil)
+		end
+		if walkersUp > 0 then
+			printf(string.format("WarBattle: %s site %s fields %d walker(s)\n",
+				tostring(regionId), tostring(siteIndex), walkersUp))
+		end
 	end
 
 	-- One-shot: did they actually advance? See STALL_CHECK_MS.
@@ -1197,7 +1749,7 @@ local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFac
 			string.format("%.2f", originX), string.format("%.2f", originY),
 			string.format("%.4f", ux), string.format("%.4f", uy), string.format("%.1f", approach) }, "|"))
 
-	return #defenders + #attackers
+	return #defenders + #attackers + walkersUp
 end
 
 --- Scheduled STALL_CHECK_MS after a site is staged. If most of the attacking
@@ -1264,24 +1816,21 @@ function WarBattle:checkAdvance(pObj, args)
 
 		local px, py = -uy, ux
 		local halfLine = (#attackers - 1) / 2
-		local baseX = originX + ux * WarBattle.STALL_FALLBACK_M
-		local baseY = originY + uy * WarBattle.STALL_FALLBACK_M
+		-- The fallback point must itself be walkable: at Theed the 24 m point
+		-- is a canal and a line dropped there never fired (2026-09-05).
+		local fallbackM = WarBattle.walkableAlong(zone, originX, originY, ux, uy,
+			{ WarBattle.STALL_FALLBACK_M, 16, 12 }) or WarBattle.STALL_FALLBACK_M
+		local baseX = originX + ux * fallbackM
+		local baseY = originY + uy * fallbackM
 		for i, p in ipairs(attackers) do
 			local offset = (i - 1 - halfLine) * WarBattle.TROOPER_GAP_M
 			local x, y = baseX + offset * px, baseY + offset * py
-			local z = 0
-			if type(getWorldFloor) == "function" then
-				local okz, zz = pcall(getWorldFloor, x, y, zone)
-				if okz and type(zz) == "number" then z = zz end
-			end
+			local z = WarBattle.floorAt(zone, x, y)
 			pcall(function() SceneObject(p):teleport(x, z, y, 0) end)
-			local target = defenders[((i - 1) % #defenders) + 1]
-			pcall(function() AiAgent(p):setDefender(target) end)
-			pcall(function() AiAgent(p):setFollowObject(target) end)
-			pcall(function() AiAgent(target):setDefender(p) end)
+			WarBattle.engage(p, defenders[((i - 1) % #defenders) + 1], true)
 		end
 		printf(string.format("WarBattle: %s site %s -- assault stalled at %d m (%d/%d unmoved); line moved to %d m\n",
-			tostring(regionId), tostring(siteIndex), math.floor(approach), stalled, #attackers, WarBattle.STALL_FALLBACK_M))
+			tostring(regionId), tostring(siteIndex), math.floor(approach), stalled, #attackers, fallbackM))
 	end)
 	if not ok then
 		printf("WarBattle: checkAdvance failed: " .. tostring(err) .. "\n")
@@ -1306,7 +1855,7 @@ local function spawnGarrison(zone, regionId, faction, originX, originY, slotTag)
 			-- Spread along one line only; a garrison reads as a patrol
 			-- standing about, not as two ranks squaring up.
 			local gx = originX + (i - 1) * WarBattle.TROOPER_GAP_M
-			local pG = spawnMobile(zone, template, 0, gx, 0, originY, 0, 0)
+			local pG = spawnMobile(zone, template, 0, gx, WarBattle.floorAt(zone, gx, originY), originY, 0, 0)
 
 			if pG ~= nil then
 				spawned = spawned + 1
@@ -1445,7 +1994,8 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 
 				local isRecruiterAnchor = (not primaryRegionWritten) and (s == 1)
 				local ox, oy = WarBattle.siteOrigin(coords, regionId, s, wanted, isRecruiterAnchor)
-				local fielded = spawnSite(zone, regionId, s, defender, attacker, ox, oy, lineSize)
+				local walkers = WarBattle.walkersFor(front[r], regionId, defender, attacker)
+				local fielded = spawnSite(zone, regionId, s, defender, attacker, ox, oy, lineSize, walkers)
 
 				-- B27 slice 1: the proximity area an overt player has to be inside
 				-- for troops to fall in. Spawned per site, alongside the site, so

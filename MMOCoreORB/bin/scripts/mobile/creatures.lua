@@ -84,3 +84,9 @@ end
 includeFile("creatureskills.lua")
 includeFile("conversation.lua")
 includeFile("serverobjects.lua")
+
+-- The war's own troops and walkers (docs/DESIGN-BATTLES.md). Included HERE, after
+-- creatureskills.lua, because the attack tables (carbineermaster ...) must exist
+-- when the templates are built -- from the objects seam they were nil and the
+-- troops stood in combat unable to fire (measured 2026-09-05).
+includeFile("../custom_scripts/mobile/war/war_troops.lua")
