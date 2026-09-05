@@ -117,6 +117,18 @@ WarBattle.screenplayName = "WarBattle"
 -- where four sites are ~63m apart, so 20m still clears its neighbours.
 WarBattle.SQUAD_SIZE = 6
 
+-- GRAND BATTLES slice A (docs/DESIGN-BATTLES.md, owner rulings 2026-09-05):
+-- one site per front, a LINE per side, and reinforcement waves while the
+-- site stands. SQUAD_SIZE above is what war_squad.lua hands a player and
+-- what the spread garrisons use; a front's line is LINE_SIZE.
+WarBattle.LINE_SIZE = 12            -- bodies per side at a front's site
+WarBattle.LINE_SIZE_OFFENSIVE = 16  -- when the sim marks the front an offensive
+WarBattle.LINE_RANK = 8             -- bodies per rank; a line forms in ranks of this
+WarBattle.WAVE_TRIGGER_FRAC = 0.5   -- a side at or below this fraction of its line gets a wave
+WarBattle.WAVE_SIZE_FRAC = 0.5      -- a wave is this fraction of the line
+WarBattle.WAVES_MAX_PER_SIDE = 3    -- per site; after that the line it has is the line it dies with
+WarBattle.WAVES_ENABLED = true      -- the switch docs/DESIGN-BATTLES.md section 5 names
+
 -- Shared default metres-from-town-centre diagonal for the recruiter-anchor
 -- site (both x and y). This is the DEFAULT only -- WarBattle.anchorOffset()
 -- (see SITE_OVERRIDES below) is what siteOrigin() and war_recruiter.lua's
@@ -823,7 +835,9 @@ function WarBattle:reconcile(advanceClock)
 		elseif sl.isGarrison then
 			heldGarrisons[sl.region] = true
 		else
-			heldSites[sl.key] = { ox = sl.ox, oy = sl.oy }
+			-- alive/units ride along so stageBattles() can reinforce a
+			-- thinned side (slice A waves) without a second roster walk.
+			heldSites[sl.key] = { ox = sl.ox, oy = sl.oy, alive = sl.alive, units = sl.units }
 		end
 
 		local oxs = (sl.ox ~= nil) and string.format("%.1f", sl.ox) or ""
@@ -876,6 +890,8 @@ function WarBattle:reconcile(advanceClock)
 
 		standDown(sl)
 		writeData(sl.bornKey, 0)
+		writeData("warbattle:waves:" .. sl.key .. ":imperial", 0)
+		writeData("warbattle:waves:" .. sl.key .. ":rebel", 0)
 	end
 
 	writeStringData(WarBattle.ROSTER_KEY, table.concat(keptRecs, ";"))
@@ -978,7 +994,121 @@ function WarBattle.formUpDistance(zone, originX, originY, ux, uy, regionId, site
 	return 24
 end
 
-local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFaction, originX, originY)
+--- Approach geometry for a site: the outward unit vector ux,uy from the
+-- town centre through the site origin, its perpendicular px,py, and the
+-- attackers' form-up point along it (formUpDistance). Shared by spawnSite
+-- and the wave spawner so reinforcements arrive where the line formed up.
+function WarBattle.siteGeometry(zone, regionId, siteIndex, originX, originY)
+	local townX, townY = originX, originY
+	local coords = (WarReport ~= nil) and WarReport.COORDS[regionId] or nil
+	if coords ~= nil then
+		townX, townY = coords[1], coords[2]
+	end
+	local ux, uy = originX - townX, originY - townY
+	local len = math.sqrt((ux * ux) + (uy * uy))
+	if len < 1 then
+		ux, uy, len = 1, 0, 1
+	end
+	ux, uy = ux / len, uy / len
+	local approach = WarBattle.formUpDistance(zone, originX, originY, ux, uy, regionId, siteIndex)
+	return ux, uy, -uy, ux, approach, originX + (ux * approach), originY + (uy * approach)
+end
+
+--- Where the i-th body of a line stands. Defenders form ranks of
+-- LINE_RANK along the site's x axis, ranks stepping back in y; attackers
+-- form ranks abreast across the radial at the approach point, ranks
+-- stepping outward along it.
+local function linePosition(i, isAttacker, originX, originY, ux, uy, px, py, approachX, approachY, lineSize)
+	local perRank = math.min(WarBattle.LINE_RANK, lineSize)
+	local rank = math.floor((i - 1) / perRank)
+	local col = (i - 1) % perRank
+	if not isAttacker then
+		return originX + col * WarBattle.TROOPER_GAP_M, originY + rank * WarBattle.TROOPER_GAP_M
+	end
+	local halfRow = (perRank - 1) / 2
+	local offset = (col - halfRow) * WarBattle.TROOPER_GAP_M
+	local back = rank * WarBattle.TROOPER_GAP_M
+	return approachX + (offset * px) + (ux * back), approachY + (offset * py) + (uy * back)
+end
+
+--- Slice A: a reinforcement wave of `count` bodies for `faction` at an
+-- existing site -- defenders at the site origin, attackers at the approach
+-- point -- set on `enemies` (live enemy bodies from the roster). Returns
+-- the number fielded.
+local function spawnWave(zone, regionId, siteIndex, faction, isAttacker, originX, originY, count, enemies)
+	local ux, uy, px, py, approach, approachX, approachY =
+		WarBattle.siteGeometry(zone, regionId, siteIndex, originX, originY)
+	local fielded, bodies = 0, {}
+	for i = 1, count do
+		local template = pickTemplate(faction, i + 50, regionId .. "s" .. tostring(siteIndex) .. (isAttacker and "wa" or "wd"))
+		local x, y = linePosition(i, isAttacker, originX, originY, ux, uy, px, py, approachX, approachY, count)
+		local p = template and spawnMobile(zone, template, 0, x, 0, y, isAttacker and 180 or 0, 0) or nil
+		if p ~= nil then
+			fielded = fielded + 1
+			bodies[#bodies + 1] = p
+			trackUnit(SceneObject(p):getObjectID(), regionId, siteIndex, faction, originX, originY)
+			if WarHeal ~= nil and WarHeal.attach ~= nil then WarHeal.attach(p) end
+			if isAttacker then
+				pcall(function() AiAgent(p):setHomeLocation(originX, 0, originY, nil) end)
+			end
+		end
+	end
+	if #enemies > 0 then
+		for i, p in ipairs(bodies) do
+			local target = enemies[((i - 1) % #enemies) + 1]
+			pcall(function() AiAgent(p):setDefender(target) end)
+			if isAttacker then
+				pcall(function() AiAgent(p):setFollowObject(target) end)
+			end
+			pcall(function() AiAgent(target):setDefender(p) end)
+		end
+	end
+	if isAttacker and fielded > 0 then
+		createEvent(WarBattle.STALL_CHECK_MS, "WarBattle", "checkAdvance", nil,
+			table.concat({ regionId, tostring(siteIndex), faction,
+				string.format("%.2f", originX), string.format("%.2f", originY),
+				string.format("%.4f", ux), string.format("%.4f", uy), string.format("%.1f", approach) }, "|"))
+	end
+	return fielded
+end
+
+--- Slice A: reinforce a held (live) site's thinned sides. `held` is
+-- reconcile's slot record (alive/units). Returns bodies spawned.
+local function reinforceSite(zone, regionId, siteIndex, holder, attacker, held, lineSize, budgetLeft)
+	if not WarBattle.WAVES_ENABLED or type(held) ~= "table" or held.alive == nil or held.units == nil then
+		return 0
+	end
+	local slotKey = regionId .. ":" .. tostring(siteIndex)
+	local spawned = 0
+	local trigger = WarBattle.WAVE_TRIGGER_FRAC * lineSize
+	local waveSize = math.ceil(WarBattle.WAVE_SIZE_FRAC * lineSize)
+	for _, side in ipairs({ { faction = holder, isAttacker = false }, { faction = attacker, isAttacker = true } }) do
+		local alive = held.alive[side.faction] or 0
+		local key = "warbattle:waves:" .. slotKey .. ":" .. side.faction
+		local used = readData(key) or 0
+		if alive > 0 and alive <= trigger and used < WarBattle.WAVES_MAX_PER_SIDE and budgetLeft - spawned >= waveSize then
+			local enemies = {}
+			for _, u in ipairs(held.units) do
+				if u.faction ~= side.faction then
+					local p = getSceneObject(u.oid)
+					if p ~= nil then enemies[#enemies + 1] = p end
+				end
+			end
+			local n = spawnWave(zone, regionId, siteIndex, side.faction, side.isAttacker, held.ox, held.oy, waveSize, enemies)
+			if n > 0 then
+				writeData(key, used + 1)
+				spawned = spawned + n
+				printf(string.format("WarBattle: wave %d/%d for %s at %s site %s: +%d (had %d of %d)\n",
+					used + 1, WarBattle.WAVES_MAX_PER_SIDE, tostring(side.faction), tostring(regionId),
+					tostring(siteIndex), n, alive, lineSize))
+			end
+		end
+	end
+	return spawned
+end
+
+local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFaction, originX, originY, lineSize)
+	lineSize = lineSize or WarBattle.LINE_SIZE
 	local defenders, attackers = {}, {}
 
 	-- Approach geometry. The site already sits on a radial out from the town
@@ -1006,20 +1136,15 @@ local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFac
 	local approach = WarBattle.formUpDistance(zone, originX, originY, ux, uy, regionId, siteIndex)
 	local approachX = originX + (ux * approach)
 	local approachY = originY + (uy * approach)
-	local halfLine = (WarBattle.SQUAD_SIZE - 1) / 2
 
-	for i = 1, WarBattle.SQUAD_SIZE do
+	for i = 1, lineSize do
 		local dTemplate = pickTemplate(defenderFaction, i, regionId .. "s" .. siteIndex .. "d")
 		local aTemplate = pickTemplate(attackerFaction, i, regionId .. "s" .. siteIndex .. "a")
 
-		local dx = originX + (i - 1) * WarBattle.TROOPER_GAP_M
-		local dy = originY
-
-		-- Attackers: out along the radial, spread across it, centred on the
-		-- approach point.
-		local offset = (i - 1 - halfLine) * WarBattle.TROOPER_GAP_M
-		local ax = approachX + (offset * px)
-		local ay = approachY + (offset * py)
+		-- Ranks (slice A): defenders in ranks along the site, attackers in
+		-- ranks abreast across the approach.
+		local dx, dy = linePosition(i, false, originX, originY, ux, uy, px, py, approachX, approachY, lineSize)
+		local ax, ay = linePosition(i, true, originX, originY, ux, uy, px, py, approachX, approachY, lineSize)
 
 		local pD = dTemplate and spawnMobile(zone, dTemplate, 0, dx, 0, dy, 0, 0) or nil
 		local pA = aTemplate and spawnMobile(zone, aTemplate, 0, ax, 0, ay, 180, 0) or nil
@@ -1217,7 +1342,9 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 	end
 
 	local npcBudgetLeft = WarBattle.TOTAL_NPC_BUDGET
-	local perSiteCost = WarBattle.SQUAD_SIZE * 2
+	-- Slice A: a site costs a line per side; the offensive front's line is
+	-- longer. perSiteCost is the floor used for the "any budget left" break.
+	local perSiteCost = WarBattle.LINE_SIZE * 2
 	-- Reap the proximity/presence areas the PREVIOUS cycle spawned, before
 	-- staging fresh ones. WarSquad.attachSite() used to be called every cycle
 	-- with its return value discarded and nothing ever destroying the area --
@@ -1246,7 +1373,10 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 			local holder = front[r].faction
 			local defender = holder
 			local attacker = front[r].attacker or ((holder == "rebel") and "imperial" or "rebel")
-			local wanted = math.min(sitesForFront(front[r]), WarBattle.MAX_SITES_PER_REGION)
+			-- Slice A (owner ruling): ONE site per front, a full line per side.
+			local wanted = 1
+			local lineSize = (front[r].offensive == true) and WarBattle.LINE_SIZE_OFFENSIVE or WarBattle.LINE_SIZE
+			local siteCost = lineSize * 2
 
 			local regionSitesStaged = 0
 			local regionHeldSlots = 0
@@ -1301,11 +1431,21 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 						writeStringData(WarBattle.REGION_KEY, regionId)
 						primaryRegionWritten = true
 					end
-				elseif npcBudgetLeft >= perSiteCost then
+					-- Slice A: reinforce a thinned side of a live fight.
+					if not isCaptureGround then
+						local okw, waved = pcall(reinforceSite, zone, regionId, s, defender, attacker, held, lineSize, npcBudgetLeft)
+						if okw and waved and waved > 0 then
+							npcBudgetLeft = npcBudgetLeft - waved
+							npcsSpawned = npcsSpawned + waved
+						elseif not okw then
+							printf("WarBattle: reinforceSite failed: " .. tostring(waved) .. "\n")
+						end
+					end
+				elseif npcBudgetLeft >= siteCost then
 
 				local isRecruiterAnchor = (not primaryRegionWritten) and (s == 1)
 				local ox, oy = WarBattle.siteOrigin(coords, regionId, s, wanted, isRecruiterAnchor)
-				local fielded = spawnSite(zone, regionId, s, defender, attacker, ox, oy)
+				local fielded = spawnSite(zone, regionId, s, defender, attacker, ox, oy, lineSize)
 
 				-- B27 slice 1: the proximity area an overt player has to be inside
 				-- for troops to fall in. Spawned per site, alongside the site, so
@@ -1315,7 +1455,7 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 				end
 
 				if fielded > 0 then
-					npcBudgetLeft = npcBudgetLeft - perSiteCost
+					npcBudgetLeft = npcBudgetLeft - siteCost
 					npcsSpawned = npcsSpawned + fielded
 					sitesStaged = sitesStaged + 1
 					regionSitesStaged = regionSitesStaged + 1
