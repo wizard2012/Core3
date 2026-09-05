@@ -185,3 +185,87 @@ function Tests:populationFrontCoverage()
 		printf("POPULATIONFRONTCOVERAGE: FAIL -- see MISSING lines above (a region with no configured site for that kind, e.g. tat_anchorhead's missing cantina, is a known gap, not a placement bug)\n")
 	end
 end
+
+--- Read-only: every provider id of both kinds -- applied region, npc oid,
+-- whether it resolves, and where the live NPC actually stands (zone, parent
+-- cell, world position) -- plus any two providers of one kind that share a
+-- region, which puts two identical NPCs on the same coordinates. Never
+-- spawns, despawns or moves anything.
+--- Re-seat every provider NOW: retire all of them (despawn, clear the
+-- shared-memory pointers) and run one placement pass. For a site-table
+-- change -- applyPlacement() leaves a provider alone while its REGION is
+-- unchanged, so new coordinates for the same region never apply on their
+-- own. Runs on the console thread, which is fine: it is not include time.
+function Tests:populationRespawnAll()
+	printf("POPULATIONRESPAWNALL: begin\n")
+	local retired = 0
+	for _, kind in ipairs({ "medic", "performer" }) do
+		local cfg = (type(POPULATION_PROVIDERS) == "table") and POPULATION_PROVIDERS[kind] or nil
+		local count = (cfg ~= nil and type(cfg.count) == "number") and cfg.count or 0
+		for i = 1, count do
+			local pid = kind .. "_" .. i
+			local ok, err = pcall(function() PopulationServices:retireProvider(pid) end)
+			if ok then
+				retired = retired + 1
+			else
+				printf("POPULATIONRESPAWNALL: retire " .. pid .. " failed: " .. tostring(err) .. "\n")
+			end
+			-- The applied-region index too, or applyPlacement() thinks the
+			-- provider is still where it was and skips the spawn.
+			writeSharedMemory("population:" .. pid .. ":appliedRegionIdx", 0)
+		end
+	end
+	local ok, err = pcall(function() PopulationServices:refreshAll() end)
+	printf("POPULATIONRESPAWNALL: retired " .. retired .. ", refresh ok=" .. tostring(ok)
+		.. ((not ok) and (" err=" .. tostring(err)) or "") .. "\n")
+	printf("POPULATIONRESPAWNALL: end\n")
+end
+
+function Tests:populationProviderDump()
+	printf("POPULATIONPROVIDERDUMP: begin\n")
+
+	for _, kind in ipairs({ "medic", "performer" }) do
+		local cfg = (type(POPULATION_PROVIDERS) == "table") and POPULATION_PROVIDERS[kind] or nil
+		local count = (cfg ~= nil and type(cfg.count) == "number") and cfg.count or 0
+		local byRegion = {}
+
+		for i = 1, count do
+			local pid = kind .. "_" .. i
+			local region = PopulationPlacement.getAppliedRegion(pid)
+			local oid = readSharedMemory("population:" .. pid .. ":npcOid")
+			local pNpc = (oid ~= nil and oid ~= 0) and getSceneObject(oid) or nil
+
+			local where = "n/a"
+			if pNpc ~= nil then
+				local ok, s = pcall(function()
+					local so = SceneObject(pNpc)
+					return string.format("%s cell=%s x=%.1f y=%.1f z=%.1f name=%s",
+						tostring(so:getZoneName()), tostring(so:getParentID()),
+						so:getWorldPositionX(), so:getWorldPositionY(), so:getWorldPositionZ(),
+						tostring(so:getDisplayedName()))
+				end)
+				where = ok and s or ("error: " .. tostring(s))
+			end
+
+			printf(string.format("POPULATIONPROVIDERDUMP: %s region=%s oid=%s alive=%s at %s\n",
+				pid, tostring(region), tostring(oid), tostring(pNpc ~= nil), where))
+
+			if region ~= nil then
+				byRegion[region] = byRegion[region] or {}
+				table.insert(byRegion[region], pid)
+			end
+		end
+
+		local regions = {}
+		for r, _ in pairs(byRegion) do regions[#regions + 1] = r end
+		table.sort(regions)
+		for _, r in ipairs(regions) do
+			if #byRegion[r] > 1 then
+				printf("POPULATIONPROVIDERDUMP: COLLISION " .. kind .. " at " .. r .. ": "
+					.. table.concat(byRegion[r], ",") .. "\n")
+			end
+		end
+	end
+
+	printf("POPULATIONPROVIDERDUMP: end\n")
+end

@@ -203,7 +203,14 @@ end
 -- providers of the SAME kind THIS cycle (min_separation = "planet",
 -- S4.7.1). Callers place providers of one kind in fixed id order and pass
 -- the growing set forward so two of a kind never share a planet.
-function PopulationPlacement.computeSite(kind, providerId, warState, alreadyPlacedPlanets)
+--
+-- `excludedRegions` (optional, a set of region ids) is skipped the same way
+-- a used planet is: standing_services.lua passes the regions its GUARANTEED
+-- slots already occupy, so an ambient roamer is never drawn to a front that
+-- already has a provider of its kind -- which put two identical NPCs on the
+-- same coordinates whenever a front's contest sat below the withdrawal
+-- threshold.
+function PopulationPlacement.computeSite(kind, providerId, warState, alreadyPlacedPlanets, excludedRegions)
 	if warState == nil then
 		return nil
 	end
@@ -226,16 +233,18 @@ function PopulationPlacement.computeSite(kind, providerId, warState, alreadyPlac
 	local idx = stableHash(hashInput) % #pool
 
 	alreadyPlacedPlanets = alreadyPlacedPlanets or {}
+	excludedRegions = excludedRegions or {}
 
-	-- Advance past any site on an already-used planet, bounded by pool
-	-- size so a pool that is genuinely all one planet (fail-safe, not an
-	-- infinite loop) just accepts the collision rather than hanging.
+	-- Advance past any site on an already-used planet or in an excluded
+	-- region, bounded by pool size so a pool that is genuinely all one
+	-- planet (fail-safe, not an infinite loop) just accepts the collision
+	-- rather than hanging.
 	local attempts = 0
 	while attempts < #pool do
 		local regionId = pool[idx + 1]
 		local planet = POPULATION_REGION_PLANET[regionId]
 
-		if planet == nil or not alreadyPlacedPlanets[planet] then
+		if (planet == nil or not alreadyPlacedPlanets[planet]) and not excludedRegions[regionId] then
 			return regionId
 		end
 

@@ -131,6 +131,10 @@ function PopulationServices:refreshKind(kind)
 	end
 
 	local usedPlanets = {}
+	-- Regions the guaranteed slots took this pass. Roamers skip them: a
+	-- roamer drawn to a front that already has its guaranteed provider put
+	-- two identical NPCs on one spot.
+	local usedRegions = {}
 	for i = 1, providerCfg.count do
 		local providerId = kind .. "_" .. i
 		local regionId = nil
@@ -156,13 +160,14 @@ function PopulationServices:refreshKind(kind)
 			-- guaranteed slots right now, or the guaranteed site above was
 			-- unavailable -- fall back to the normal roaming computation so
 			-- the slot still gives ambient coverage instead of sitting idle.
-			local ok, computed = pcall(PopulationPlacement.computeSite, kind, providerId, warState, usedPlanets)
+			local ok, computed = pcall(PopulationPlacement.computeSite, kind, providerId, warState, usedPlanets, usedRegions)
 			if ok then
 				regionId = computed
 			end
 		end
 
 		if regionId ~= nil then
+			usedRegions[regionId] = true
 			if i > guaranteedCount then
 				-- Only the ambient roamers track/avoid each other's
 				-- planets; guaranteed slots are deliberately exempt (see
@@ -256,6 +261,16 @@ function PopulationServices:spawnProvider(kind, providerId, regionId)
 	-- conversations.
 	TangibleObject(pNpc):setOptionBit(CONVERSABLE)
 	AiAgent(pNpc):addObjectFlag(AI_STATIONARY)
+
+	-- Named for what they are. The stock townsperson templates render as
+	-- "<random name> (a medic)" / "(an entertainer)", and the cities already
+	-- spawn stock medics and entertainers in the same hospitals and cantinas
+	-- (corellia_coronet.lua has one 6 m from the performer's spot), so an
+	-- identically-named pair read as a double spawn. The ours is the one you
+	-- can talk to; now it is also the one that says so.
+	pcall(function()
+		SceneObject(pNpc):setCustomObjectName((kind == "medic") and "Field Medic" or "Travelling Performer")
+	end)
 
 	local convoTemplate = (kind == "medic") and "PopulationMedicConvoTemplate" or "PopulationPerformerConvoTemplate"
 	AiAgent(pNpc):setConvoTemplate(convoTemplate)

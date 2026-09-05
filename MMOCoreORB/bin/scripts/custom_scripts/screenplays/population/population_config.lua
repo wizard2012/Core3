@@ -67,8 +67,9 @@ POPULATION_SERVICES = {
 --
 -- The owner's instruction was to co-locate the Anchorhead entertainer with
 -- the medic. POPULATION_CANTINAS therefore carries a tat_anchorhead row
--- derived from POPULATION_AID_POSTS.tat_anchorhead instead of from a
--- cantina -- see that table's comment for why this needs no code change.
+-- that is not a bartender cantina: since 2026-09-05 it is the Tavern's main
+-- room, one building with the medic's doctor's room -- see both tables'
+-- comments.
 POPULATION_PROVIDERS = {
 	medic     = { count = 5, guaranteed = 3, kind = "aid_post", bias = "toward_front" },
 	performer = { count = 5, guaranteed = 3, kind = "cantina",  bias = "away_from_front" },
@@ -126,55 +127,62 @@ POPULATION_REGION_PLANET = {
 	tat_mos_espa    = "tatooine",
 }
 
--- Outdoor aid-post coordinates, one per war-mapped region, all 13.
--- enhanceCharacter() has no medical-rating/building/location term
--- (verified: PlayerManagerImplementation.cpp:6666-6684), so the medic
--- needs no interior at all (docs/DESIGN-POPULATION.md S4.1, S4.7.2).
--- Coordinates are each city's real starport/shuttleport
--- (managers/planet/planet_manager.lua planetTravelPoints, read directly
--- out of the checkout -- not guessed), offset +15m on X so the medic
--- isn't standing on the landing pad itself. Bela Vistal and Anchorhead
--- have no starport in this build, so their nearest shuttleport is used
--- instead (same source table).
+-- Medic sites: each city's MEDICAL CENTER interior (owner instruction
+-- 2026-09-05, "make sure they're in med centers"; D15 amended). D15's
+-- outdoor aid post at the starport was an implementation convenience --
+-- enhanceCharacter() has no building/location term, so the medic worked
+-- anywhere -- not a fiction choice. Scarcity, roaming, the front guarantee
+-- and the fees are unchanged; only WHERE IN THE CITY moved.
+--
+-- Cell IDs and z come from the stock city screenplays' own medical trainers
+-- (screenplays/cities/*.lua, the "--Med Center" blocks: trainer_doctor /
+-- trainer_medic / trainer_combatmedic), read out of the checkout -- not
+-- guessed. Each x/y is a point BETWEEN two stock NPCs standing in that same
+-- cell, so it is open floor in the same room, a few metres off any of them
+-- (never on top of one). Anything more precise than "in the room, not in a
+-- wall" needs a client: not provable server-side.
+--
+-- Two exceptions:
+--   cor_bela_vistal  no medical center in this build (no medical trainer in
+--                    corellia_bela_vistal.lua) -- shuttleport A +15 m, the
+--                    old outdoor post, stays.
+--   tat_anchorhead   the doctor trainer sits in a room of the Tavern (cell
+--                    1213346); the medic goes there, and the performer into
+--                    the Tavern's main room (POPULATION_CANTINAS below), so
+--                    the 2026-09-03 co-location ruling still holds.
 POPULATION_AID_POSTS = {
-	cor_bela_vistal = { zone = "corellia", x = 6659.269,   z = 330,        y = -5922.5225, heading = 0, cell = 0 },
-	cor_coronet     = { zone = "corellia", x = -51.760902, z = 28,         y = -4711.3281, heading = 0, cell = 0 },
-	cor_doaba       = { zone = "corellia", x = 3364.8933,  z = 308,        y = 5598.1362,  heading = 0, cell = 0 },
-	cor_kor_vella   = { zone = "corellia", x = -3142.2834, z = 31,         y = 2876.2029,  heading = 0, cell = 0 },
-	cor_tyrena      = { zone = "corellia", x = -4988.0649, z = 21,         y = -2228.3665, heading = 0, cell = 0 },
-	nab_kaadara     = { zone = "naboo",    x = 5295.2002,  z = -192,       y = 6688.0498,  heading = 0, cell = 0 },
-	nab_keren       = { zone = "naboo",    x = 1386.5938,  z = 13,         y = 2747.9043,  heading = 0, cell = 0 },
-	nab_moenia      = { zone = "naboo",    x = 4976.9409,  z = 3.75,       y = -4892.6997, heading = 0, cell = 0 },
-	nab_theed       = { zone = "naboo",    x = -4843.834,  z = 5.9483199,  y = 4164.0679,  heading = 0, cell = 0 },
-	tat_anchorhead  = { zone = "tatooine", x = 62.565128,  z = 52,         y = -5338.9072, heading = 0, cell = 0 },
-	tat_bestine     = { zone = "tatooine", x = -1346.1917, z = 12,         y = -3600.0254, heading = 0, cell = 0 },
-	tat_mos_eisley  = { zone = "tatooine", x = 3614.894,   z = 5,          y = -4780.4487, heading = 0, cell = 0 },
-	tat_mos_espa    = { zone = "tatooine", x = -2818.1609, z = 5,          y = 2107.3787,  heading = 0, cell = 0 },
+	cor_bela_vistal = { zone = "corellia", x = 6659.269, z = 330,   y = -5922.5225, heading = 0, cell = 0 },
+	cor_coronet     = { zone = "corellia", x = -21.5, z = 0.26,  y = -2.8, heading = 0, cell = 1855535 },
+	cor_doaba       = { zone = "corellia", x = 0.0,   z = 0.184, y = -2.0, heading = 0, cell = 4345354 },
+	cor_kor_vella   = { zone = "corellia", x = 4.5,   z = 0.18,  y = 0.5,  heading = 0, cell = 3375392 },
+	cor_tyrena      = { zone = "corellia", x = 18.0,  z = 0.26,  y = 0.0,  heading = 0, cell = 1935831 },
+	nab_kaadara     = { zone = "naboo",    x = 18.5,  z = 0.26,  y = 1.5,  heading = 0, cell = 1741439 },
+	nab_keren       = { zone = "naboo",    x = 20.5,  z = 0.3,   y = 3.0,  heading = 0, cell = 1661366 },
+	nab_moenia      = { zone = "naboo",    x = 20.0,  z = 0.26,  y = 0.5,  heading = 0, cell = 1717502 },
+	nab_theed       = { zone = "naboo",    x = 14.5,  z = 0.3,   y = 3.5,  heading = 0, cell = 1697360 },
+	tat_anchorhead  = { zone = "tatooine", x = 1.54,  z = 1.0,   y = 4.0,  heading = 0, cell = 1213346 },
+	tat_bestine     = { zone = "tatooine", x = -2.5,  z = 0.2,   y = 1.0,  heading = 0, cell = 4005383 },
+	tat_mos_eisley  = { zone = "tatooine", x = -2.5,  z = 0.184, y = 1.0,  heading = 0, cell = 9655496 },
+	tat_mos_espa    = { zone = "tatooine", x = -2.5,  z = 0.184, y = 1.0,  heading = 0, cell = 4005424 },
 }
 
 -- Cantina cell IDs -- lifted directly from
 -- screenplays/cities/cantinas/bartenders.lua's bartenderSpawns table,
 -- intersected with the 13 war-mapped regions
 -- (bridge/generated/region_map.lua). Twelve of the seventeen bartender
--- cantinas are in mapped cities. tat_anchorhead has none, and its row here
--- is therefore NOT a cantina: it is POPULATION_AID_POSTS.tat_anchorhead
--- with a small +4m x offset so the performer stands beside the medic
--- rather than inside it, per the owner ruling above.
+-- cantinas are in mapped cities; x/z/y reuse a safe interior spot from
+-- bartenders.lua's own patrolLocations table (patrolLocations[2],
+-- deliberately not patrolLocations[1] where the bartender itself stands),
+-- which is valid in every one of them because the stock bartender patrols
+-- the same relative points in all seventeen.
 --
--- This works with no code change because nothing in standing_services.lua
--- requires the site to be a real cantina -- the table only answers "where
--- does the performer stand". The one behavioural difference is the dwell
--- area (spawnDwellArea): with cell = 0 it is an ordinary outdoor active
--- area rather than an interior one, so "be in the cantina 60s" becomes
--- "be within DWELL_RADIUS_M of the performer 60s" -- which is what that
--- mechanic already approximates everywhere else by its own admission.
---
--- The z value is inherited unchanged from the aid post. placeCreature does
--- no floor snap, so if the +4m offset ever lands on a slope the NPC can sit
--- slightly off the ground; it is verifiable with the isPointWalkable
--- console binding rather than by guessing. x/z/y reuse a safe interior spot
--- from bartenders.lua's own patrolLocations table (patrolLocations[2],
--- deliberately not patrolLocations[1] where the bartender itself stands).
+-- tat_anchorhead has no bartender cantina; it has the TAVERN
+-- (tatooine_anchorhead.lua "--Tavern", main-room cell 1213345, where the
+-- stock borra_setas and a drinking commoner stand). The performer goes
+-- there -- a point between those two NPCs -- and the medic into the
+-- doctor's room off the same building (POPULATION_AID_POSTS above), which
+-- keeps the 2026-09-03 co-location ruling. This replaced the earlier
+-- outdoor "+4 m beside the medic" row on 2026-09-05.
 POPULATION_CANTINAS = {
 	cor_bela_vistal = { zone = "corellia", x = 3.0, z = -0.9, y = 3.4, heading = 0, cell = 3375355 },
 	cor_coronet     = { zone = "corellia", x = 3.0, z = -0.9, y = 3.4, heading = 0, cell = 8105496 },
@@ -185,7 +193,7 @@ POPULATION_CANTINAS = {
 	nab_keren       = { zone = "naboo",    x = 3.0, z = -0.9, y = 3.4, heading = 0, cell = 5 },
 	nab_moenia      = { zone = "naboo",    x = 3.0, z = -0.9, y = 3.4, heading = 0, cell = 111 },
 	nab_theed       = { zone = "naboo",    x = 3.0, z = -0.9, y = 3.4, heading = 0, cell = 91 },
-	tat_anchorhead  = { zone = "tatooine", x = 66.565128,  z = 52,         y = -5338.9072, heading = 0, cell = 0 },
+	tat_anchorhead  = { zone = "tatooine", x = 0.0, z = 0.41, y = 1.0, heading = 0, cell = 1213345 },
 	tat_bestine     = { zone = "tatooine", x = 3.0, z = -0.9, y = 3.4, heading = 0, cell = 1028647 },
 	tat_mos_eisley  = { zone = "tatooine", x = 3.0, z = -0.9, y = 3.4, heading = 0, cell = 1082877 },
 	tat_mos_espa    = { zone = "tatooine", x = 3.0, z = -0.9, y = 3.4, heading = 0, cell = 1256058 },
