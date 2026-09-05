@@ -9,6 +9,8 @@
 #include "server/zone/objects/scene/SceneObject.h"
 #include "server/zone/objects/creature/CreatureObject.h"
 #include "server/zone/managers/stringid/StringIdManager.h"
+#include "templates/manager/TemplateManager.h"
+#include "templates/manager/PlanetMapCategory.h"
 #include "server/zone/managers/director/DirectorManager.h"
 #include "server/zone/Zone.h"
 #include "server/zone/SpaceZone.h"
@@ -37,6 +39,9 @@ Luna<LuaSceneObject>::RegType LuaSceneObject::Register[] = {
 		{ "isInRangeWithObject", &LuaSceneObject::isInRangeWithObject },
 		{ "isInRangeWithObject3d", &LuaSceneObject::isInRangeWithObject3d },
 		{ "setCustomObjectName", &LuaSceneObject::setCustomObjectName},
+		{ "setPlanetMapCategory", &LuaSceneObject::setPlanetMapCategory },
+		{ "registerWithPlanetaryMap", &LuaSceneObject::registerWithPlanetaryMap },
+		{ "unregisterWithPlanetaryMap", &LuaSceneObject::unregisterWithPlanetaryMap },
 		{ "getDistanceTo", &LuaSceneObject::getDistanceTo },
 		{ "getDistanceToPosition", &LuaSceneObject::getDistanceToPosition },
 		{ "getDistanceTo3d", &LuaSceneObject::getDistanceTo3d },
@@ -213,6 +218,59 @@ int LuaSceneObject::teleport(lua_State* L) {
 	realObject->teleport(x, z, y, parentID);
 
 	return 0;
+}
+
+/**
+ * Give this object a planetary-map category by datatable name ("city",
+ * "camp", "rebel", ...). The client draws whatever is registered with the
+ * zone's MapLocationTable under that category, using the object's displayed
+ * name and world position -- so a screenplay can put a war marker on the map
+ * with nothing but a named scene object. Returns true when the name resolved.
+ */
+int LuaSceneObject::setPlanetMapCategory(lua_State* L) {
+	String name = lua_tostring(L, -1);
+
+	const PlanetMapCategory* category = TemplateManager::instance()->getPlanetMapCategoryByName(name);
+
+	Locker locker(realObject);
+	realObject->setPlanetMapCategory(category);
+
+	lua_pushboolean(L, category != nullptr);
+	return 1;
+}
+
+/**
+ * (Re)register with the current zone's planetary map. The entry snapshots the
+ * displayed name at registration, so a rename is unregister -> rename ->
+ * register. Returns false when the object is not in a zone.
+ */
+int LuaSceneObject::registerWithPlanetaryMap(lua_State* L) {
+	Zone* zone = realObject->getZone();
+
+	if (zone == nullptr || realObject->getPlanetMapCategory() == nullptr) {
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	zone->unregisterObjectWithPlanetaryMap(realObject);
+	zone->registerObjectWithPlanetaryMap(realObject);
+
+	lua_pushboolean(L, true);
+	return 1;
+}
+
+int LuaSceneObject::unregisterWithPlanetaryMap(lua_State* L) {
+	Zone* zone = realObject->getZone();
+
+	if (zone == nullptr) {
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	zone->unregisterObjectWithPlanetaryMap(realObject);
+
+	lua_pushboolean(L, true);
+	return 1;
 }
 
 int LuaSceneObject::getZoneName(lua_State* L) {

@@ -105,3 +105,15 @@ includeFile("../custom_scripts/screenplays/spawnsafety/spawn_safety_probe.lua")
 -- see navmesh/anchorhead_outpost_navmesh.lua's own header for the full
 -- writeup). Independent of every other lane; no ordering dependency.
 includeFile("../custom_scripts/screenplays/navmesh/anchorhead_outpost_navmesh.lua")
+
+-- Surface 6: the war on the planetary map screen (needs the three
+-- LuaSceneObject map bindings in this branch's core3; fails closed without).
+includeFile("../custom_scripts/screenplays/warreport/war_map_pins.lua")
+
+-- SimPlayers (docs/DESIGN-SIMPLAYERS.md): Erenshor-style NPC "players".
+-- After every war module and population/ (they read WarReport, WarBattle,
+-- WarVoice and POPULATION_CANTINAS); config before voice before behaviour.
+includeFile("../custom_scripts/screenplays/simplayers/sim_config.lua")
+includeFile("../custom_scripts/screenplays/simplayers/sim_voice.lua")
+includeFile("../custom_scripts/screenplays/simplayers/sim_players.lua")
+includeFile("../custom_scripts/screenplays/simplayers/sim_probe.lua")

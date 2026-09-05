@@ -85,6 +85,9 @@ namespace scene {
 		int sendTo(lua_State* L);
 		int getCustomObjectName(lua_State* L);
 		int setCustomObjectName(lua_State* L);
+		int setPlanetMapCategory(lua_State* L);
+		int registerWithPlanetaryMap(lua_State* L);
+		int unregisterWithPlanetaryMap(lua_State* L);
 		int getDisplayedName(lua_State* L);
 		int getObjectName(lua_State* L);
 		int setDirectionalHeading(lua_State* L);
