@@ -198,6 +198,13 @@ WarVoice.BATTLE = {
 	-- Slice C: walkers.
 	walker      = { imperial = "Walker support is up -- advance behind the AT-ST!", rebel = "Our walker is up -- push with it!" },
 	walker_down = { imperial = "The walker is down! Hold the line!",               rebel = "We lost the walker -- hold what we have!" },
+	-- Slice D: command. %s is the commander's name.
+	command_taken  = { imperial = "Squad -- form on %s! Orders are theirs now.",   rebel = "Squad, form on %s -- they have the line!" },
+	order_attack   = { imperial = "Engage the target! Weapons free!",             rebel = "On that one -- take it down!" },
+	order_hold     = { imperial = "Hold position. Nobody moves.",                  rebel = "Hold here! Dig in!" },
+	order_fallback = { imperial = "Fall back on the commander -- move!",           rebel = "Back to the commander -- go, go!" },
+	dismissed      = { imperial = "Resuming command. Good hunting.",               rebel = "I have the squad again. Thanks for the help." },
+	released       = { imperial = "Commander down -- I have the squad!",           rebel = "We lost the commander -- on me!" },
 }
 
 function WarVoice.battle(kind, faction, officer)

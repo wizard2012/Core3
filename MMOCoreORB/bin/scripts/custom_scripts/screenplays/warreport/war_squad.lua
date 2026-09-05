@@ -205,7 +205,9 @@ function WarSquad.claimFor(pPlayer)
 		if #squad.troops >= WarSquad.MAX_TROOPS then
 			break
 		end
-		if WarSquad.claimed[oid] == nil then
+		-- Slice D: a body a player commands (war_command.lua) is not fallen in.
+		local commanded = (WarCommand ~= nil and WarCommand.isCommanded ~= nil) and WarCommand.isCommanded(oid) or false
+		if WarSquad.claimed[oid] == nil and not commanded then
 			local pNpc = getSceneObject(oid)
 			local near = false
 			if pNpc ~= nil and CreatureObject(pNpc):getFaction() == faction

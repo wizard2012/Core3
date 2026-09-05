@@ -339,6 +339,8 @@ WarBattle.TROOPS = {
 -- war_squad.lua's stagedOids() parses it with tonumber() and would break on
 -- anything richer. Two views of the same set, one of them load-bearing for
 -- another module.
+-- Record: oid|regionId|siteIndex|faction|originX|originY[|w] -- the last
+-- field marks a walker (slice C); older four-field records still parse.
 WarBattle.ROSTER_KEY = "warbattle:roster"
 WarBattle.CYCLE_KEY = "warbattle:cycle"
 
@@ -1210,6 +1212,16 @@ end
 -- the no-players gate passes and the tree runs. `follow` = advance on the
 -- target (attackers); defenders stand and fire. The target is set back on
 -- the body and woken too, so a standing line answers the first shot.
+--- Slice D: is this body under a player's command? war_command.lua keeps
+-- the record; waves, retreats and the stuck rule leave such a body alone.
+function WarBattle.isCommanded(oid)
+	if WarCommand == nil or WarCommand.isCommanded == nil or oid == nil then
+		return false
+	end
+	local ok, c = pcall(WarCommand.isCommanded, oid)
+	return ok and c == true
+end
+
 function WarBattle.engage(pBody, pTarget, follow)
 	if pBody == nil or pTarget == nil then
 		return
@@ -1243,17 +1255,20 @@ local function spawnWave(zone, regionId, siteIndex, faction, isAttacker, originX
 			bodies[#bodies + 1] = p
 			trackUnit(SceneObject(p):getObjectID(), regionId, siteIndex, faction, originX, originY)
 			if WarHeal ~= nil and WarHeal.attach ~= nil then WarHeal.attach(p) end
+			if WarCommand ~= nil and WarCommand.attach ~= nil then WarCommand.attach(p) end
 			if isAttacker then
 				pcall(function() AiAgent(p):setHomeLocation(originX, 0, originY, nil) end)
 			end
 		end
 	end
 	if #enemies > 0 then
-		-- The wave and the survivors alike: set on the enemy, and (attackers)
-		-- following the sergeant if one stands, else their target.
+		-- The wave and the survivors alike: set on the enemy (survivors a
+		-- player commands excepted -- slice D), attackers following.
 		local everyone = {}
 		for _, p in ipairs(bodies) do everyone[#everyone + 1] = p end
-		for _, p in ipairs(friends or {}) do everyone[#everyone + 1] = p end
+		for _, p in ipairs(friends or {}) do
+			if not WarBattle.isCommanded(SceneObject(p):getObjectID()) then everyone[#everyone + 1] = p end
+		end
 		for i, p in ipairs(everyone) do
 			WarBattle.engage(p, enemies[((i - 1) % #enemies) + 1], isAttacker)
 		end
@@ -1332,7 +1347,7 @@ local function retreatSide(zone, sl, faction, isAttacker, lineSize)
 		WarBattle.siteGeometry(zone, sl.region, sl.site, sl.ox, sl.oy)
 	local i = 0
 	for _, u in ipairs(sl.units) do
-		if u.faction == faction then
+		if u.faction == faction and not WarBattle.isCommanded(u.oid) then
 			i = i + 1
 			local x, y = linePosition(i, isAttacker, sl.ox, sl.oy, ux, uy, px, py, approachX, approachY, lineSize)
 			local z = 0
@@ -1380,7 +1395,12 @@ function WarBattle.tendStuck(zone, sl, holder, attacker)
 		local baseX, baseY = sl.ox + ux * d, sl.oy + uy * d
 		local defenders, attackers = {}, {}
 		for _, u in ipairs(sl.units) do
-			if u.faction == attacker then attackers[#attackers + 1] = u.p else defenders[#defenders + 1] = u.p end
+			if not WarBattle.isCommanded(u.oid) then
+				if u.faction == attacker then attackers[#attackers + 1] = u.p else defenders[#defenders + 1] = u.p end
+			end
+		end
+		if #attackers == 0 or #defenders == 0 then
+			return false
 		end
 		for i, p in ipairs(defenders) do
 			local so = SceneObject(p)
@@ -1395,6 +1415,9 @@ function WarBattle.tendStuck(zone, sl, holder, attacker)
 		end
 		for i, p in ipairs(attackers) do
 			WarBattle.engage(p, defenders[((i - 1) % #defenders) + 1], true)
+		end
+		for i, p in ipairs(defenders) do
+			WarBattle.engage(p, attackers[((i - 1) % #attackers) + 1], false)
 		end
 		shout(sergeantOf(sl.key, attacker) or attackers[1], "contact", attacker, nil)
 		printf(string.format("WarBattle: %s site %s quiet for %d passes (nobody hurt); attackers closed to %d m\n",
@@ -1458,6 +1481,12 @@ function WarBattle.tendOnce()
 	end
 	local fronts = {}
 	for _, f in ipairs(WarBattle.fronts()) do fronts[f.id] = f end
+
+	-- Slice D: commanders who died, left or dropped overt lose their squad.
+	if WarCommand ~= nil and WarCommand.tickOnce ~= nil then
+		local okc, errc = pcall(WarCommand.tickOnce)
+		if not okc then printf("WarBattle: WarCommand.tickOnce failed: " .. tostring(errc) .. "\n") end
+	end
 
 	local slots = WarBattle.liveSlots()
 	local keys = {}
@@ -1686,6 +1715,10 @@ local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFac
 			if pA ~= nil then writeData("warbattle:sgt:" .. slotKey .. ":" .. attackerFaction, SceneObject(pA):getObjectID()) end
 		end
 
+		if WarCommand ~= nil and WarCommand.attach ~= nil then
+			WarCommand.attach(pD)
+			WarCommand.attach(pA)
+		end
 		if pD ~= nil then
 			defenders[#defenders + 1] = pD
 			trackUnit(SceneObject(pD):getObjectID(), regionId, siteIndex, defenderFaction, originX, originY)
@@ -1718,6 +1751,11 @@ local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFac
 		-- Each attacker follows its own target (the advance); the defender
 		-- is set back on it. Both woken -- see WarBattle.engage.
 		WarBattle.engage(attackers[i], defenders[((i - 1) % #defenders) + 1], true)
+	end
+	-- And every defender on an attacker, so a line longer than the one
+	-- facing it has nobody left asleep (verifier, 2026-09-05).
+	for i = 1, #defenders do
+		WarBattle.engage(defenders[i], attackers[((i - 1) % #attackers) + 1], false)
 	end
 	shout(attackers[1], "contact", attackerFaction, nil)
 	shout(defenders[1], "hold", defenderFaction, officerAt(regionId))
