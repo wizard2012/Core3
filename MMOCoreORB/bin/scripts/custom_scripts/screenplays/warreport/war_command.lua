@@ -46,7 +46,7 @@
   commander (ALLOW_NPC_COMMANDER is set for the probe only), takes command
   of the first live Imperial line, issues hold / fall back / dismiss, and
   prints the squad size and each troop's follow state. The radial itself
-  needs a client: docs/IN-GAME-TESTS.md section 7.
+  needs a client: docs/IN-GAME-TESTS.md section 8.
 ]]
 
 WarCommand = WarCommand or { screenplayName = "WarCommand" }
@@ -274,9 +274,13 @@ function WarCommand.take(pPlayer, pSgt)
 	if pPlayer == nil or pSgt == nil then
 		return 0, "nobody"
 	end
-	local rec = recordOf(SceneObject(pSgt):getObjectID())
+	local sgtOid = SceneObject(pSgt):getObjectID()
+	local rec = recordOf(sgtOid)
 	if rec == nil or rec.faction == nil then
 		return 0, "not a war body"
+	end
+	if not isSergeant(sgtOid, rec) then
+		return 0, "not a sergeant"
 	end
 	local ok, why = qualifies(pPlayer, rec.faction)
 	if not ok then
@@ -361,8 +365,12 @@ function WarCommand.order(pPlayer, kind)
 		if okd and dead then
 			return 0, "target is dead"
 		end
-		if factionName(CreatureObject(pTarget):getFaction()) == squad.faction then
+		local targetFaction = factionName(CreatureObject(pTarget):getFaction())
+		if targetFaction == squad.faction then
 			return 0, "that is one of ours"
+		end
+		if targetFaction == nil then
+			return 0, "not the enemy"
 		end
 		for _, u in ipairs(troops) do
 			WarBattle.engage(u.p, pTarget, true)
@@ -400,27 +408,65 @@ function WarCommand.order(pPlayer, kind)
 	return 0, "unknown order"
 end
 
+--- Every live enemy body at a slot (walkers included: they shoot back).
+local function enemiesAt(slotKey, faction)
+	local out = {}
+	local raw = readStringData(WarBattle.ROSTER_KEY)
+	if raw == nil or raw == "" then
+		return out
+	end
+	for rec in string.gmatch(raw, "([^;]+)") do
+		local f = {}
+		for field in string.gmatch(rec .. "|", "([^|]*)|") do
+			f[#f + 1] = field
+		end
+		local oid = tonumber(f[1])
+		if oid ~= nil and f[2] ~= nil and f[3] ~= nil and (f[2] .. ":" .. f[3]) == slotKey and f[4] ~= faction then
+			local p = getSceneObject(oid)
+			if p ~= nil then
+				local okd, dead = pcall(function() return CreatureObject(p):isDead() end)
+				if not (okd and dead) then
+					out[#out + 1] = p
+				end
+			end
+		end
+	end
+	return out
+end
+
 --- Hand the squad back to the war. `why` = "dismissed" (the player's
 -- choice), "released" (the commander died, left or dropped overt), or nil
--- (nothing left to say). Each troop resumes what it was doing; the next
--- wave or tend pass sets it on the enemy again.
+-- (nothing left to say). Each troop goes back on the enemy at its site
+-- (WarBattle.engage -- verifier, 2026-09-05: "Fall back" strips a body's
+-- targets, and a body handed back with none stood frozen for good, since
+-- the stuck rule saw wounded survivors and never fired); attackers advance,
+-- the holder's line stands.
 function WarCommand.release(commanderOid, why)
 	local squad = WarCommand.squadOf(commanderOid)
 	if squad == nil then
 		dropCommander(commanderOid)
 		return 0
 	end
+	local region = string.match(squad.slot, "^([%w_]+):")
+	local st = (WarReport ~= nil) and WarReport.state() or nil
+	local holder = (st ~= nil and region ~= nil and st.regions[region] ~= nil) and st.regions[region].faction or nil
+	local advance = true
+	if holder ~= nil then
+		advance = (holder ~= squad.faction)
+	end
+	local enemies = enemiesAt(squad.slot, squad.faction)
 	local n = 0
 	local voice = nil
-	for _, oid in ipairs(squad.troops) do
+	for i, oid in ipairs(squad.troops) do
 		writeData(troopKey(oid), 0)
 		local p = getSceneObject(oid)
 		if p ~= nil then
-			pcall(function()
-				local a = AiAgent(p)
-				a:restoreFollowObject()
-				a:executeBehavior()
-			end)
+			pcall(function() AiAgent(p):restoreFollowObject() end)
+			if #enemies > 0 then
+				WarBattle.engage(p, enemies[((i - 1) % #enemies) + 1], advance)
+			else
+				pcall(function() AiAgent(p):executeBehavior() end)
+			end
 			n = n + 1
 			voice = voice or p
 		end

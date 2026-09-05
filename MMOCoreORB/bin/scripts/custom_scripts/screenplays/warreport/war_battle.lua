@@ -1305,7 +1305,7 @@ function WarBattle.liveSlots()
 			local key = regionId .. ":" .. siteIndex
 			local sl = slots[key]
 			if sl == nil then
-				sl = { key = key, region = regionId, site = siteIndex, alive = {}, units = {}, seen = {}, hurt = 0, dead = 0, walkerDown = {} }
+				sl = { key = key, region = regionId, site = siteIndex, alive = {}, units = {}, seen = {}, hurt = 0, dead = 0, inCombat = 0, walkerDown = {} }
 				slots[key] = sl
 			end
 			if ox ~= nil and oy ~= nil and sl.ox == nil then sl.ox, sl.oy = ox, oy end
@@ -1326,6 +1326,8 @@ function WarBattle.liveSlots()
 						return c:getHAM(0) < c:getMaxHAM(0)
 					end)
 					if okh and h then sl.hurt = sl.hurt + 1 end
+					local okc, inc = pcall(function() return CreatureObject(p):isInCombat() end)
+					if okc and inc then sl.inCombat = sl.inCombat + 1 end
 				end
 			end
 		end
@@ -1370,10 +1372,32 @@ end
 --- Stuck sites. Returns true when the site broke off this pass (its bodies
 -- are gone). See STUCK_PASSES.
 function WarBattle.tendStuck(zone, sl, holder, attacker)
-	local quiet = (sl.hurt == 0 and sl.dead == 0)
+	-- Quiet: nobody at the site is in combat (verifier, 2026-09-05: the
+	-- first rule, "nobody hurt and nobody dead", never fired once a single
+	-- wounded body survived, and a line released from a player's command
+	-- with no targets stood frozen for good), or the older sign of a line
+	-- that never fired at all.
+	local quiet = (sl.inCombat == 0) or (sl.hurt == 0 and sl.dead == 0)
 	local qkey = "warbattle:quiet:" .. sl.key
 	local lkey = "warbattle:stuck:" .. sl.key
 	if not quiet then
+		writeData(qkey, 0)
+		return false
+	end
+	-- The bodies this rule may move: not the ones a player commands. With
+	-- either side entirely commanded there is nothing for the rule to do,
+	-- and it must not advance its level (verifier, 2026-09-05).
+	local defenders, attackers, commanded = {}, {}, 0
+	for _, u in ipairs(sl.units) do
+		if WarBattle.isCommanded(u.oid) then
+			commanded = commanded + 1
+		elseif u.faction == attacker then
+			attackers[#attackers + 1] = u.p
+		else
+			defenders[#defenders + 1] = u.p
+		end
+	end
+	if #attackers == 0 or #defenders == 0 then
 		writeData(qkey, 0)
 		return false
 	end
@@ -1384,6 +1408,10 @@ function WarBattle.tendStuck(zone, sl, holder, attacker)
 	end
 	writeData(qkey, 0)
 	local level = (readData(lkey) or 0) + 1
+	-- A site with a commanded body never breaks off: the close is retried.
+	if level >= 2 and commanded > 0 then
+		level = 1
+	end
 	writeData(lkey, level)
 
 	if level == 1 then
@@ -1393,15 +1421,6 @@ function WarBattle.tendStuck(zone, sl, holder, attacker)
 		local d = WarBattle.walkableAlong(zone, sl.ox, sl.oy, ux, uy, { WarBattle.STUCK_CLOSE_M, 16, 24 })
 			or WarBattle.STUCK_CLOSE_M
 		local baseX, baseY = sl.ox + ux * d, sl.oy + uy * d
-		local defenders, attackers = {}, {}
-		for _, u in ipairs(sl.units) do
-			if not WarBattle.isCommanded(u.oid) then
-				if u.faction == attacker then attackers[#attackers + 1] = u.p else defenders[#defenders + 1] = u.p end
-			end
-		end
-		if #attackers == 0 or #defenders == 0 then
-			return false
-		end
 		for i, p in ipairs(defenders) do
 			local so = SceneObject(p)
 			local x, y = so:getWorldPositionX(), so:getWorldPositionY()
@@ -1492,6 +1511,12 @@ function WarBattle.tendOnce()
 	local keys = {}
 	for k, _ in pairs(slots) do keys[#keys + 1] = k end
 	table.sort(keys)
+
+	-- Slice E: barrages at offensives, flares over besieged capitals.
+	if WarEffects ~= nil and WarEffects.tickOnce ~= nil then
+		local oke, erre = pcall(WarEffects.tickOnce, slots, fronts, false)
+		if not oke then printf("WarBattle: WarEffects.tickOnce failed: " .. tostring(erre) .. "\n") end
+	end
 
 	local budget = WarBattle.TEND_NPC_BUDGET
 	local spawned = 0
