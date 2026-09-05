@@ -10,6 +10,7 @@
 
 #include "CombatQueueCommand.h"
 #include "server/zone/objects/group/GroupObject.h"
+#include "server/zone/managers/director/DirectorManager.h"
 
 class SquadLeaderCommand : public CombatQueueCommand {
 protected:
@@ -35,18 +36,31 @@ public:
 	}
 
 	/**
-	 * Is `target` a faction NPC that war_squad.lua has attached to `leader`?
+	 * Is `target` a war NPC in `leader`'s squad?
 	 *
-	 * B27 slice 1 (custom_scripts/screenplays/warreport/war_squad.lua) hands a
-	 * player up to 6 battle NPCs by calling AiAgent::setFollowObject(player) on
-	 * each. That follow pointer is the ONLY marker of squad membership -- the
-	 * troops are deliberately not adopted, not pets, and not group members, so
-	 * that war_battle.lua's cleanup still owns their lifetime. Reading the same
-	 * pointer here keeps a single source of truth instead of a second roster
-	 * that could drift from it.
+	 * Two ways in, ONE predicate (DESIGN-SQUAD: "one shared predicate, not one
+	 * edit per command"):
+	 *
+	 * 1. The troop FOLLOWS the leader. B27 slice 1
+	 *    (custom_scripts/screenplays/warreport/war_squad.lua) hands a player up
+	 *    to 6 battle NPCs by calling AiAgent::setFollowObject(player) on each,
+	 *    and that pointer was the only marker of membership.
+	 * 2. The troop is on the leader's COMMAND RECORD. B34 slice D
+	 *    (war_command.lua, "Take command" on a line's sergeant) writes shared
+	 *    memory `warcommand:troop:<oid>` = the commander's object id (0 =
+	 *    free). This path exists because the orders MOVE the follow pointer:
+	 *    "Attack my target" follows the enemy and "Hold here" clears it, so a
+	 *    commanded line dropped out of every Squad Leader ability the moment
+	 *    it was given an order (D2, 2026-09-05). The record read here is the
+	 *    same one the radial writes and the tend pass reads -- one source of
+	 *    truth per path, nothing to drift.
+	 *
+	 * Either way the troops are deliberately not adopted, not pets and not
+	 * group members, so that war_battle.lua's cleanup still owns their
+	 * lifetime (D22).
 	 */
-	static bool isFollowingTrooper(CreatureObject* leader, CreatureObject* target) {
-		if (leader == nullptr || target == nullptr)
+	static bool isSquadTrooper(CreatureObject* leader, CreatureObject* target) {
+		if (leader == nullptr || target == nullptr || leader == target)
 			return false;
 
 		// Players and pets already have their own handling in
@@ -62,11 +76,6 @@ public:
 		if (agent == nullptr)
 			return false;
 
-		ManagedReference<SceneObject*> followCopy = agent->getFollowObject().get();
-
-		if (followCopy == nullptr || followCopy != leader)
-			return false;
-
 		// Same faction only. Without this a leader would buff the very NPCs
 		// they are fighting, since enemy troops at a contested site are also
 		// AiAgents and can legitimately be following someone. Faction 0 is
@@ -76,20 +85,35 @@ public:
 		if (leaderFaction == 0 || target->getFaction() != leaderFaction)
 			return false;
 
-		return true;
+		ManagedReference<SceneObject*> followCopy = agent->getFollowObject().get();
+
+		if (followCopy != nullptr && followCopy == leader)
+			return true;
+
+		// One hash lookup under the director's read lock, reached only for a
+		// same-faction NPC that is not already following the leader.
+		uint64 commander = DirectorManager::instance()->readSharedMemory("warcommand:troop:" + String::valueOf(target->getObjectID()));
+
+		return commander != 0 && commander == leader->getObjectID();
 	}
 
 	/**
 	 * Every creature one Squad Leader ability should affect: the leader, their
 	 * player group when they have one, and every faction NPC currently
-	 * following them.
+	 * following them or on their command record (isSquadTrooper).
 	 *
 	 * WHY A COLLECTED LIST RATHER THAN group->getGroupMember(i) IN EACH
 	 * COMMAND: the stock loops are bounded by getGroupSize(), so with no group
 	 * the loop body never runs at all and followers could never be reached --
 	 * relaxing the target predicate alone would have changed nothing.
+	 *
+	 * Troops are found through the leader's close-objects vector, so a
+	 * commanded body sent further than that range (an "Attack my target" on a
+	 * distant enemy) is out of reach until it is back in range -- the same
+	 * reach a squad leader has over players. Static so the Lua probe hook
+	 * (LuaCreatureObject::countSquadAbilityTargets) can run the same loop.
 	 */
-	void collectSquadMembers(CreatureObject* leader, GroupObject* group, Vector<ManagedReference<CreatureObject*> >& members) const {
+	static void collectSquadMembers(CreatureObject* leader, GroupObject* group, Vector<ManagedReference<CreatureObject*> >& members) {
 		if (leader == nullptr)
 			return;
 
@@ -125,7 +149,7 @@ public:
 
 			CreatureObject* creo = object->asCreatureObject();
 
-			if (!isFollowingTrooper(leader, creo))
+			if (!isSquadTrooper(leader, creo))
 				continue;
 
 			members.add(creo);
@@ -178,12 +202,12 @@ public:
 			return false;
 		}
 
-		// A followed faction NPC is a squad member regardless of `allowPet`.
-		// It returns early because every remaining check below is written for
-		// players: isHealableBy() consults player-only faction/duel state, and
-		// the building check would drop troops standing outside a structure
-		// their commander happens to be in.
-		if (isFollowingTrooper(leader, target)) {
+		// A squad troop (following, or on the command record) is a member
+		// regardless of `allowPet`. It returns early because every remaining
+		// check below is written for players: isHealableBy() consults
+		// player-only faction/duel state, and the building check would drop
+		// troops standing outside a structure their commander happens to be in.
+		if (isSquadTrooper(leader, target)) {
 			return leader->getZone() == target->getZone();
 		}
 

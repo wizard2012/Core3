@@ -47,6 +47,16 @@
   of the first live Imperial line, issues hold / fall back / dismiss, and
   prints the squad size and each troop's follow state. The radial itself
   needs a client: docs/IN-GAME-TESTS.md section 8.
+
+  D2 (the Squad Leader abilities, C++, 2026-09-05): SquadLeaderCommand.h
+  treats a troop on the command record (warcommand:troop:<oid> == the
+  commander) as a squad member for rally, boostmorale, steadyaim,
+  volleyfire, formup and retreat whatever it is following -- so the orders,
+  which move the follow pointer (attack follows the enemy, hold clears it),
+  no longer drop the line out of the abilities. PROBE: test
+  warSquadAbilityCheck walks a commanded line through taken, hold, fall
+  back, attack and dismiss against the commands' own gate
+  (CreatureObject:isSquadAbilityTarget / countSquadAbilityTargets).
 ]]
 
 WarCommand = WarCommand or { screenplayName = "WarCommand" }
@@ -676,4 +686,128 @@ function Tests:warCommandCheck()
 		printf("WARCOMMAND: failed: " .. tostring(err) .. "\n")
 	end
 	printf("WARCOMMAND: end\n")
+end
+
+--- test warSquadAbilityCheck (B34 D2): do the Squad Leader abilities reach
+-- a commanded line at every point of the order cycle? Asks the two C++
+-- probe hooks the six commands themselves go through --
+-- CreatureObject:isSquadAbilityTarget(pLeader) is the per-member gate and
+-- CreatureObject:countSquadAbilityTargets() the collected list -- so the
+-- answer is the commands' own without a client pressing a button. A stock
+-- trooper stands in for the player; the gate counts a player leader but
+-- not an NPC stand-in, so the expected count is the live squad, not +1.
+-- "attack" is set the way the order sets it (WarBattle.engage on an enemy
+-- body, following) because the stand-in has no client target.
+function Tests:warSquadAbilityCheck()
+	printf("WARSQUADABILITY: begin\n")
+	local pCmdr = nil
+	local ok, err = pcall(function()
+		local slots = WarBattle.liveSlots()
+		local keys = {}
+		for k, _ in pairs(slots) do keys[#keys + 1] = k end
+		table.sort(keys)
+		local pSgt, slotKey, faction = nil, nil, nil
+		for _, k in ipairs(keys) do
+			local sl = slots[k]
+			if sl.site ~= "0" and string.sub(tostring(sl.site), 1, 1) ~= "c" then
+				for _, fac in ipairs({ "imperial", "rebel" }) do
+					local oid = readData("warbattle:sgt:" .. k .. ":" .. fac)
+					if pSgt == nil and oid ~= nil and oid > 0 then
+						local p = getSceneObject(oid)
+						if p ~= nil then
+							local okd, dead = pcall(function() return CreatureObject(p):isDead() end)
+							if not (okd and dead) then pSgt, slotKey, faction = p, k, fac end
+						end
+					end
+				end
+			end
+		end
+		if pSgt == nil then
+			printf("WARSQUADABILITY: no live sergeant at any site\n")
+			return
+		end
+		-- Read the sergeant's values before wrapping anything else (the
+		-- SceneObject wrapper is a per-class singleton).
+		local so = SceneObject(pSgt)
+		local zone, x, y = so:getZoneName(), so:getWorldPositionX(), so:getWorldPositionY()
+		local tpl = (faction == "imperial") and "stormtrooper" or "rebel_trooper"
+		pCmdr = spawnMobile(zone, tpl, 0, x + 6, WarBattle.floorAt(zone, x + 6, y + 6), y + 6, 0, 0)
+		if pCmdr == nil then
+			printf("WARSQUADABILITY: stand-in commander did not spawn\n")
+			return
+		end
+		WarCommand.ALLOW_NPC_COMMANDER = true
+		local n, why = WarCommand.take(pCmdr, pSgt)
+		printf(string.format("WARSQUADABILITY: take at %s (%s): %d troop(s) %s\n", slotKey, faction, n, tostring(why)))
+		if n == 0 then
+			return
+		end
+		local cmdrOid = SceneObject(pCmdr):getObjectID()
+		local squad = WarCommand.squadOf(cmdrOid)
+		if squad == nil then
+			printf("WARSQUADABILITY: no record after take\n")
+			return
+		end
+		local troops = squad.troops
+		local fails = 0
+		local function measure(stage, expectAll)
+			local live, reached = 0, 0
+			for _, oid in ipairs(troops) do
+				local p = getSceneObject(oid)
+				if p ~= nil then
+					local okd, dead = pcall(function() return CreatureObject(p):isDead() end)
+					if not (okd and dead) then
+						live = live + 1
+						local okr, r = pcall(function() return CreatureObject(p):isSquadAbilityTarget(pCmdr) end)
+						if okr and r then reached = reached + 1 end
+					end
+				end
+			end
+			local okc, count = pcall(function() return CreatureObject(pCmdr):countSquadAbilityTargets() end)
+			if not okc then
+				printf("WARSQUADABILITY: countSquadAbilityTargets: " .. tostring(count) .. "\n")
+				count = -1
+			end
+			local pass
+			if expectAll then
+				pass = live > 0 and reached == live and count == live
+			else
+				pass = reached == 0 and count == 0
+			end
+			if not pass then fails = fails + 1 end
+			printf(string.format("WARSQUADABILITY: %-30s live=%d reached=%d collected=%d %s\n",
+				stage, live, reached, count, pass and "OK" or "FAIL"))
+		end
+		measure("taken (following)", true)
+		for _, kind in ipairs({ "hold", "fallback" }) do
+			local m, w = WarCommand.order(pCmdr, kind)
+			printf(string.format("WARSQUADABILITY: order %s: %d %s\n", kind, m, tostring(w)))
+			measure(kind == "hold" and "hold (no follow)" or "fallback (following)", true)
+		end
+		local enemies = enemiesAt(squad.slot, squad.faction)
+		if #enemies > 0 then
+			for i, oid in ipairs(troops) do
+				local p = getSceneObject(oid)
+				if p ~= nil then WarBattle.engage(p, enemies[((i - 1) % #enemies) + 1], true) end
+			end
+			measure("attack (following the enemy)", true)
+			local okn, neg = pcall(function() return CreatureObject(enemies[1]):isSquadAbilityTarget(pCmdr) end)
+			local pass = okn and not neg
+			if not pass then fails = fails + 1 end
+			printf(string.format("WARSQUADABILITY: %-30s reached=%s %s\n", "enemy body", tostring(okn and neg), pass and "OK" or "FAIL"))
+		else
+			printf("WARSQUADABILITY: attack: no enemy line at the site, skipped\n")
+		end
+		WarCommand.release(cmdrOid, "dismissed")
+		measure("dismissed", false)
+		printf(string.format("WARSQUADABILITY: %d fail(s)\n", fails))
+	end)
+	WarCommand.ALLOW_NPC_COMMANDER = false
+	if pCmdr ~= nil then
+		pcall(function() SceneObject(pCmdr):destroyObjectFromWorld(false) end)
+	end
+	if not ok then
+		printf("WARSQUADABILITY: failed: " .. tostring(err) .. "\n")
+	end
+	printf("WARSQUADABILITY: end\n")
 end

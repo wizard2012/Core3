@@ -12,6 +12,7 @@
 #include "server/zone/objects/player/sessions/ConversationSession.h"
 #include "server/zone/ZoneServer.h"
 #include "server/zone/objects/group/GroupObject.h"
+#include "server/zone/objects/creature/commands/SquadLeaderCommand.h"
 #include "server/zone/objects/player/sessions/EntertainingSession.h"
 #include "server/zone/objects/player/PlayerObject.h"
 #include "server/zone/managers/player/PlayerManager.h"
@@ -125,6 +126,8 @@ Luna<LuaCreatureObject>::RegType LuaCreatureObject::Register[] = {
 		{ "checkCooldownRecovery", &LuaCreatureObject::checkCooldownRecovery},
 		{ "addCooldown", &LuaCreatureObject::addCooldown},
 		{ "isDead", &LuaCreatureObject::isDead},
+		{ "isSquadAbilityTarget", &LuaCreatureObject::isSquadAbilityTarget},
+		{ "countSquadAbilityTargets", &LuaCreatureObject::countSquadAbilityTargets},
 		{ "isIncapacitated", &LuaCreatureObject::isIncapacitated },
 		{ "getLevel", &LuaCreatureObject::getLevel},
 		{ "getQueueSize", &LuaCreatureObject::getQueueSize },
@@ -1620,4 +1623,46 @@ int LuaCreatureObject::removeSpaceMissionObject(lua_State* L) {
 	realObject->removeSpaceMissionObject(realObject->getObjectID(), missionObjectID, notifyClient, true);
 
 	return 0;
+}
+
+/**
+ * B34 D2 probe hook: would a Squad Leader ability used by `leader` (the
+ * argument) reach this creature right now? Exactly the per-member gate the
+ * six commands apply (isValidGroupAbilityTarget with allowPet = false), so a
+ * server-side probe can prove a commanded troop is reached after every order
+ * without a client pressing the button. Read-only.
+ */
+int LuaCreatureObject::isSquadAbilityTarget(lua_State* L) {
+	SceneObject* obj = (SceneObject*) lua_touserdata(L, -1);
+	CreatureObject* leader = (obj == nullptr) ? nullptr : obj->asCreatureObject();
+
+	bool retVal = leader != nullptr && SquadLeaderCommand::isValidGroupAbilityTarget(leader, realObject, false);
+
+	lua_pushboolean(L, retVal);
+
+	return 1;
+}
+
+/**
+ * B34 D2 probe hook: how many creatures a Squad Leader ability used by this
+ * creature would reach right now -- collectSquadMembers filtered by the same
+ * gate, which is the loop every one of the six commands runs. Read-only.
+ */
+int LuaCreatureObject::countSquadAbilityTargets(lua_State* L) {
+	ManagedReference<GroupObject*> group = realObject->getGroup();
+	Vector<ManagedReference<CreatureObject*> > members;
+	SquadLeaderCommand::collectSquadMembers(realObject, group, members);
+
+	int count = 0;
+
+	for (int i = 0; i < members.size(); i++) {
+		CreatureObject* member = members.get(i);
+
+		if (member != nullptr && SquadLeaderCommand::isValidGroupAbilityTarget(realObject, member, false))
+			count++;
+	}
+
+	lua_pushinteger(L, count);
+
+	return 1;
 }

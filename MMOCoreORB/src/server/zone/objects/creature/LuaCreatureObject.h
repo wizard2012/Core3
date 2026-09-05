@@ -98,6 +98,8 @@ namespace creature {
 		int addCooldown(lua_State* L);
 		int isIncapacitated(lua_State* L);
 		int isDead(lua_State* L);
+		int isSquadAbilityTarget(lua_State* L);
+		int countSquadAbilityTargets(lua_State* L);
 		int getLevel(lua_State* L);
 		int getQueueSize(lua_State*L);
 		int isDancing(lua_State* L);
