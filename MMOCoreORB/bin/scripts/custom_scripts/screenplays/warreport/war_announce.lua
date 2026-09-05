@@ -150,6 +150,43 @@ function WarAnnounce:dispatch(tick)
 	end
 end
 
+-- Supply dispatch: a region whose supply status changed this export gets one
+-- line. Separate small cap from the push dispatch so a bad tick for supply
+-- cannot crowd out the pushes, and vice versa.
+WarAnnounce.SUPPLY_MAX_LINES = 2
+
+function WarAnnounce:supplyDispatch(tick)
+	if WAR_FLIPS == nil or WarVoice == nil or WarVoice.supplyChange == nil then
+		return
+	end
+	local changes = WAR_FLIPS.supply
+	if type(changes) ~= "table" or #changes == 0 then
+		return
+	end
+
+	local sent = 0
+	for i = 1, #changes do
+		if sent >= WarAnnounce.SUPPLY_MAX_LINES then
+			break
+		end
+		local c = changes[i]
+		if c ~= nil and c.region ~= nil then
+			local name = (WarReport ~= nil and WarReport.regionName ~= nil)
+				and WarReport.regionName(c.region) or tostring(c.region)
+			local line = WarVoice.supplyChange(name, c.from, c.to)
+			if line ~= nil then
+				local ok, err = pcall(function() broadcastToGalaxy(nil, line) end)
+				if ok then
+					sent = sent + 1
+					printf("WarAnnounce: supply tick=" .. tostring(tick) .. " :: " .. line .. "\n")
+				else
+					printf("WarAnnounce: supply broadcast FAILED: " .. tostring(err) .. "\n")
+				end
+			end
+		end
+	end
+end
+
 function WarAnnounce:run()
 	if WAR_FLIPS == nil or type(WAR_FLIPS) ~= "table" then
 		return -- no flip file yet; nothing to say
@@ -173,6 +210,7 @@ function WarAnnounce:run()
 	-- a long way without anything changing hands, and that movement is the
 	-- whole point of telling players their push registered.
 	pcall(function() WarAnnounce:dispatch(tick) end)
+	pcall(function() WarAnnounce:supplyDispatch(tick) end)
 
 	if #flips == 0 then
 		return -- tick claimed, dispatch sent, nothing changed hands this time

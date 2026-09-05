@@ -128,6 +128,11 @@ local VALID_SOURCES = {
 	base_delivery           = true,
 	materiel_donation       = true,
 	materiel_support        = true,
+	-- Courier runs (war_courier.lua). The sim already folds this channel into
+	-- supply_stock (warsim/sim/channels.lua M.MATERIEL); only the two
+	-- allowlists -- this one and bridge/flush_contributions.lua's -- stood in
+	-- the way. DESIGN-VICTORY 274 gives it 5.00, provisional.
+	materiel_delivery       = true,
 }
 WarContrib.VALID_SOURCES = VALID_SOURCES
 

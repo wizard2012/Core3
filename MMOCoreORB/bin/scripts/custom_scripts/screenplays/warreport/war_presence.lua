@@ -89,7 +89,9 @@ end
 --- Spawn the "you have walked into a contested town" area for one region.
 -- Called by war_battle.lua once per region it actually staged sites in.
 function WarPresence.attachRegion(zoneName, regionId, sites)
-	if zoneName == nil or regionId == nil or sites == nil or sites < 1 then
+	-- sites == 0 is a HELD town (the spread layer's garrison), which gets an
+	-- arrival line of its own. Only a nil/negative count is refused.
+	if zoneName == nil or regionId == nil or sites == nil or sites < 0 then
 		return nil
 	end
 
@@ -165,10 +167,32 @@ function WarPresence:onEnteredArea(pArea, pCreature)
 			name = WarReport.regionName(regionId)
 		end
 
-		local plural = (sites == 1) and "engagement" or "engagements"
-		CreatureObject(pCreature):sendSystemMessage(string.format(
-			"%s is CONTESTED -- %d %s underway nearby. A waypoint has been added to your datapad.",
-			tostring(name), sites, plural))
+		local st = (WarReport ~= nil and WarReport.state ~= nil) and WarReport.state() or nil
+		local r = (st ~= nil and st.regions ~= nil) and st.regions[regionId] or nil
+
+		if sites > 0 then
+			local plural = (sites == 1) and "engagement" or "engagements"
+			CreatureObject(pCreature):sendSystemMessage(string.format(
+				"%s is CONTESTED -- %d %s underway nearby. A waypoint has been added to your datapad.",
+				tostring(name), sites, plural))
+		elseif WarVoice ~= nil and WarVoice.held ~= nil then
+			CreatureObject(pCreature):sendSystemMessage(WarVoice.held(name, r and r.faction or nil))
+		end
+
+		-- Supply visibility (owner ruling 2026-09-04): the sim has always
+		-- known when a line is cut; this is the first time the ground says so.
+		if r ~= nil and WarVoice ~= nil and WarVoice.supply ~= nil then
+			local line = WarVoice.supply(name, r.supply_status)
+			if line ~= nil then
+				CreatureObject(pCreature):sendSystemMessage(line)
+			end
+		end
+
+		-- Courier hand-in: walking into the destination town with its crate
+		-- IS the delivery. No NPC, no menu -- see war_courier.lua.
+		if WarCourier ~= nil and WarCourier.tryDeliver ~= nil then
+			pcall(function() WarCourier.tryDeliver(pCreature, regionId) end)
+		end
 
 		-- Layer 2: ground that changed hands here recently is news on arrival.
 		-- Written by war_battle.lua's reconcile() on a capture, cleared when
@@ -178,7 +202,9 @@ function WarPresence:onEnteredArea(pArea, pCreature)
 			CreatureObject(pCreature):sendSystemMessage(WarVoice.captureNote(captor))
 		end
 
-		WarPresence.markSite(pCreature, regionId)
+		if sites > 0 then
+			WarPresence.markSite(pCreature, regionId)
+		end
 	end)
 	return 0
 end

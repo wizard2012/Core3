@@ -1004,18 +1004,32 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 			local coords = WarReport.COORDS[regionId]
 			local zone = WarReport.PLANET_OF[regionId]
 
-			if not stagedRegions[regionId] and not heldGarrisons[regionId]
-					and r ~= nil and r.faction ~= nil
+			if not stagedRegions[regionId] and r ~= nil and r.faction ~= nil
 					and coords ~= nil and zone ~= nil and isZoneEnabled(zone) then
-				-- Reuse the normal site placement so a garrison stands where a
-				-- battle would, rather than on top of the town centre.
-				local ox, oy = WarBattle.siteOrigin(coords, regionId, 1, 1, false)
-				local n = spawnGarrison(zone, regionId, r.faction, ox, oy)
+				local present = heldGarrisons[regionId] == true
 
-				if n > 0 then
-					garrisonBudget = garrisonBudget - n
-					garrisonsSpawned = garrisonsSpawned + n
-					garrisonRegions = garrisonRegions + 1
+				if not present then
+					-- Reuse the normal site placement so a garrison stands
+					-- where a battle would, rather than on top of the town
+					-- centre.
+					local ox, oy = WarBattle.siteOrigin(coords, regionId, 1, 1, false)
+					local n = spawnGarrison(zone, regionId, r.faction, ox, oy)
+
+					if n > 0 then
+						garrisonBudget = garrisonBudget - n
+						garrisonsSpawned = garrisonsSpawned + n
+						garrisonRegions = garrisonRegions + 1
+						present = true
+					end
+				end
+
+				-- Supply visibility + courier hand-in: a HELD town speaks on
+				-- arrival too. Attached whether the garrison was spawned this
+				-- cycle or is persisting -- the areas are reaped every cycle,
+				-- so a held region must re-attach or go silent (the same trap
+				-- the formup areas hit).
+				if present and WarPresence ~= nil and WarPresence.attachRegion ~= nil then
+					pcall(function() WarPresence.attachRegion(zone, regionId, 0) end)
 				end
 			end
 		end

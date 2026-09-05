@@ -296,6 +296,14 @@ function WarDonate:isEligible(pItem)
 		return false, "faction_perk_item"
 	end
 
+	-- A courier crate is worth materiel only where it is bound for. Letting
+	-- it be donated here would pay twice for one item (or once for zero
+	-- travel). war_courier.lua stamps every crate it issues with its owner.
+	local courierOwner = readData(tostring(sceno:getObjectID()) .. ":war:courier:owner")
+	if courierOwner ~= nil and courierOwner > 0 then
+		return false, "courier_crate"
+	end
+
 	local maxCondition = tano:getMaxCondition()
 	if maxCondition == nil or maxCondition <= 0 then
 		return false, "no_condition"

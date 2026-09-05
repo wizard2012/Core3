@@ -131,14 +131,60 @@ function WarVoice.dispatch(regionName, faction, players, delta)
 		string.format(TIER_PHRASE[tier], enemy))
 end
 
---- Supply line, for later surfaces (kept here so the vocabulary exists in one
--- place from day one). `status` is war_state.lua's supply_status string.
+--- Supply line on arrival. `status` is war_state.lua's supply_status, whose
+-- vocabulary is exactly: "connected", "degraded", "cut"
+-- (bridge/war_state_writer.lua supply_status_for). Nothing for connected.
 function WarVoice.supply(regionName, status)
 	status = tostring(status or "")
 	if status == "cut" then
-		return string.format("Supply lines to %s are cut. The garrison there is starving.", tostring(regionName))
-	elseif status == "strained" then
-		return string.format("Supply to %s is thin. Every crate matters.", tostring(regionName))
+		return string.format("Supply lines to %s are cut. The garrison here is on quarter rations.", tostring(regionName))
+	elseif status == "degraded" then
+		return string.format("Supply to %s is thin. Every crate that gets through matters.", tostring(regionName))
 	end
 	return nil
+end
+
+--- Arrival line for a town that is HELD, not contested: the spread layer's
+-- garrison. `faction` is the holder.
+function WarVoice.held(regionName, faction)
+	local forces = pick(WarVoice.FORCES, faction, "Unknown forces")
+	return string.format("%s hold %s. Patrols on the streets.", forces, tostring(regionName))
+end
+
+--- Dispatch line when a region's supply status changed this cycle.
+function WarVoice.supplyChange(regionName, fromStatus, toStatus)
+	toStatus = tostring(toStatus or "")
+	fromStatus = tostring(fromStatus or "")
+	local where = tostring(regionName or "the front")
+	if toStatus == "cut" then
+		return string.format("WAR DISPATCH -- supply lines to %s have been cut.", where)
+	elseif toStatus == "connected" and (fromStatus == "cut" or fromStatus == "degraded") then
+		return string.format("WAR DISPATCH -- supply to %s is flowing again.", where)
+	elseif toStatus == "degraded" and fromStatus == "connected" then
+		return string.format("WAR DISPATCH -- the road to %s is under strain.", where)
+	end
+	return nil
+end
+
+--- Courier lines. `faction` is the courier's own side.
+function WarVoice.courierIssued(regionName, faction)
+	local who = pick(WarVoice.COMMAND, faction, "Command")
+	return string.format("%s: this crate is bound for %s. Get it there in one piece.", who, tostring(regionName))
+end
+
+function WarVoice.courierDelivered(regionName, faction)
+	local who = pick(WarVoice.COMMAND, faction, "Command")
+	return string.format("%s: crate received at %s. The garrison eats tonight because of you.", who, tostring(regionName))
+end
+
+function WarVoice.courierSpoiled(regionName)
+	return string.format("The crate for %s sat too long and is no use to anyone now.", tostring(regionName))
+end
+
+function WarVoice.courierAlready(regionName)
+	return string.format("You are already carrying a crate for %s. Deliver that one first.", tostring(regionName))
+end
+
+function WarVoice.courierNothing()
+	return "Every friendly garrison is supplied. Come back when a line is cut."
 end

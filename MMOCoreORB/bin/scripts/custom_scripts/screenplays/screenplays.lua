@@ -40,6 +40,9 @@ includeFile("../custom_scripts/screenplays/warreport/war_login.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_contrib_hook.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_heal.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_presence.lua")
+-- Courier runs: needs WarReport, WarVoice, WarContrib (all above) at
+-- include time; WarDonate (below) only at delivery time.
+includeFile("../custom_scripts/screenplays/warreport/war_courier.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_squad.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_squad_probe.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_officer.lua")
