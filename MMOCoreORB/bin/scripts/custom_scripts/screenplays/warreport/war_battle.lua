@@ -264,6 +264,14 @@ WarBattle.CYCLE_KEY = "warbattle:cycle"
 -- enough that the front still reshapes itself to what the simulation says.
 WarBattle.MAX_SITE_AGE_CYCLES = 5
 
+-- Layer 2 of the feedback stack (owner ruling 2026-09-04, "make battles have
+-- consequence"): when one side wipes the other at a site, the WINNER's troops
+-- hold that ground as a garrison until the slot ages out, and stageBattles()
+-- will not restage a battle over it. The sim, not the game, decides when that
+-- ground is contested again. Capped on its own so a run of captures can never
+-- draw down TOTAL_NPC_BUDGET or the spread pool.
+WarBattle.CAPTURE_GARRISON_MAX_SLOTS = 8
+
 WarBattle.OIDS_KEY = "warbattle:oids"
 WarBattle.REGION_KEY = "warbattle:region"
 
@@ -383,11 +391,17 @@ end
 --- Record a unit in BOTH views: the flat OID list clear() and war_squad.lua
 -- consume, and the structured roster reconcile() needs. siteIndex 0 means a
 -- spread-layer garrison rather than a battle site.
-local function trackUnit(oid, regionId, siteIndex, faction)
+local function trackUnit(oid, regionId, siteIndex, faction, originX, originY)
 	trackOid(oid)
 
+	-- Six fields. ox/oy are the SITE origin (where the defenders stood), so a
+	-- capture garrison stands on the ground that was actually taken. Older
+	-- four-field records are still parsed by reconcile() -- they just cannot
+	-- produce a capture garrison for the one cycle it takes them to age out.
 	local rec = tostring(oid) .. "|" .. tostring(regionId) .. "|"
-		.. tostring(siteIndex) .. "|" .. tostring(faction)
+		.. tostring(siteIndex) .. "|" .. tostring(faction) .. "|"
+		.. (originX ~= nil and string.format("%.1f", originX) or "") .. "|"
+		.. (originY ~= nil and string.format("%.1f", originY) or "")
 
 	local raw = readStringData(WarBattle.ROSTER_KEY)
 	if raw == nil or raw == "" then
@@ -552,14 +566,20 @@ function WarBattle:reconcile()
 
 	local slots = {}
 	for rec in string.gmatch(raw, "([^;]+)") do
-		local oid, regionId, siteIndex, faction =
-			string.match(rec, "([^|]+)|([^|]+)|([^|]+)|([^|]+)")
-		oid = tonumber(oid)
+		local f = {}
+		for field in string.gmatch(rec .. "|", "([^|]*)|") do
+			f[#f + 1] = field
+		end
+		local oid, regionId, siteIndex, faction = tonumber(f[1]), f[2], f[3], f[4]
+		local ox, oy = tonumber(f[5]), tonumber(f[6])
 
-		if oid ~= nil and regionId ~= nil then
+		if oid ~= nil and regionId ~= nil and regionId ~= "" and siteIndex ~= nil and siteIndex ~= "" then
 			local key = regionId .. ":" .. siteIndex
 			if slots[key] == nil then
 				slots[key] = { region = regionId, site = siteIndex, alive = {}, units = {} }
+			end
+			if ox ~= nil and oy ~= nil and slots[key].ox == nil then
+				slots[key].ox, slots[key].oy = ox, oy
 			end
 
 			-- Alive is defined as "the OID still resolves to an object".
@@ -574,6 +594,8 @@ function WarBattle:reconcile()
 	end
 
 	local keptRecs, keptOids = {}, {}
+	local pendingGarrisons = {}
+	local captureSlotsKept = 0
 
 	local function standDown(sl)
 		for _, u in ipairs(sl.units) do
@@ -601,21 +623,30 @@ function WarBattle:reconcile()
 		end
 		local age = cycleNo - born
 
-		local isGarrison = (sl.site == "0")
+		local isCapture = (string.sub(tostring(sl.site), 1, 1) == "c")
+		local isGarrison = (sl.site == "0") or isCapture
 		-- A garrison is single-faction by definition, so "one side left" is
 		-- its healthy state, not a capture.
 		local stillContested = isGarrison and (sides >= 1) or (sides >= 2)
 
 		if stillContested and age < WarBattle.MAX_SITE_AGE_CYCLES then
-			if isGarrison then
+			if isCapture then
+				-- Holds the BATTLE slot it was captured from, so stageBattles()
+				-- leaves that ground alone while the garrison stands.
+				heldSites[sl.region .. ":" .. string.sub(tostring(sl.site), 2)] = true
+				captureSlotsKept = captureSlotsKept + 1
+			elseif isGarrison then
 				heldGarrisons[sl.region] = true
 			else
 				heldSites[key] = true
 			end
 
+			local oxs = (sl.ox ~= nil) and string.format("%.1f", sl.ox) or ""
+			local oys = (sl.oy ~= nil) and string.format("%.1f", sl.oy) or ""
 			for _, u in ipairs(sl.units) do
 				keptRecs[#keptRecs + 1] = tostring(u.oid) .. "|" .. tostring(sl.region)
 					.. "|" .. tostring(sl.site) .. "|" .. tostring(u.faction)
+					.. "|" .. oxs .. "|" .. oys
 				keptOids[#keptOids + 1] = tostring(u.oid)
 			end
 		else
@@ -625,6 +656,16 @@ function WarBattle:reconcile()
 				-- ground changed hands here, which is the whole point of the
 				-- engagement having been allowed to resolve.
 				writeStringData("warbattle:lastcapture:" .. sl.region, tostring(survivor))
+				-- Spawned AFTER the roster is rewritten below: trackUnit()
+				-- appends to ROSTER_KEY, and anything appended before the
+				-- rewrite would be thrown away by it.
+				pendingGarrisons[#pendingGarrisons + 1] = {
+					region = sl.region, site = sl.site, faction = survivor, ox = sl.ox, oy = sl.oy,
+				}
+			elseif isCapture then
+				-- A capture garrison aging out or wiped: the ground is open
+				-- again, and the "took a position here" note is stale.
+				pcall(function() deleteStringData("warbattle:lastcapture:" .. sl.region) end)
 			end
 
 			standDown(sl)
@@ -634,6 +675,28 @@ function WarBattle:reconcile()
 
 	writeStringData(WarBattle.ROSTER_KEY, table.concat(keptRecs, ";"))
 	writeStringData(WarBattle.OIDS_KEY, table.concat(keptOids, ","))
+
+	-- Layer 2: the winners hold the ground. Own cap; never touches the front
+	-- or spread budgets. Skipped silently when the record predates ox/oy.
+	local room = WarBattle.CAPTURE_GARRISON_MAX_SLOTS - captureSlotsKept
+	for i = 1, #pendingGarrisons do
+		if room <= 0 then
+			break
+		end
+		local pg = pendingGarrisons[i]
+		local zone = (WarReport ~= nil) and WarReport.PLANET_OF[pg.region] or nil
+		if pg.ox ~= nil and pg.oy ~= nil and zone ~= nil and isZoneEnabled(zone) then
+			local n = 0
+			pcall(function()
+				n = WarBattle.spawnCaptureGarrison(zone, pg.region, pg.faction, pg.ox, pg.oy, pg.site)
+			end)
+			if n > 0 then
+				heldSites[pg.region .. ":" .. tostring(pg.site)] = true
+				writeData("warbattle:born:" .. pg.region .. ":c" .. tostring(pg.site), cycleNo)
+				room = room - 1
+			end
+		end
+	end
 
 	return heldSites, heldGarrisons, captures
 end
@@ -709,7 +772,7 @@ local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFac
 
 		if pD ~= nil then
 			defenders[#defenders + 1] = pD
-			trackUnit(SceneObject(pD):getObjectID(), regionId, siteIndex, defenderFaction)
+			trackUnit(SceneObject(pD):getObjectID(), regionId, siteIndex, defenderFaction, originX, originY)
 			-- Healing this NPC feeds war materiel: B11's ruling wants a path
 			-- for non-combatants, and a Medic had none. See war_heal.lua.
 			-- The observer dies with the object, which cleanup already reaps.
@@ -717,7 +780,7 @@ local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFac
 		end
 		if pA ~= nil then
 			attackers[#attackers + 1] = pA
-			trackUnit(SceneObject(pA):getObjectID(), regionId, siteIndex, attackerFaction)
+			trackUnit(SceneObject(pA):getObjectID(), regionId, siteIndex, attackerFaction, originX, originY)
 			-- Healing this NPC feeds war materiel: B11's ruling wants a path
 			-- for non-combatants, and a Medic had none. See war_heal.lua.
 			-- The observer dies with the object, which cleanup already reaps.
@@ -757,8 +820,9 @@ end
 -- nobody on anybody: there is no opposing line, so no fight starts. Tracked
 -- through the same trackOid() list as everything else, so the existing
 -- clear-then-restage cycle owns its lifetime and this can leak nothing.
-local function spawnGarrison(zone, regionId, faction, originX, originY)
+local function spawnGarrison(zone, regionId, faction, originX, originY, slotTag)
 	local spawned = 0
+	slotTag = slotTag or 0
 
 	for i = 1, WarBattle.SPREAD_SQUAD_SIZE do
 		local template = pickTemplate(faction, i, regionId .. "g")
@@ -770,7 +834,7 @@ local function spawnGarrison(zone, regionId, faction, originX, originY)
 
 			if pG ~= nil then
 				spawned = spawned + 1
-				trackUnit(SceneObject(pG):getObjectID(), regionId, 0, faction)
+				trackUnit(SceneObject(pG):getObjectID(), regionId, slotTag, faction, originX, originY)
 				-- Same materiel path as a battle NPC (see spawnSite).
 				if WarHeal ~= nil and WarHeal.attach ~= nil then WarHeal.attach(pG) end
 			end
@@ -778,6 +842,13 @@ local function spawnGarrison(zone, regionId, faction, originX, originY)
 	end
 
 	return spawned
+end
+
+--- Called from reconcile(), which is defined above spawnGarrison in this
+-- file: a global method resolves its callee when invoked, where a direct
+-- reference to the local would have bound to a nil global at definition time.
+function WarBattle.spawnCaptureGarrison(zone, regionId, faction, originX, originY, siteIndex)
+	return spawnGarrison(zone, regionId, faction, originX, originY, "c" .. tostring(siteIndex))
 end
 
 function WarBattle:stageBattles(heldSites, heldGarrisons)
@@ -833,12 +904,34 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 
 				if heldSites[slotKey] then
 					-- A live engagement from an earlier cycle is still
-					-- standing here. Leaving it entirely alone IS the feature:
-					-- the fight a player is in must not be deleted underneath
-					-- them. It still counts toward the region total so the
-					-- presence message and the log report the truth.
+					-- standing here. Leaving the NPCs entirely alone IS the
+					-- feature: the fight a player is in must not be deleted
+					-- underneath them. It still counts toward the region total
+					-- so the presence message and the log report the truth.
 					sitesStaged = sitesStaged + 1
 					regionSitesStaged = regionSitesStaged + 1
+
+					-- But the site's bookkeeping is NOT persistent and must be
+					-- redone every cycle, because the reaps at the top of this
+					-- function are unconditional:
+					--   1. WarSquad's formup area was destroyed by clearAreas()
+					--      and was previously only re-attached for freshly
+					--      spawned sites -- so on the first fully-persisted
+					--      cycle every held fight lost its area and B27 squad
+					--      attachment silently stopped. Measured: formup
+					--      areas went 10 -> 0 while 10 fights stood.
+					--   2. The recruiter anchor (REGION_KEY) was likewise only
+					--      written on a fresh spawn, so a held anchor site left
+					--      it empty and markBattle() pointed at nothing.
+					local isRecruiterAnchor = (not primaryRegionWritten) and (s == 1)
+					local ox, oy = WarBattle.siteOrigin(coords, regionId, s, wanted, isRecruiterAnchor)
+					if WarSquad ~= nil and WarSquad.attachSite ~= nil then
+						WarSquad.attachSite(zone, ox, oy)
+					end
+					if isRecruiterAnchor then
+						writeStringData(WarBattle.REGION_KEY, regionId)
+						primaryRegionWritten = true
+					end
 				elseif npcBudgetLeft >= perSiteCost then
 
 				local isRecruiterAnchor = (not primaryRegionWritten) and (s == 1)
@@ -1007,6 +1100,15 @@ function Tests:warReconcileNow()
 		printf("WARRECONCILE: capture " .. tostring(caps[i].faction)
 			.. " took " .. tostring(caps[i].region) .. "\n")
 	end
+
+	local keys = {}
+	for k, _ in pairs(held) do keys[#keys + 1] = k end
+	table.sort(keys)
+	printf("WARRECONCILE: held sites: " .. table.concat(keys, " ") .. "\n")
+	keys = {}
+	for k, _ in pairs(heldG) do keys[#keys + 1] = k end
+	table.sort(keys)
+	printf("WARRECONCILE: held garrisons: " .. table.concat(keys, " ") .. "\n")
 
 	WarBattle:stageBattles(held, heldG)
 	printf("WARRECONCILE: end\n")

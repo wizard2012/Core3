@@ -22,12 +22,18 @@ includeFile("../custom_scripts/screenplays/population/street_probe.lua")
 
 -- War report surfaces. Loaded AFTER population so war_bartender.lua chains
 -- onto population/bartender_rumor.lua's runScreenHandlers wrapper.
+-- war_voice.lua first: every player-facing war string lives there, and
+-- three later modules (tally, presence, announce) read it.
+includeFile("../custom_scripts/screenplays/warreport/war_voice.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_contrib.lua")
 -- Must load right after war_contrib.lua: it wraps WarContrib.record, and
 -- that wrap must be (re)installed every time war_contrib.lua's own
 -- unconditional `function WarContrib.record(...)` re-runs on a reload --
 -- see war_contrib_counter.lua's header for why load order here matters.
 includeFile("../custom_scripts/screenplays/warreport/war_contrib_counter.lua")
+-- Same wrap-and-reinstall contract as the counter, same reason to sit
+-- right here: see war_tick_tally.lua.
+includeFile("../custom_scripts/screenplays/warreport/war_tick_tally.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_report.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_map.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_login.lua")

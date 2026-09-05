@@ -96,6 +96,60 @@ function WarAnnounce:claim(tick)
 	return true
 end
 
+-- Layer 3 of the feedback stack (owner ruling 2026-09-04): one in-universe
+-- line per player push that actually moved its front, galaxy-wide. Data comes
+-- from war_flips.lua's `pushes` (the ledger rows the sim consumed this tick)
+-- and `deltas` (how far each region's contest moved this export), both
+-- written by bridge/export_war_state.lua. Galaxy-wide by constraint -- the
+-- server's Lua has only broadcastToGalaxy -- and by choice: a push on Doaba
+-- is news to both sides. Capped so a busy tick is a bulletin, not a wall.
+--
+-- A push by the HOLDER of a region lowers its contest (they are defending),
+-- which reads as a negative delta and produces no line in this version.
+-- Deliberate for now: "the garrison held" is a weaker beat than "the push is
+-- working", and the vocabulary for it is not written yet.
+WarAnnounce.DISPATCH_MAX_LINES = 3
+
+function WarAnnounce:dispatch(tick)
+	if WAR_FLIPS == nil or WarVoice == nil or WarVoice.dispatch == nil then
+		return
+	end
+	local pushes = WAR_FLIPS.pushes
+	local deltas = WAR_FLIPS.deltas
+	if type(pushes) ~= "table" or #pushes == 0 or type(deltas) ~= "table" then
+		return
+	end
+
+	local moved = {}
+	for i = 1, #deltas do
+		if deltas[i] ~= nil and deltas[i].region ~= nil then
+			moved[deltas[i].region] = tonumber(deltas[i].delta) or 0
+		end
+	end
+
+	local sent = 0
+	for i = 1, #pushes do
+		if sent >= WarAnnounce.DISPATCH_MAX_LINES then
+			break
+		end
+		local p = pushes[i]
+		if p ~= nil and p.region ~= nil and moved[p.region] ~= nil then
+			local name = (WarReport ~= nil and WarReport.regionName ~= nil)
+				and WarReport.regionName(p.region) or tostring(p.region)
+			local line = WarVoice.dispatch(name, p.faction, p.players, moved[p.region])
+			if line ~= nil then
+				local ok, err = pcall(function() broadcastToGalaxy(nil, line) end)
+				if ok then
+					sent = sent + 1
+					printf("WarAnnounce: dispatch tick=" .. tostring(tick) .. " :: " .. line .. "\n")
+				else
+					printf("WarAnnounce: dispatch broadcast FAILED: " .. tostring(err) .. "\n")
+				end
+			end
+		end
+	end
+end
+
 function WarAnnounce:run()
 	if WAR_FLIPS == nil or type(WAR_FLIPS) ~= "table" then
 		return -- no flip file yet; nothing to say
@@ -111,8 +165,17 @@ function WarAnnounce:run()
 	end
 
 	local flips = WAR_FLIPS.flips
-	if type(flips) ~= "table" or #flips == 0 then
-		return -- tick claimed, but nothing changed hands this time
+	if type(flips) ~= "table" then
+		flips = {}
+	end
+
+	-- The dispatch runs on every claimed tick, flips or not: a front can move
+	-- a long way without anything changing hands, and that movement is the
+	-- whole point of telling players their push registered.
+	pcall(function() WarAnnounce:dispatch(tick) end)
+
+	if #flips == 0 then
+		return -- tick claimed, dispatch sent, nothing changed hands this time
 	end
 
 	for i = 1, #flips do

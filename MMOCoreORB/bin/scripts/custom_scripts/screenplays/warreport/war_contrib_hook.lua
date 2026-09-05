@@ -185,6 +185,24 @@ function WarContribHook:onKilledCreature(pPlayer, pVictim, arg2)
 			regionId = WarReport.regionAt(zoneName, x, y)
 		end
 		if regionId == nil then
+			-- Layer 1 of the feedback stack: a kill that earns nothing should
+			-- SAY so, once in a while, or a player standing 45m outside
+			-- Anchorhead's attribution circle never learns why their effort is
+			-- going nowhere. Cooldown-gated so it teaches rather than nags.
+			pcall(function()
+				if WarVoice == nil or WarVoice.noWarZone == nil then
+					return
+				end
+				local oid = SceneObject(pPlayer):getObjectID()
+				local key = tostring(oid) .. ":war:nowarzone"
+				local last = readData(key)
+				local now = getTimestampMilli()
+				if last ~= nil and last > 0 and (now - last) < 60000 then
+					return
+				end
+				writeData(key, now)
+				CreatureObject(pPlayer):sendSystemMessage(WarVoice.noWarZone())
+			end)
 			return -- no mapped war region here -- record nothing, per brief
 		end
 

@@ -170,6 +170,14 @@ function WarPresence:onEnteredArea(pArea, pCreature)
 			"%s is CONTESTED -- %d %s underway nearby. A waypoint has been added to your datapad.",
 			tostring(name), sites, plural))
 
+		-- Layer 2: ground that changed hands here recently is news on arrival.
+		-- Written by war_battle.lua's reconcile() on a capture, cleared when
+		-- that garrison ages out.
+		local captor = readStringData("warbattle:lastcapture:" .. tostring(regionId))
+		if captor ~= nil and captor ~= "" and WarVoice ~= nil and WarVoice.captureNote ~= nil then
+			CreatureObject(pCreature):sendSystemMessage(WarVoice.captureNote(captor))
+		end
+
 		WarPresence.markSite(pCreature, regionId)
 	end)
 	return 0
