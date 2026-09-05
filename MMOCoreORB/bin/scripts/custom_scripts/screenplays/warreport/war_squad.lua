@@ -274,7 +274,16 @@ function WarSquad.release(commanderOid)
 			-- Best effort: the trooper may already have been despawned by
 			-- war_battle.lua's cleanup, which still owns it in this slice.
 			pcall(function()
-				AiAgent(pNpc):restoreFollowObject()
+				local a = AiAgent(pNpc)
+				a:restoreFollowObject()
+				-- restoreFollowObject with nothing stored only paths home and
+				-- leaves the pointer on the player (the D2 verifier's finding,
+				-- 2026-09-05; setFollowObject(nil) is a no-op). If it still
+				-- names the commander, drop it.
+				local f = a:getFollowObject()
+				if f ~= nil and SceneObject(f):getObjectID() == commanderOid then
+					a:clearFollowObject()
+				end
 			end)
 		end
 	end
