@@ -1346,16 +1346,26 @@ function WarBattle:cycle()
 		heldSites, heldGarrisons, captures = {}, {}, {}
 	end
 
-	local heldCount = 0
-	for _ in pairs(heldSites) do heldCount = heldCount + 1 end
+	-- A held key is either a live fight or captured ground (the winners'
+	-- garrison, value.capture == true). Count them apart: with captures
+	-- resolving every cycle, "kept 12 live engagement(s)" was eight
+	-- garrisons and four fights.
+	local heldCount, capturedCount = 0, 0
+	for _, v in pairs(heldSites) do
+		if type(v) == "table" and v.capture then
+			capturedCount = capturedCount + 1
+		else
+			heldCount = heldCount + 1
+		end
+	end
 
 	for i = 1, #captures do
 		printf(string.format("WarBattle: %s forces took a position at %s\n",
 			tostring(captures[i].faction), tostring(captures[i].region)))
 	end
 
-	printf(string.format("WarBattle: reconcile kept %d live engagement(s), %d capture(s)\n",
-		heldCount, #captures))
+	printf(string.format("WarBattle: reconcile kept %d live engagement(s), %d captured ground, %d capture(s) this cycle\n",
+		heldCount, capturedCount, #captures))
 
 	pcall(function() WarBattle:stageBattles(heldSites, heldGarrisons) end)
 	createEvent(WarBattle.BATTLE_INTERVAL_MS, "WarBattle", "cycle", nil, "")
@@ -1374,12 +1384,14 @@ function Tests:warReconcileNow()
 
 	local held, heldG, caps = WarBattle:reconcile(false)
 
-	local n, g = 0, 0
-	for _ in pairs(held) do n = n + 1 end
+	local n, c, g = 0, 0, 0
+	for _, v in pairs(held) do
+		if type(v) == "table" and v.capture then c = c + 1 else n = n + 1 end
+	end
 	for _ in pairs(heldG) do g = g + 1 end
 
-	printf("WARRECONCILE: kept " .. tostring(n) .. " live engagement(s), "
-		.. tostring(g) .. " garrison(s), " .. tostring(#caps) .. " capture(s)\n")
+	printf("WARRECONCILE: kept " .. tostring(n) .. " live engagement(s), " .. tostring(c)
+		.. " captured ground, " .. tostring(g) .. " garrison(s), " .. tostring(#caps) .. " capture(s)\n")
 
 	for i = 1, #caps do
 		printf("WARRECONCILE: capture " .. tostring(caps[i].faction)
