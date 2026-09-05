@@ -1018,9 +1018,14 @@ function WarBattle:checkAdvance(pObj, args)
 
 		local stalled = 0
 		for _, p in ipairs(attackers) do
-			local so = SceneObject(p)
-			local dx, dy = so:getWorldPositionX() - originX, so:getWorldPositionY() - originY
-			if math.sqrt(dx * dx + dy * dy) >= (approach - WarBattle.STALL_TOLERANCE_M) then
+			-- Guarded per unit (verifier, 2026-09-05): one bad body must
+			-- skip one unit, not abort the whole site's fix-up.
+			local okp, far = pcall(function()
+				local so = SceneObject(p)
+				local dx, dy = so:getWorldPositionX() - originX, so:getWorldPositionY() - originY
+				return math.sqrt(dx * dx + dy * dy) >= (approach - WarBattle.STALL_TOLERANCE_M)
+			end)
+			if okp and far then
 				stalled = stalled + 1
 			end
 		end
