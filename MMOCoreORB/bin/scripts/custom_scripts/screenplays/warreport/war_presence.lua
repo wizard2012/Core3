@@ -49,6 +49,9 @@ WarPresence.AREA_RADIUS_M = 400
 -- does not spam, short enough that coming back after a real absence tells you
 -- the war is still on.
 WarPresence.COOLDOWN_MS = 10 * 60 * 1000
+-- How long a capture is news on arrival. Matches WarVoice.captureNote's
+-- own words (\"within the hour\").
+WarPresence.CAPTURE_NOTE_MS = 60 * 60 * 1000
 
 -- Persistent registries. Plain Lua tables do NOT survive reload-lua.sh (see
 -- war_login.lua's header on PlayerTriggers being rebuilt), and an area whose
@@ -154,6 +157,16 @@ function WarPresence:onEnteredArea(pArea, pCreature)
 		sites = tonumber(sites) or 1
 
 		local playerOid = SceneObject(pCreature):getObjectID()
+
+		-- Courier hand-in FIRST, outside the greeting cooldown below: walking
+		-- into the destination town with its crate IS the delivery (see
+		-- war_courier.lua), and an action must not be gated by the rate limit
+		-- on a message. Before this, a second run to the same town inside
+		-- ten minutes delivered nothing.
+		if WarCourier ~= nil and WarCourier.tryDeliver ~= nil then
+			pcall(function() WarCourier.tryDeliver(pCreature, regionId) end)
+		end
+
 		local key = playerOid .. ":war:presence:" .. regionId
 		local last = readData(key)
 		local now = getTimestampMilli()
@@ -188,17 +201,16 @@ function WarPresence:onEnteredArea(pArea, pCreature)
 			end
 		end
 
-		-- Courier hand-in: walking into the destination town with its crate
-		-- IS the delivery. No NPC, no menu -- see war_courier.lua.
-		if WarCourier ~= nil and WarCourier.tryDeliver ~= nil then
-			pcall(function() WarCourier.tryDeliver(pCreature, regionId) end)
-		end
-
 		-- Layer 2: ground that changed hands here recently is news on arrival.
 		-- Written by war_battle.lua's reconcile() on a capture, cleared when
 		-- that garrison ages out.
+		-- "Within the hour" is literal: war_battle.lua stamps the note with
+		-- a time, and it is not repeated past CAPTURE_NOTE_MS whatever became
+		-- of the garrison that would otherwise clear it.
 		local captor = readStringData("warbattle:lastcapture:" .. tostring(regionId))
-		if captor ~= nil and captor ~= "" and WarVoice ~= nil and WarVoice.captureNote ~= nil then
+		local capturedAt = readData("warbattle:lastcapture_ms:" .. tostring(regionId)) or 0
+		if captor ~= nil and captor ~= "" and capturedAt > 0 and (now - capturedAt) <= WarPresence.CAPTURE_NOTE_MS
+			and WarVoice ~= nil and WarVoice.captureNote ~= nil then
 			CreatureObject(pCreature):sendSystemMessage(WarVoice.captureNote(captor))
 		end
 

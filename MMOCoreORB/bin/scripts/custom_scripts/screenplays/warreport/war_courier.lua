@@ -93,6 +93,11 @@ WarCourier.KICK_MIN_GAP_MS = 60 * 1000
 -- the post treated as empty.
 WarCourier.MISSES_BEFORE_RESPAWN = 2
 
+-- Same idea for the reap list: an OID that fails to resolve on this many
+-- consecutive reaps is forgotten (with its per-NPC keys), so an NPC that is
+-- really gone does not sit in SPAWNED_KEY for the life of the process.
+WarCourier.REAP_MISSES_BEFORE_FORGET = 3
+
 -- Every OID this module has ever spawned, so a respawn reaps predecessors
 -- even if the per-post pointer was overwritten.
 WarCourier.SPAWNED_KEY = "warcourier:spawned"
@@ -153,6 +158,12 @@ end
 
 -- ================================================================ NPCs ==
 
+--- Drop everything keyed on one spawned NPC's OID.
+local function forgetSpawned(token)
+	pcall(function() deleteStringData("warcourier:region:" .. token) end)
+	pcall(function() deleteData("warcourier:reapmiss:" .. token) end)
+end
+
 --- Reap every OID this module ever spawned that still resolves, except those
 -- in `keep` (a set of OID strings).
 local function reapSpawned(keep)
@@ -168,9 +179,19 @@ local function reapSpawned(keep)
 			local p = getSceneObject(tonumber(token))
 			if p ~= nil then
 				pcall(function() SceneObject(p):destroyObjectFromWorld(false) end)
+				forgetSpawned(token)
 				reaped = reaped + 1
 			else
-				survivors[#survivors + 1] = token -- unresolvable here; keep the record
+				-- Unresolvable HERE is usually a cross-thread miss, so the
+				-- record is kept -- but not forever (REAP_MISSES_BEFORE_FORGET).
+				local missKey = "warcourier:reapmiss:" .. token
+				local misses = (readData(missKey) or 0) + 1
+				if misses >= WarCourier.REAP_MISSES_BEFORE_FORGET then
+					forgetSpawned(token)
+				else
+					writeData(missKey, misses)
+					survivors[#survivors + 1] = token
+				end
 			end
 		end
 	end
@@ -400,6 +421,14 @@ function WarCourier.tryDeliver(pPlayer, regionId)
 	local creature = CreatureObject(pPlayer)
 	local playerOid = tostring(SceneObject(pPlayer):getObjectID())
 
+	-- One key read before up to eighty: a player with nothing in hand is the
+	-- common case, and this fires on every war-town arrival. issue() sets the
+	-- key and clearCrate() removes it, so "absent" means "no crate to find".
+	local active = readStringData(playerOid .. ":war:courier:active")
+	if active == nil or active == "" then
+		return
+	end
+
 	local pInventory = creature:getSlottedObject("inventory")
 	if pInventory == nil then
 		return
@@ -474,7 +503,11 @@ function WarCourierMenuComponent:fillObjectMenuResponse(pSceneObject, pMenuRespo
 
 	local dests = WarCourier.destinations(region, faction)
 	for i = 1, #dests do
-		menuResponse:addRadialMenuItem(WarCourier.RADIAL_ROOT + i, WarCourier.RADIAL_ROOT, labelFor(dests[i]))
+		-- Nested under the root item, with the SERVER callback (3):
+		-- addRadialMenuItem's second argument is the callback, not a parent
+		-- id, so the first version put five top-level entries with callback
+		-- 30 on the wheel, and none of them ever reached handleObjectMenuSelect.
+		menuResponse:addRadialMenuItemToRadialID(WarCourier.RADIAL_ROOT, WarCourier.RADIAL_ROOT + i, 3, labelFor(dests[i]))
 	end
 end
 

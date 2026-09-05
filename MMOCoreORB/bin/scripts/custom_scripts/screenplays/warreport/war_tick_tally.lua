@@ -40,11 +40,11 @@
 
   STORAGE. screenPlayState on the creature, in centipoints, same idiom as
   the counter. Keys:
-    war_tick_bucket        the window the pts_* keys belong to
-    war_tick_lastmsg       epoch seconds of the last readout sent
-    war_tick_pts_<region>  centipoints this window, one key per region
-  A bucket change zeroes every pts key, so nothing accumulates across
-  windows and the key set is bounded by the region list.
+    war_tick_bucket_<region>  the window that region's pts key belongs to
+    war_tick_lastmsg          epoch seconds of the last readout sent
+    war_tick_pts_<region>     centipoints this window, one key per region
+  A region's bucket rolling zeroes that region's pts key, so nothing
+  accumulates across windows; the key set is bounded by the region list.
 ]]
 
 WarTickTally = WarTickTally or {}
@@ -76,15 +76,14 @@ local function thresholds()
 	return t
 end
 
---- Zero every region's window total. Called when the bucket rolls.
-local function resetWindow(creature)
-	if WarReport == nil or WarReport.regionIds == nil then
-		return
-	end
-	local ids = WarReport.regionIds()
-	for i = 1, #ids do
-		creature:setScreenPlayState(0, ptsKey(ids[i]))
-	end
+--- The window a region's total belongs to. Per REGION, not one global
+-- bucket: the global one zeroed every region's key when it rolled, which
+-- needs WarReport.regionIds() -- empty on a thread without the war state --
+-- and on those threads the bucket was stamped anyway, so last window's total
+-- lived on under this window's label until it tripped cap_region on effort
+-- the sim never saw.
+local function bucketKey(regionId)
+	return WarTickTally.KEY_BUCKET .. "_" .. tostring(regionId)
 end
 
 --- Add `points` for `characterId` at `regionId` in the current window, then
@@ -103,13 +102,13 @@ function WarTickTally:add(characterId, regionId, points)
 	local creature = CreatureObject(pPlayer)
 
 	local nowBucket = bucketNow()
-	if creature:getScreenPlayState(WarTickTally.KEY_BUCKET) ~= nowBucket then
-		resetWindow(creature)
-		creature:setScreenPlayState(nowBucket, WarTickTally.KEY_BUCKET)
+	local key = ptsKey(regionId)
+	if creature:getScreenPlayState(bucketKey(regionId)) ~= nowBucket then
+		creature:setScreenPlayState(0, key)
+		creature:setScreenPlayState(nowBucket, bucketKey(regionId))
 	end
 
-	local key = ptsKey(regionId)
-	local centi = creature:getScreenPlayState(key) + math.floor((pts * 100) + 0.5)
+	local centi = (creature:getScreenPlayState(key) or 0) + math.floor((pts * 100) + 0.5)
 	creature:setScreenPlayState(centi, key)
 
 	WarTickTally:maybeSpeak(pPlayer, creature, regionId, centi / 100.0)

@@ -39,6 +39,9 @@ WarSquad = ScreenPlay:new {}
 
 WarSquad.MAX_TROOPS      = 6       -- D23. Reads as a squad; leaves troops for a second player.
 WarSquad.AREA_RADIUS_M   = 48      -- Proximity for "nearby". Roughly one battle site.
+WarSquad.CLAIM_RADIUS_M  = 150     -- How far from the commander a troop may be claimed: the
+                                   -- site itself (defenders at its origin, attackers advancing
+                                   -- from APPROACH_DISTANCE_M = 120 out), and nothing beyond.
 WarSquad.SQUAD_SECONDS   = 900     -- 15 min. In practice the battle cycle expires first.
 WarSquad.TICK_MS         = 10000   -- How often presence is re-evaluated into attachment.
 
@@ -188,13 +191,30 @@ function WarSquad.claimFor(pPlayer)
 		WarSquad.squads[commanderOid] = squad
 	end
 
+	-- Only troops at THIS fight. OIDS_KEY is every live site and garrison
+	-- galaxy-wide in no particular order, so faction alone handed a commander
+	-- at Kaadara the first six Rebels on the list -- Corellian troopers as
+	-- likely as not, pulled off their own line to path toward another planet,
+	-- and invisible to the C++ side (SquadLeaderCommand only considers close
+	-- objects), so every ability reported a squad of one.
+	local zoneName = SceneObject(pPlayer):getZoneName()
+	local px, py = SceneObject(pPlayer):getWorldPositionX(), SceneObject(pPlayer):getWorldPositionY()
+	local reach2 = WarSquad.CLAIM_RADIUS_M * WarSquad.CLAIM_RADIUS_M
+
 	for _, oid in ipairs(stagedOids()) do
 		if #squad.troops >= WarSquad.MAX_TROOPS then
 			break
 		end
 		if WarSquad.claimed[oid] == nil then
 			local pNpc = getSceneObject(oid)
-			if pNpc ~= nil and CreatureObject(pNpc):getFaction() == faction then
+			local near = false
+			if pNpc ~= nil and CreatureObject(pNpc):getFaction() == faction
+				and SceneObject(pNpc):getZoneName() == zoneName then
+				local dx = SceneObject(pNpc):getWorldPositionX() - px
+				local dy = SceneObject(pNpc):getWorldPositionY() - py
+				near = (dx * dx + dy * dy) <= reach2
+			end
+			if near then
 				local ok = pcall(function()
 					local agent = AiAgent(pNpc)
 					-- Store first, so release can put the trooper back on

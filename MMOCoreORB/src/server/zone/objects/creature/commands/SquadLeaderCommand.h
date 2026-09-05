@@ -155,40 +155,21 @@ public:
 	}
 
 	/**
-	 * HAM-cost scale for a squad of `memberCount`. Same 1 + n/20 curve as
-	 * calculateGroupModifier, but driven by the collected squad size so NPC
-	 * troops cost their commander something, and floored at 1 so that using an
-	 * ability while ungrouped is never FREE -- calculateGroupModifier returns 0
-	 * for a null group, which combined with the relaxed leader check would have
-	 * made every ungrouped Squad Leader ability cost no HAM at all.
+	 * HAM-cost scale for a squad of `memberCount`. Same 1 + n/20 curve the
+	 * stock calculateGroupModifier used, but driven by the collected squad
+	 * size so NPC troops cost their commander something, and floored at 1 so
+	 * that using an ability while ungrouped is never FREE -- the stock
+	 * function returned 0 for a null group, which combined with the relaxed
+	 * leader check would have made every ungrouped Squad Leader ability cost
+	 * no HAM at all. (The stock checkGroupLeader / calculateGroupModifier
+	 * pair had no callers left once the six commands moved to
+	 * checkSquadLeader / calculateSquadModifier, and was removed.)
 	 */
 	float calculateSquadModifier(int memberCount) const {
 		if (memberCount < 1)
 			memberCount = 1;
 
 		return 1.0f + ((float) memberCount / 20.0f);
-	}
-
-	bool checkGroupLeader(CreatureObject* player, GroupObject* group) const {
-		if (player == nullptr)
-			return false;
-
-		if (group == nullptr) {
-			player->sendSystemMessage("@error_message:not_grouped");
-			return false;
-		}
-
-		if (group->getLeader() == nullptr) {
-			player->sendSystemMessage("@error_message:not_group_leader");
-			return false;
-		}
-
-		if (group->getLeader() != player) {
-			player->sendSystemMessage("@error_message:not_group_leader");
-			return false;
-		}
-
-		return true;
 	}
 
 	static bool isValidGroupAbilityTarget(CreatureObject* leader, CreatureObject* target, bool allowPet) {
@@ -256,15 +237,6 @@ public:
 		return true;
 	}
 */
-
-	float calculateGroupModifier(GroupObject* group) const {
-		if (group == nullptr)
-			return 0;
-
-		float modifier = 1.0f + ((float)(group->getGroupSize()) / 20.0f);
-
-			return modifier;
-	}
 
 	bool inflictHAM(CreatureObject* player, int health, int action, int mind) const {
 		if (player == nullptr)

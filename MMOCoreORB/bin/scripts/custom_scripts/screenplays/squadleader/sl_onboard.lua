@@ -78,16 +78,12 @@
 SquadLeaderOnboard = ScreenPlay:new {
 	screenplayName = "SquadLeaderOnboard",
 
-	-- The skill forceAwardSkill grants. Must match an entry in
-	-- squadLeaderZeroPointSkills (managers/skill_manager.lua) or ranking it
-	-- up would cost real skill points against the owner's ruling.
-	noviceSkill = "outdoors_squadleader_novice",
-
 	-- Every box in the Squad Leader tree, in dependency order: novice, the
 	-- four branch lines, then master. The owner's ruling changed from
 	-- "everyone gets Squad Leader novice for free" to "everyone IS a Master
 	-- Squad Leader", so this is the full grant list rather than one box.
-	-- noviceSkill above is kept because sl_probe.lua reads it (:34, :49).
+	-- (noviceSkill, which sl_probe.lua reads, is derived from tree[1] below
+	-- rather than spelled twice.)
 	--
 	-- MUST stay in sync with squadLeaderZeroPointSkills
 	-- (managers/skill_manager.lua). All 18 names are listed there, which is
@@ -127,6 +123,9 @@ SquadLeaderOnboard = ScreenPlay:new {
 	-- of logging in rather than arriving out of nowhere mid-play.
 	onboardDelayMs = 10000,
 }
+
+-- The novice box, for sl_probe.lua: one spelling, not two that can drift.
+SquadLeaderOnboard.noviceSkill = SquadLeaderOnboard.tree[1]
 
 registerScreenPlay("SquadLeaderOnboard", true)
 

@@ -299,8 +299,10 @@ function WarDonate:isEligible(pItem)
 	-- A courier crate is worth materiel only where it is bound for. Letting
 	-- it be donated here would pay twice for one item (or once for zero
 	-- travel). war_courier.lua stamps every crate it issues with its owner.
-	local courierOwner = readData(tostring(sceno:getObjectID()) .. ":war:courier:owner")
-	if courierOwner ~= nil and courierOwner > 0 then
+	-- String store, not the numeric one: war_courier.lua writes this key with
+	-- writeStringData, and readData on it is always nil (review, 2026-09-05).
+	local courierOwner = readStringData(tostring(sceno:getObjectID()) .. ":war:courier:owner")
+	if courierOwner ~= nil and courierOwner ~= "" then
 		return false, "courier_crate"
 	end
 

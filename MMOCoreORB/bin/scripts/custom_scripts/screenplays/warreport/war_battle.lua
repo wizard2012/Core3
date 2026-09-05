@@ -264,6 +264,16 @@ WarBattle.CYCLE_KEY = "warbattle:cycle"
 -- enough that the front still reshapes itself to what the simulation says.
 WarBattle.MAX_SITE_AGE_CYCLES = 5
 
+-- How many slots may age out in ONE reconcile pass. Every slot staged in the
+-- same cycle reaches MAX_SITE_AGE_CYCLES in the same cycle, and razing them
+-- all at once IS the "war resets every few minutes" that persistence exists
+-- to end -- measured 2026-09-05 in screenlog.0: every fifth reconcile razed
+-- and restaged all 22 slots (132 NPCs) on a front nobody was standing on.
+-- Capped, the oldest few refresh each cycle and the rest keep standing, so
+-- the front reshapes itself as a rolling change rather than a reset.
+-- Resolutions (one side wiped, a capture) are never deferred by this cap.
+WarBattle.MAX_AGEOUTS_PER_CYCLE = 3
+
 -- Layer 2 of the feedback stack (owner ruling 2026-09-04, "make battles have
 -- consequence"): when one side wipes the other at a site, the WINNER's troops
 -- hold that ground as a garrison until the slot ages out, and stageBattles()
@@ -536,6 +546,25 @@ function WarBattle:clear()
 			removed = removed + 1
 		end
 	end
+	-- Every slot's age clock too: a slot restaged after this clear would
+	-- otherwise inherit the old birth cycle and be razed before its time.
+	local raw = readStringData(WarBattle.ROSTER_KEY)
+	if raw ~= nil and raw ~= "" then
+		local seen = {}
+		for rec in string.gmatch(raw, "([^;]+)") do
+			local f = {}
+			for field in string.gmatch(rec .. "|", "([^|]*)|") do
+				f[#f + 1] = field
+			end
+			if f[2] ~= nil and f[2] ~= "" and f[3] ~= nil and f[3] ~= "" then
+				local key = f[2] .. ":" .. f[3]
+				if not seen[key] then
+					seen[key] = true
+					writeData("warbattle:born:" .. key, 0)
+				end
+			end
+		end
+	end
 	writeStringData(WarBattle.OIDS_KEY, "")
 	-- The roster is a second view of the same set; leaving it behind would
 	-- have reconcile() reasoning about units that no longer exist.
@@ -553,11 +582,19 @@ end
 -- than MAX_SITE_AGE_CYCLES. A slot with exactly one surviving side is a
 -- CAPTURE: that faction won the position, so it is recorded, the survivors
 -- stand down, and the slot is freed for restaging.
-function WarBattle:reconcile()
+--
+-- `advanceClock` (default true) is the age clock. The periodic cycle passes
+-- true; probes pass false so that LOOKING at the war does not age it -- with
+-- the clock advancing on every call, `test warReconcileNow` was a cycle, and
+-- five probes in a row razed the front exactly like five real cycles would.
+function WarBattle:reconcile(advanceClock)
 	local heldSites, heldGarrisons, captures = {}, {}, {}
 
-	local cycleNo = (readData(WarBattle.CYCLE_KEY) or 0) + 1
-	writeData(WarBattle.CYCLE_KEY, cycleNo)
+	local cycleNo = readData(WarBattle.CYCLE_KEY) or 0
+	if advanceClock ~= false then
+		cycleNo = cycleNo + 1
+		writeData(WarBattle.CYCLE_KEY, cycleNo)
+	end
 
 	local raw = readStringData(WarBattle.ROSTER_KEY)
 	if raw == nil or raw == "" then
@@ -606,6 +643,10 @@ function WarBattle:reconcile()
 		end
 	end
 
+	-- Pass 1: classify every slot as keep / aged / resolved. Stand-downs are
+	-- deferred so that age-outs can be rate-limited (MAX_AGEOUTS_PER_CYCLE)
+	-- while resolutions never are.
+	local keep, aged, resolved = {}, {}, {}
 	for key, sl in pairs(slots) do
 		local sides, survivor = 0, nil
 		for f, n in pairs(sl.alive) do
@@ -621,56 +662,91 @@ function WarBattle:reconcile()
 			born = cycleNo
 			writeData(bornKey, born)
 		end
-		local age = cycleNo - born
 
-		local isCapture = (string.sub(tostring(sl.site), 1, 1) == "c")
-		local isGarrison = (sl.site == "0") or isCapture
+		sl.key = key
+		sl.sides, sl.survivor = sides, survivor
+		sl.bornKey, sl.age = bornKey, cycleNo - born
+		sl.isCapture = (string.sub(tostring(sl.site), 1, 1) == "c")
+		sl.isGarrison = (sl.site == "0") or sl.isCapture
 		-- A garrison is single-faction by definition, so "one side left" is
 		-- its healthy state, not a capture.
-		local stillContested = isGarrison and (sides >= 1) or (sides >= 2)
+		local stillContested = sl.isGarrison and (sides >= 1) or (sides >= 2)
 
-		if stillContested and age < WarBattle.MAX_SITE_AGE_CYCLES then
-			if isCapture then
-				-- Holds the BATTLE slot it was captured from, so stageBattles()
-				-- leaves that ground alone while the garrison stands.
-				heldSites[sl.region .. ":" .. string.sub(tostring(sl.site), 2)] = true
-				captureSlotsKept = captureSlotsKept + 1
-			elseif isGarrison then
-				heldGarrisons[sl.region] = true
-			else
-				heldSites[key] = true
-			end
-
-			local oxs = (sl.ox ~= nil) and string.format("%.1f", sl.ox) or ""
-			local oys = (sl.oy ~= nil) and string.format("%.1f", sl.oy) or ""
-			for _, u in ipairs(sl.units) do
-				keptRecs[#keptRecs + 1] = tostring(u.oid) .. "|" .. tostring(sl.region)
-					.. "|" .. tostring(sl.site) .. "|" .. tostring(u.faction)
-					.. "|" .. oxs .. "|" .. oys
-				keptOids[#keptOids + 1] = tostring(u.oid)
-			end
+		if not stillContested then
+			resolved[#resolved + 1] = sl
+		elseif sl.age >= WarBattle.MAX_SITE_AGE_CYCLES then
+			aged[#aged + 1] = sl
 		else
-			if (not isGarrison) and sides == 1 and survivor ~= nil then
-				captures[#captures + 1] = { region = sl.region, faction = survivor }
-				-- Remembered so WarPresence can tell an arriving player that
-				-- ground changed hands here, which is the whole point of the
-				-- engagement having been allowed to resolve.
-				writeStringData("warbattle:lastcapture:" .. sl.region, tostring(survivor))
-				-- Spawned AFTER the roster is rewritten below: trackUnit()
-				-- appends to ROSTER_KEY, and anything appended before the
-				-- rewrite would be thrown away by it.
-				pendingGarrisons[#pendingGarrisons + 1] = {
-					region = sl.region, site = sl.site, faction = survivor, ox = sl.ox, oy = sl.oy,
-				}
-			elseif isCapture then
-				-- A capture garrison aging out or wiped: the ground is open
-				-- again, and the "took a position here" note is stale.
-				pcall(function() deleteStringData("warbattle:lastcapture:" .. sl.region) end)
-			end
-
-			standDown(sl)
-			writeData(bornKey, 0)
+			keep[#keep + 1] = sl
 		end
+	end
+
+	-- Oldest first, key as the tie-break so the choice is deterministic
+	-- (pairs() order is not). Whatever the cap does not take stays held.
+	table.sort(aged, function(a, b)
+		if a.age ~= b.age then
+			return a.age > b.age
+		end
+		return a.key < b.key
+	end)
+	for i = 1, #aged do
+		if i <= WarBattle.MAX_AGEOUTS_PER_CYCLE then
+			resolved[#resolved + 1] = aged[i]
+		else
+			keep[#keep + 1] = aged[i]
+		end
+	end
+
+	-- Pass 2a: hold.
+	for _, sl in ipairs(keep) do
+		if sl.isCapture then
+			-- Holds the BATTLE slot it was captured from, so stageBattles()
+			-- leaves that ground alone while the garrison stands.
+			-- Carries the ORIGIN the NPCs actually stand on, and the fact
+			-- that this is captured ground rather than a fight, so that
+			-- stageBattles() re-attaches the formup area where the troops
+			-- are and does not announce a one-sided garrison as an
+			-- engagement.
+			heldSites[sl.region .. ":" .. string.sub(tostring(sl.site), 2)] = { ox = sl.ox, oy = sl.oy, capture = true }
+			captureSlotsKept = captureSlotsKept + 1
+		elseif sl.isGarrison then
+			heldGarrisons[sl.region] = true
+		else
+			heldSites[sl.key] = { ox = sl.ox, oy = sl.oy }
+		end
+
+		local oxs = (sl.ox ~= nil) and string.format("%.1f", sl.ox) or ""
+		local oys = (sl.oy ~= nil) and string.format("%.1f", sl.oy) or ""
+		for _, u in ipairs(sl.units) do
+			keptRecs[#keptRecs + 1] = tostring(u.oid) .. "|" .. tostring(sl.region)
+				.. "|" .. tostring(sl.site) .. "|" .. tostring(u.faction)
+				.. "|" .. oxs .. "|" .. oys
+			keptOids[#keptOids + 1] = tostring(u.oid)
+		end
+	end
+
+	-- Pass 2b: resolve (capture, wipe-out, or this cycle's share of age-outs).
+	for _, sl in ipairs(resolved) do
+		if (not sl.isGarrison) and sl.sides == 1 and sl.survivor ~= nil then
+			captures[#captures + 1] = { region = sl.region, faction = sl.survivor }
+			-- The "took a position here" note for WarPresence is written
+			-- below, when the winners' garrison actually stands, so that the
+			-- garrison aging out can clear it -- a note nothing clears was
+			-- "within the hour" for the life of the process.
+			-- Spawned AFTER the roster is rewritten below: trackUnit()
+			-- appends to ROSTER_KEY, and anything appended before the
+			-- rewrite would be thrown away by it.
+			pendingGarrisons[#pendingGarrisons + 1] = {
+				region = sl.region, site = sl.site, faction = sl.survivor, ox = sl.ox, oy = sl.oy,
+			}
+		elseif sl.isCapture then
+			-- A capture garrison aging out or wiped: the ground is open
+			-- again, and the "took a position here" note is stale.
+			pcall(function() deleteStringData("warbattle:lastcapture:" .. sl.region) end)
+		end
+
+		standDown(sl)
+		writeData(sl.bornKey, 0)
 	end
 
 	writeStringData(WarBattle.ROSTER_KEY, table.concat(keptRecs, ";"))
@@ -691,8 +767,14 @@ function WarBattle:reconcile()
 				n = WarBattle.spawnCaptureGarrison(zone, pg.region, pg.faction, pg.ox, pg.oy, pg.site)
 			end)
 			if n > 0 then
-				heldSites[pg.region .. ":" .. tostring(pg.site)] = true
+				heldSites[pg.region .. ":" .. tostring(pg.site)] = { ox = pg.ox, oy = pg.oy, capture = true }
 				writeData("warbattle:born:" .. pg.region .. ":c" .. tostring(pg.site), cycleNo)
+				-- Ground changed hands here and the winners are standing on
+				-- it: news on arrival, timestamped so the note expires on its
+				-- own (WarPresence.CAPTURE_NOTE_MS) even if this garrison
+				-- never reaches its age-out.
+				writeStringData("warbattle:lastcapture:" .. pg.region, tostring(pg.faction))
+				writeData("warbattle:lastcapture_ms:" .. pg.region, getTimestampMilli())
 				room = room - 1
 			end
 		end
@@ -898,18 +980,26 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 			local wanted = math.min(sitesForContest(front[r].contest), WarBattle.MAX_SITES_PER_REGION)
 
 			local regionSitesStaged = 0
+			local regionHeldSlots = 0
 			stagedRegions[regionId] = true
 			for s = 1, wanted do
 				local slotKey = regionId .. ":" .. tostring(s)
 
-				if heldSites[slotKey] then
+				local held = heldSites[slotKey]
+				if held then
 					-- A live engagement from an earlier cycle is still
 					-- standing here. Leaving the NPCs entirely alone IS the
 					-- feature: the fight a player is in must not be deleted
 					-- underneath them. It still counts toward the region total
-					-- so the presence message and the log report the truth.
-					sitesStaged = sitesStaged + 1
-					regionSitesStaged = regionSitesStaged + 1
+					-- so the presence message and the log report the truth --
+					-- unless it is captured ground held by ONE side, which is
+					-- not an engagement and must not be announced as one.
+					local isCaptureGround = (type(held) == "table" and held.capture == true)
+					if not isCaptureGround then
+						sitesStaged = sitesStaged + 1
+						regionSitesStaged = regionSitesStaged + 1
+					end
+					regionHeldSlots = regionHeldSlots + 1
 
 					-- But the site's bookkeeping is NOT persistent and must be
 					-- redone every cycle, because the reaps at the top of this
@@ -924,7 +1014,17 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 					--      written on a fresh spawn, so a held anchor site left
 					--      it empty and markBattle() pointed at nothing.
 					local isRecruiterAnchor = (not primaryRegionWritten) and (s == 1)
-					local ox, oy = WarBattle.siteOrigin(coords, regionId, s, wanted, isRecruiterAnchor)
+					-- Where the NPCs ACTUALLY stand, from the roster -- not
+					-- siteOrigin() recomputed with this cycle's `wanted`,
+					-- which spreads bearings by 360/wanted and so put a held
+					-- site's formup area on empty ground whenever the contest
+					-- (and with it `wanted`) changed between cycles.
+					local ox, oy
+					if type(held) == "table" and held.ox ~= nil and held.oy ~= nil then
+						ox, oy = held.ox, held.oy
+					else
+						ox, oy = WarBattle.siteOrigin(coords, regionId, s, wanted, isRecruiterAnchor)
+					end
 					if WarSquad ~= nil and WarSquad.attachSite ~= nil then
 						WarSquad.attachSite(zone, ox, oy)
 					end
@@ -964,7 +1064,10 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 			-- pointer at a live battle was war_recruiter.lua's markBattle(),
 			-- which fires solely from a recruiter conversation -- i.e. only
 			-- for players who already knew to go asking.
-			if regionSitesStaged > 0 and WarPresence ~= nil and WarPresence.attachRegion ~= nil then
+			-- Also when the region's only standing slots are captured ground
+			-- (regionSitesStaged 0): the arrival line is then the held-town
+			-- one plus the capture note, not "N engagements underway".
+			if (regionSitesStaged > 0 or regionHeldSlots > 0) and WarPresence ~= nil and WarPresence.attachRegion ~= nil then
 				pcall(function() WarPresence.attachRegion(zone, regionId, regionSitesStaged) end)
 			end
 
@@ -1068,7 +1171,7 @@ function WarBattle:cycle()
 	-- Reconcile, do NOT clear. See PERSISTENCE above for why this is no longer
 	-- a blanket teardown and what carries the leak guarantee instead.
 	local ok = pcall(function()
-		heldSites, heldGarrisons, captures = WarBattle:reconcile()
+		heldSites, heldGarrisons, captures = WarBattle:reconcile(true)
 	end)
 	if not ok then
 		-- Never let a reconcile fault strand the war: fall back to the old
@@ -1097,11 +1200,14 @@ end
 -- into whatever it did not keep -- WITHOUT rescheduling the recurring event,
 -- which calling cycle() directly would do (leaving two timer chains running).
 -- Run it twice: the first pass stages fresh, the second should report live
--- engagements KEPT rather than restaging them.
+-- engagements KEPT rather than restaging them. The probe does NOT advance the
+-- age clock, so running it any number of times never ages the front; only
+-- the periodic cycle does, and that retires at most MAX_AGEOUTS_PER_CYCLE
+-- slots per pass.
 function Tests:warReconcileNow()
 	printf("WARRECONCILE: begin\n")
 
-	local held, heldG, caps = WarBattle:reconcile()
+	local held, heldG, caps = WarBattle:reconcile(false)
 
 	local n, g = 0, 0
 	for _ in pairs(held) do n = n + 1 end
