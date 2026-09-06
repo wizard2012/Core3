@@ -18,6 +18,12 @@
            it. Completion is the courier's materiel_delivery record there.
     hold   Hold the officer's own town for HOLD_MINUTES: a per-minute check
            counts the minutes the player stands inside the town's bounds.
+    mend   (medics only -- a novice box in medic, combat medic or doctor)
+           Keep the line standing at a front: heal MEND_POINTS crates' worth
+           of the side's troopers there. Progress is the heal hook's
+           materiel_support records (war_heal.lua: 0.002 a point of health),
+           so it is the one order that moves crates while it is being done.
+           Offered first to a medic, before the line orders.
 
   A completed order records `mission_completed` points at its town for the
   player's side under the player's character id -- standings and rank, the
@@ -51,7 +57,9 @@ WarOrders.KILLS_NEEDED = 6
 WarOrders.HOLD_MINUTES = 10
 WarOrders.HOLD_CHECK_MS = 60 * 1000
 WarOrders.EXPIRY_MS = 2 * 60 * 60 * 1000
-WarOrders.POINTS = { line = 3.0, carry = 2.0, hold = 2.0 }
+WarOrders.POINTS = { line = 3.0, carry = 2.0, hold = 2.0, mend = 2.0 }
+WarOrders.MEND_POINTS = 3.0             -- crates' worth of healing a mend order asks for
+WarOrders.MEDIC_SKILLS = { "science_medic_novice", "science_combatmedic_novice", "science_doctor_novice" }
 WarOrders.SOURCE = "mission_completed"
 WarOrders.KEY_PREFIX = "warorders:"
 WarOrders.LAST_PREFIX = "warorders:last:"
@@ -111,7 +119,7 @@ end
 function WarOrders.encode(o)
 	return table.concat({
 		tostring(o.type), tostring(o.region), tostring(o.faction),
-		tostring(math.floor(tonumber(o.need) or 0)), tostring(math.floor(tonumber(o.done) or 0)),
+		tostring(math.floor(tonumber(o.need) or 0)), tostring(math.floor((tonumber(o.done) or 0) * 100 + 0.5)),
 		tostring(math.floor(tonumber(o.issuedAt) or 0)), tostring(math.floor(tonumber(o.expiresAt) or 0)),
 	}, "|")
 end
@@ -124,9 +132,10 @@ function WarOrders.decode(raw)
 	if t == nil then
 		return nil
 	end
+	local d = tonumber(done) / 100
 	return {
 		type = t, region = r, faction = f,
-		need = tonumber(need), done = tonumber(done),
+		need = tonumber(need), done = math.tointeger(d) or d,
 		issuedAt = tonumber(issued), expiresAt = tonumber(expires),
 	}
 end
@@ -135,8 +144,9 @@ end
 -- lines at the fronts the side is fighting (own planet first, then the
 -- hottest), the friendly towns that need a crate (own planet first, the
 -- soonest to fall), then holding the officer's own town. No line orders
--- once a season is won (the field is cleared for the intermission).
-function WarOrders.candidates(st, faction, homeRegion)
+-- once a season is won (the field is cleared for the intermission). A
+-- medic (isMedic) is offered a mend order at each of those fronts first.
+function WarOrders.candidates(st, faction, homeRegion, isMedic)
 	local out = {}
 	if st == nil or type(st.regions) ~= "table" or faction == nil then
 		return out
@@ -160,6 +170,11 @@ function WarOrders.candidates(st, faction, homeRegion)
 		if a.intensity ~= b.intensity then return a.intensity > b.intensity end
 		return a.region < b.region
 	end)
+	if isMedic then
+		for _, c in ipairs(lines) do
+			out[#out + 1] = { type = "mend", region = c.region, need = WarOrders.MEND_POINTS, intensity = c.intensity, same = c.same }
+		end
+	end
 	for _, c in ipairs(lines) do
 		out[#out + 1] = c
 	end
@@ -194,8 +209,8 @@ function WarOrders.candidates(st, faction, homeRegion)
 end
 
 --- The next order: the first candidate that is not `last` ("type:region").
-function WarOrders.pick(st, faction, homeRegion, last)
-	local cands = WarOrders.candidates(st, faction, homeRegion)
+function WarOrders.pick(st, faction, homeRegion, last, isMedic)
+	local cands = WarOrders.candidates(st, faction, homeRegion, isMedic)
 	if #cands == 0 then
 		return nil
 	end
@@ -229,6 +244,13 @@ function WarOrders.text(o, st)
 			end
 		end
 		return "Carry crates to " .. name(o.region) .. ": requisition a supply crate from a quartermaster and deliver it there." .. why
+	elseif o.type == "mend" then
+		local health = ""
+		if WarHeal ~= nil and tonumber(WarHeal.MATERIEL_PER_HEALED_POINT) ~= nil and WarHeal.MATERIEL_PER_HEALED_POINT > 0 then
+			health = " (about " .. tostring(math.floor((tonumber(o.need) or 0) / WarHeal.MATERIEL_PER_HEALED_POINT + 0.5)) .. " points of health)"
+		end
+		return "Keep the line standing at " .. name(o.region) .. ": heal " .. pointsText(o.need) .. " of " .. adj(o.faction)
+			.. " troopers there" .. health .. "."
 	end
 	return "Hold " .. name(o.region) .. ": stand your ground there for " .. tostring(o.need) .. " minutes."
 end
@@ -245,6 +267,8 @@ function WarOrders.doneText(o)
 		return tostring(o.need) .. " " .. adj(other(o.faction)) .. " troopers down at " .. name(o.region) .. "."
 	elseif o.type == "carry" then
 		return "Crates delivered to " .. name(o.region) .. "."
+	elseif o.type == "mend" then
+		return "The line at " .. name(o.region) .. " stood: " .. pointsText(o.need) .. " of healing."
 	end
 	return name(o.region) .. " held."
 end
@@ -260,10 +284,13 @@ function WarOrders.statusLine(o, st, nowMs)
 		leftText = tostring(mins) .. " min left"
 	end
 	local progress
+	local done = tonumber(o.done) or 0
 	if o.type == "line" then
-		progress = tostring(o.done or 0) .. " of " .. tostring(o.need) .. " kills"
+		progress = tostring(math.floor(done)) .. " of " .. tostring(o.need) .. " kills"
 	elseif o.type == "hold" then
-		progress = tostring(o.done or 0) .. " of " .. tostring(o.need) .. " minutes"
+		progress = tostring(math.floor(done)) .. " of " .. tostring(o.need) .. " minutes"
+	elseif o.type == "mend" then
+		progress = string.format("%.1f of %.1f crates' worth healed", done, tonumber(o.need) or 0)
 	else
 		progress = "not delivered yet"
 	end
@@ -283,6 +310,21 @@ local function factionOf(pPlayer)
 		return "imperial"
 	end
 	return nil
+end
+
+--- A novice box in medic, combat medic or doctor.
+function WarOrders.isMedic(pPlayer)
+	local medic = false
+	pcall(function()
+		local creature = CreatureObject(pPlayer)
+		for _, skill in ipairs(WarOrders.MEDIC_SKILLS) do
+			if creature:hasSkill(skill) then
+				medic = true
+				return
+			end
+		end
+	end)
+	return medic
 end
 
 function WarOrders.active(oid)
@@ -327,7 +369,7 @@ function WarOrders.onRadial(pPlayer, pOfficer)
 		home = WarOfficerReportMenuComponent:regionOf(pOfficer)
 	end
 	local last = readStringData(lastKey(oid))
-	o = WarOrders.pick(st, faction, home, last)
+	o = WarOrders.pick(st, faction, home, last, WarOrders.isMedic(pPlayer))
 	if o == nil then
 		creature:sendSystemMessage("No orders today: nothing on the map needs you right now.")
 		return
@@ -397,6 +439,18 @@ function WarOrders.observe(faction, regionId, source, points, characterId)
 	elseif o.type == "carry" and source == "materiel_delivery" then
 		o.done = 1
 		WarOrders.complete(oid, o, pPlayer)
+	elseif o.type == "mend" and source == "materiel_support" then
+		local prev = tonumber(o.done) or 0
+		o.done = prev + (tonumber(points) or 0)
+		if o.done >= o.need then
+			WarOrders.complete(oid, o, pPlayer)
+		else
+			WarOrders.save(oid, o)
+			-- one line per whole crate's worth, not one per heal
+			if pPlayer ~= nil and math.floor(o.done) > math.floor(prev) then
+				CreatureObject(pPlayer):sendSystemMessage(string.format("Orders: %.1f of %.1f crates' worth healed.", o.done, o.need))
+			end
+		end
 	end
 end
 
@@ -514,6 +568,14 @@ if type(Tests) == "table" then
 			printf("WARORDERS: one kill done=" .. tostring(WarOrders.active(oid).done) .. "\n")
 			WarOrders.observe("rebel", "tat_anchorhead", "pvp_kill", 2.0, oid)
 			printf("WARORDERS: second kill completes: active=" .. tostring(WarOrders.active(oid)) .. " recorded=" .. tostring(stubbed[1]) .. " last=" .. tostring(readStringData(lastKey(oid))) .. "\n")
+			local medic = WarOrders.pick(st, "rebel", posts[1] and posts[1].region or nil, nil, true)
+			printf("WARORDERS: medic pick | " .. (medic and (medic.type .. " " .. medic.region .. " | " .. WarOrders.text(medic, st)) or "none") .. "\n")
+			local m = { type = "mend", region = "tat_anchorhead", faction = "rebel", need = 3, done = 0, issuedAt = now, expiresAt = now + 60000 }
+			WarOrders.save(oid, m)
+			WarOrders.observe("rebel", "tat_anchorhead", "materiel_support", 1.5, oid)
+			printf("WARORDERS: mend after 1.5 done=" .. tostring(WarOrders.active(oid).done) .. "\n")
+			WarOrders.observe("rebel", "tat_anchorhead", "materiel_support", 1.6, oid)
+			printf("WARORDERS: mend completes: active=" .. tostring(WarOrders.active(oid)) .. " recorded=" .. tostring(stubbed[2]) .. "\n")
 			WarOrders._rawRecord = saved
 			writeStringData(lastKey(oid), "")
 			printf("WARORDERS: wrapper installed=" .. tostring(WarContrib ~= nil and WarContrib.record == WarOrders._installedWrapperRef) .. "\n")
