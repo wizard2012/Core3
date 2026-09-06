@@ -478,6 +478,19 @@ function WarLines.reserveLine(st)
 	return "Empire: " .. part(imp, true) .. ". Alliance: " .. part(reb, false) .. "."
 end
 
+--- "Seasons won: Empire 1, Alliance 0." -- nil until any season has been won.
+function WarLines.seasonsLine(st)
+	local w = st and st.seasons_won
+	if type(w) ~= "table" then
+		return nil
+	end
+	local imp, reb = math.floor(num(w.imperial) or 0), math.floor(num(w.rebel) or 0)
+	if imp + reb <= 0 then
+		return nil
+	end
+	return "Seasons won: Empire " .. imp .. ", Alliance " .. reb .. "."
+end
+
 --- "Alliance holds 1 of Theed's 2 roads and 0 of Coronet's 3; Empire holds 0 of Anchorhead's 3."
 function WarLines.roadsLine(st)
 	local clauses = {}
@@ -541,6 +554,8 @@ function WarLines.report(st, planet, allPlanets)
 	lines[#lines + 1] = WarLines.header(st)
 	local reserve = WarLines.reserveLine(st)
 	if reserve ~= nil then lines[#lines + 1] = reserve end
+	local seasons = WarLines.seasonsLine(st)
+	if seasons ~= nil then lines[#lines + 1] = seasons end
 	local roads = WarLines.roadsLine(st)
 	if roads ~= nil then lines[#lines + 1] = roads end
 	lines[#lines + 1] = WarLines.frontsLine(st)

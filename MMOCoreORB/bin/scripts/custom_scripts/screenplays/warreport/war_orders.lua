@@ -378,7 +378,9 @@ function WarOrders.observe(faction, regionId, source, points, characterId)
 		WarOrders.clear(oid)
 		return
 	end
-	if o.region ~= regionId then
+	-- The order's town and the order's side (a defector's old orders do
+	-- not complete on the new side's record -- verifier note, 2026-09-06).
+	if o.region ~= regionId or o.faction ~= string.lower(tostring(faction)) then
 		return
 	end
 	local pPlayer = getSceneObject(oid)
@@ -445,6 +447,7 @@ function WarOrders.reportLine(pPlayer, st)
 	end
 	local now = getTimestampMilli()
 	if now >= (o.expiresAt or 0) then
+		WarOrders.clear(oid)
 		return nil
 	end
 	return WarOrders.statusLine(o, st, now)
@@ -505,6 +508,8 @@ if type(Tests) == "table" then
 			printf("WARORDERS: round-trip " .. tostring(back ~= nil and back.type == "line" and back.need == 2 and back.expiresAt == now + 60000) .. "\n")
 			WarOrders.observe("rebel", "nab_theed", "npc_kill_faction", 0.15, oid)
 			printf("WARORDERS: wrong region leaves done=" .. tostring(WarOrders.active(oid).done) .. "\n")
+			WarOrders.observe("imperial", "tat_anchorhead", "npc_kill_faction", 0.15, oid)
+			printf("WARORDERS: wrong side leaves done=" .. tostring(WarOrders.active(oid).done) .. "\n")
 			WarOrders.observe("rebel", "tat_anchorhead", "npc_kill_faction", 0.15, oid)
 			printf("WARORDERS: one kill done=" .. tostring(WarOrders.active(oid).done) .. "\n")
 			WarOrders.observe("rebel", "tat_anchorhead", "pvp_kill", 2.0, oid)
