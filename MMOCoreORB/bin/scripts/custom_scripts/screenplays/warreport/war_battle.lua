@@ -719,6 +719,11 @@ function WarBattle.fronts()
 	if st == nil then
 		return {}
 	end
+	-- Slice 4: no fronts during the intermission. The sim freezes the map
+	-- with the last tick's fronts still exported, so the gate lives here.
+	if type(st.season) == "table" and st.season.winner ~= nil and st.season.winner ~= "" then
+		return {}
+	end
 	local out = {}
 	if type(st.fronts) == "table" and #st.fronts > 0 then
 		for i = 1, #st.fronts do
@@ -1529,7 +1534,8 @@ function WarBattle.tendOnce()
 			local holder = r.faction
 			local f = fronts[sl.region]
 			local attacker = (f ~= nil and f.attacker ~= nil) and f.attacker or ((holder == "rebel") and "imperial" or "rebel")
-			local lineSize = (f ~= nil and f.offensive == true) and WarBattle.LINE_SIZE_OFFENSIVE or WarBattle.LINE_SIZE
+			local besieged = r.is_capital == true and type(r.siege) == "table" and r.siege.active == true
+			local lineSize = ((f ~= nil and f.offensive == true) or besieged) and WarBattle.LINE_SIZE_OFFENSIVE or WarBattle.LINE_SIZE
 			local aH, aA = sl.alive[holder] or 0, sl.alive[attacker] or 0
 			if aH > 0 and aA > 0 and WarBattle.tendStuck(zone, sl, holder, attacker) then
 				aH, aA = 0, 0 -- the site broke off this pass; nothing to reinforce
@@ -1782,8 +1788,10 @@ local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFac
 	for i = 1, #defenders do
 		WarBattle.engage(defenders[i], attackers[((i - 1) % #attackers) + 1], false)
 	end
-	shout(attackers[1], "contact", attackerFaction, nil)
-	shout(defenders[1], "hold", defenderFaction, officerAt(regionId))
+	local rr = WarReport.state() and WarReport.state().regions[regionId] or nil
+	local besieged = rr ~= nil and rr.is_capital == true and type(rr.siege) == "table" and rr.siege.active == true
+	shout(attackers[1], besieged and "siege" or "contact", attackerFaction, nil)
+	shout(defenders[1], besieged and "siege_hold" or "hold", defenderFaction, officerAt(regionId))
 
 	-- Slice C: walkers behind the lines.
 	local walkersUp = 0
@@ -1939,6 +1947,37 @@ function WarBattle.spawnCaptureGarrison(zone, regionId, faction, originX, origin
 	return spawnGarrison(zone, regionId, faction, originX, originY, "c" .. tostring(siteIndex))
 end
 
+--- Slice 4 (DESIGN-WAR-V2 2.8): when the season is won every line stands
+-- down once. The sim freezes the map through the intermission and keeps
+-- exporting its last fronts, so without this the war would fight on for
+-- twelve hours over a decided season. Keyed on the season index in shared
+-- memory: fires once per season end, re-arms when the next season starts.
+WarBattle.CEASEFIRE_KEY = "warbattle:ceasefire:season"
+
+function WarBattle.ceasefire(st)
+	if st == nil or type(st.season) ~= "table" then
+		return false
+	end
+	local index = tonumber(st.season.index) or 0
+	local won = st.season.winner ~= nil and st.season.winner ~= ""
+	local done = readData(WarBattle.CEASEFIRE_KEY) or 0
+	if not won then
+		if done ~= 0 then
+			writeData(WarBattle.CEASEFIRE_KEY, 0)
+		end
+		return false
+	end
+	if done == index then
+		return true
+	end
+	local n = 0
+	pcall(function() n = WarBattle:clear() or 0 end)
+	writeData(WarBattle.CEASEFIRE_KEY, index)
+	printf(string.format("WarBattle: ceasefire -- season %d is over (the %s won); %s combatant(s) stood down\n",
+		index, tostring(st.season.winner), tostring(n)))
+	return true
+end
+
 function WarBattle:stageBattles(heldSites, heldGarrisons)
 	heldSites = heldSites or {}
 	heldGarrisons = heldGarrisons or {}
@@ -1947,6 +1986,9 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 		return 0, 0
 	end
 
+	if WarBattle.ceasefire(WarReport.state()) then
+		return 0, 0
+	end
 	local front = WarBattle.fronts()
 	if #front == 0 then
 		printf("WarBattle: the war reports no fronts -- nothing to stage\n")
@@ -1987,7 +2029,10 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 			local attacker = front[r].attacker or ((holder == "rebel") and "imperial" or "rebel")
 			-- Slice A (owner ruling): ONE site per front, a full line per side.
 			local wanted = 1
-			local lineSize = (front[r].offensive == true) and WarBattle.LINE_SIZE_OFFENSIVE or WarBattle.LINE_SIZE
+			-- Slice 4: a capital under siege is assaulted at offensive strength.
+			local rr = WarReport.state().regions[regionId]
+			local besieged = rr ~= nil and rr.is_capital == true and type(rr.siege) == "table" and rr.siege.active == true
+			local lineSize = (front[r].offensive == true or besieged) and WarBattle.LINE_SIZE_OFFENSIVE or WarBattle.LINE_SIZE
 			local siteCost = lineSize * 2
 
 			local regionSitesStaged = 0

@@ -747,6 +747,26 @@ function WarLines.transitions(st, last)
 					lines[#lines + 1] = "The siege of " .. WarLines.name(id) .. " is lifted: a road into it is open again."
 				end
 			end
+			-- Slice 4: the siege countdown -- one line each as the fall comes
+			-- within a day, six hours and an hour; the stage is in the
+			-- snapshot so a tick never repeats one, and a lifted siege resets it.
+			local ckey = "countdown:" .. id
+			local stage = 0
+			local t = num(r.falls_in_ticks)
+			if r.siege.active and t ~= nil then
+				local secs = t * WarLines.tickSeconds(st)
+				if secs <= 3600 then
+					stage = 3
+				elseif secs <= 6 * 3600 then
+					stage = 2
+				elseif secs <= 24 * 3600 then
+					stage = 1
+				end
+			end
+			snap[ckey] = tostring(stage)
+			if last ~= nil and stage > 0 and (tonumber(last[ckey]) or 0) < stage then
+				lines[#lines + 1] = WarLines.name(id) .. " falls in " .. WarLines.hoursText(t, st) .. " unless a road into it is opened."
+			end
 		end
 	end
 	if type(st.fronts) == "table" then

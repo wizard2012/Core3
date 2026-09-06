@@ -191,6 +191,9 @@ end
 -- the sim exported one for that side ("Captain Tannor: hold the line!").
 WarVoice.BATTLE = {
 	contact  = { imperial = "Contact! Rebel line ahead -- advance!",           rebel = "Contact front! Imperial line -- move up!" },
+	-- slice 4: the capital assault -- a besieged capital's lines say so
+	siege      = { imperial = "The capital is under siege -- take the gates!",     rebel = "Storm the capital -- for the Alliance!" },
+	siege_hold = { imperial = "This is the capital. Nobody gets past us.",         rebel = "They are at the capital -- hold, or it all ends here!" },
 	hold     = { imperial = "Hold this line. Nobody falls back without orders.", rebel = "Hold here! Make them come to us!" },
 	wave     = { imperial = "Reinforcements on the line! Close it up!",        rebel = "Fresh squad coming in -- form on me!" },
 	fallback = { imperial = "Fall back to the marker and regroup!",            rebel = "Fall back! Regroup at the marker!" },
