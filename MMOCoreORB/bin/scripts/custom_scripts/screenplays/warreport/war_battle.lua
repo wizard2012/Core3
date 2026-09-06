@@ -632,6 +632,53 @@ end
 -- site spawned it. Deliberately flat (one list, not one per region/site) --
 -- see LIFECYCLE above for why that is what makes cleanup airtight under a
 -- mid-cycle error.
+--- A site origin on the navmesh where the audited ring is not (the B21
+-- audit fails circle#3/3 at Theed and Moenia and circle#2/3 at Kaadara):
+-- siteOrigin's point when it is walkable, or when walkability cannot be
+-- asked; else the nearest bearing +-SITE_TURN_DEG or twice that at the
+-- same radius, then the same at three quarters and half the radius. The
+-- recruiter-anchor site is never moved: war_recruiter.lua drops its
+-- waypoint on anchorPoint and the two must not drift apart. Logs a move.
+function WarBattle.walkableOrigin(zone, coords, regionId, siteIndex, totalSites, isRecruiterAnchor)
+	local ox, oy = WarBattle.siteOrigin(coords, regionId, siteIndex, totalSites, isRecruiterAnchor)
+	if isRecruiterAnchor or zone == nil or type(isPointWalkable) ~= "function" or type(getWorldFloor) ~= "function" then
+		return ox, oy
+	end
+	local function walkable(x, y)
+		local okz, z = pcall(getWorldFloor, x, y, zone)
+		if not okz or type(z) ~= "number" then
+			return false
+		end
+		local ok, w = pcall(isPointWalkable, zone, x, z, y)
+		return ok and w == true
+	end
+	if walkable(ox, oy) then
+		return ox, oy
+	end
+	local radius = WarBattle.siteRadiusFor(regionId)
+	local turns = 0
+	if type(readData) == "function" then
+		turns = readData("warbattle:siteturn:" .. tostring(regionId)) or 0
+	end
+	local base = 45 + (siteIndex - 1) * (360 / totalSites) + turns * WarBattle.SITE_TURN_DEG
+	local rings = { { radius, { 1, -1, 2, -2 } }, { radius * 0.75, { 0, 1, -1, 2, -2 } }, { radius * 0.5, { 0, 1, -1, 2, -2 } } }
+	for _, ring in ipairs(rings) do
+		local r = ring[1]
+		for _, k in ipairs(ring[2]) do
+			local rad = (base + k * WarBattle.SITE_TURN_DEG) * math.pi / 180
+			local x, y = coords[1] + r * math.cos(rad), coords[2] + r * math.sin(rad)
+			if walkable(x, y) then
+				printf(string.format("WarBattle: %s site %d moved %d deg at %d m: its ring bearing is off the navmesh\n",
+					tostring(regionId), siteIndex, k * WarBattle.SITE_TURN_DEG, math.floor(r)))
+				return x, y
+			end
+		end
+	end
+	printf(string.format("WarBattle: %s site %d -- no meshed point near its bearing; staging on the ring anyway\n",
+		tostring(regionId), siteIndex))
+	return ox, oy
+end
+
 function WarBattle:clear()
 	local oids = trackedOids()
 	local removed = 0
@@ -759,6 +806,31 @@ local function sitesForFront(front)
 		return (front.intensity >= WarBattle.FRONT_TWO_SITES_INTENSITY) and 2 or 1
 	end
 	return sitesForContest(front.contest)
+end
+
+--- Sites a front is assaulted at, each a full line per side on its own
+-- bearing around the town (siteOrigin spreads them evenly). Owner,
+-- 2026-09-06: "one battle outside town doesn't seem to convey large scale"
+-- -- so a hot front (an offensive, a siege, or intensity >=
+-- SITES_THREE_INTENSITY) gets SITES_HOT, a warm one (>= SITES_TWO_INTENSITY)
+-- two, the rest one; capped by MAX_SITES_PER_REGION, whose bearings the
+-- offset sweep (test battleOffsetSweep) audits for every count. The hottest
+-- fronts come first in the staging order, so TOTAL_NPC_BUDGET favours them.
+WarBattle.SITES_TWO_INTENSITY = 0.5
+WarBattle.SITES_THREE_INTENSITY = 1.0
+WarBattle.SITES_HOT = 3
+function WarBattle.sitesWanted(front, besieged)
+	local n = 1
+	local intensity = tonumber(front and front.intensity)
+	if front ~= nil and (front.offensive == true or besieged
+		or (intensity ~= nil and intensity >= WarBattle.SITES_THREE_INTENSITY)) then
+		n = WarBattle.SITES_HOT
+	elseif intensity ~= nil and intensity >= WarBattle.SITES_TWO_INTENSITY then
+		n = 2
+	elseif intensity == nil and front ~= nil then
+		n = sitesForContest(front.contest)
+	end
+	return math.max(1, math.min(n, WarBattle.MAX_SITES_PER_REGION))
 end
 
 function WarBattle:reconcile(advanceClock)
@@ -2033,11 +2105,14 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 			local holder = front[r].faction
 			local defender = holder
 			local attacker = front[r].attacker or ((holder == "rebel") and "imperial" or "rebel")
-			-- Slice A (owner ruling): ONE site per front, a full line per side.
-			local wanted = 1
 			-- Slice 4: a capital under siege is assaulted at offensive strength.
 			local rr = WarReport.state().regions[regionId]
 			local besieged = rr ~= nil and rr.is_capital == true and type(rr.siege) == "table" and rr.siege.active == true
+			-- Slice A (owner ruling 2026-09-05) staged ONE site per front, a full
+			-- line per side. Owner, 2026-09-06: one battle outside town does not
+			-- convey large scale -- a front is assaulted from several bearings
+			-- now (WarBattle.sitesWanted), each still a full line per side.
+			local wanted = WarBattle.sitesWanted(front[r], besieged)
 			local lineSize = (front[r].offensive == true or besieged) and WarBattle.LINE_SIZE_OFFENSIVE or WarBattle.LINE_SIZE
 			local siteCost = lineSize * 2
 
@@ -2107,8 +2182,9 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 				elseif npcBudgetLeft >= siteCost then
 
 				local isRecruiterAnchor = (not primaryRegionWritten) and (s == 1)
-				local ox, oy = WarBattle.siteOrigin(coords, regionId, s, wanted, isRecruiterAnchor)
-				local walkers = WarBattle.walkersFor(front[r], regionId, defender, attacker)
+				local ox, oy = WarBattle.walkableOrigin(zone, coords, regionId, s, wanted, isRecruiterAnchor)
+				-- Walkers stand behind the first site only: one pair per front.
+				local walkers = (s == 1) and WarBattle.walkersFor(front[r], regionId, defender, attacker) or nil
 				local fielded = spawnSite(zone, regionId, s, defender, attacker, ox, oy, lineSize, walkers)
 
 				-- B27 slice 1: the proximity area an overt player has to be inside
