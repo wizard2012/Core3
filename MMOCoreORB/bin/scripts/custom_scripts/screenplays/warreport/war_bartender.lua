@@ -58,6 +58,24 @@ WarRumor.LINES_HEAVY = {
 	"Whole convoys aren't coming back from %s. Make of that what you will.",
 	"If you've got kin near %s, you'd best go get them.",
 }
+-- The Supply War (2026-09-06): the rumour follows the crates when the
+-- state has them -- a town running dry, a town already dry, a capital
+-- with every road in enemy hands. Still no numbers; the pin has those.
+WarRumor.LINES_FALLING = {
+	"%s is running short of crates. Another day like this and it's gone.",
+	"Runner out of %s says the stores are near empty. Somebody had better move cargo.",
+	"They're eating the last of it at %s. You can hear it in how people talk.",
+}
+WarRumor.LINES_DRY = {
+	"%s is dry. Next fight they lose there, the town goes with it.",
+	"Not a crate left at %s. One more push and it changes hands.",
+	"If you've got anything to carry to %s, carry it now.",
+}
+WarRumor.LINES_SIEGE = {
+	"They've got %s surrounded. Every road in is enemy ground.",
+	"Nobody's getting cargo into %s. Not by road, anyway.",
+	"%s is under siege. That's the whole war right there.",
+}
 
 --- Deterministic-ish pick without RNG plumbing: hash the region name and the
 -- current tick so the same bartender says the same thing for a while, but the
@@ -92,6 +110,28 @@ function WarRumor:line()
 	local name = WarReport.regionName(worst.id)
 
 	local pool = (worst.contest >= 60.0) and self.LINES_HEAVY or self.LINES_CONTESTED
+	-- Supply War facts first, when the export carries them.
+	local r = st.regions[worst.id]
+	if r ~= nil and r.crates ~= nil then
+		local ids = {}
+		for id, _ in pairs(st.regions) do ids[#ids + 1] = id end
+		table.sort(ids)
+		for _, id in ipairs(ids) do
+			local c = st.regions[id]
+			if c ~= nil and c.is_capital and type(c.siege) == "table" and c.siege.active then
+				pool, name = self.LINES_SIEGE, WarReport.regionName(id)
+				break
+			end
+		end
+		if pool ~= self.LINES_SIEGE then
+			local t = tonumber(r.falls_in_ticks)
+			if t ~= nil and t <= 0 then
+				pool = self.LINES_DRY
+			elseif t ~= nil then
+				pool = self.LINES_FALLING
+			end
+		end
+	end
 	local template = pickLine(pool, worst.id .. tickSalt)
 	if template == nil then
 		return nil

@@ -73,19 +73,36 @@ function WarRecruiter:briefLine()
 		return nil, nil
 	end
 
+	-- The Supply War's countdown for a region, as a clause, or "".
+	local function stakes(regionId)
+		local st = WarReport.state()
+		local r = st ~= nil and st.regions[regionId] or nil
+		if r == nil or r.crates == nil or WarLines == nil then
+			return ""
+		end
+		if r.is_capital and type(r.siege) == "table" and r.siege.active then
+			return " The capital is under siege."
+		end
+		local fall = WarLines.fallText(r, st)
+		if fall ~= nil then
+			return " It " .. fall .. "."
+		end
+		return ""
+	end
+
 	local battleRegion = WarRecruiter:battleRegion()
 	if battleRegion ~= nil then
 		local name = WarReport.regionName(battleRegion)
 		local planet = WarReport.planetName(WarReport.PLANET_OF[battleRegion])
 		return "There's fighting at " .. name .. " on " .. planet
-			.. " right now. Get out there.", battleRegion
+			.. " right now." .. stakes(battleRegion) .. " Get out there.", battleRegion
 	end
 
 	-- No live battle: point at the hottest front instead of inventing one.
 	local front = WarReport.frontRegions()
 	if #front > 0 then
 		local name = WarReport.regionName(front[1].id)
-		return "No engagement underway. " .. name .. " is where it'll break next.", nil
+		return "No engagement underway. " .. name .. " is where it'll break next." .. stakes(front[1].id), nil
 	end
 
 	return "Quiet on every front. Enjoy it while it lasts.", nil

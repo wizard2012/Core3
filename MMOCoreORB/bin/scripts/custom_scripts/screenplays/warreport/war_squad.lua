@@ -54,11 +54,19 @@ WarSquad.TICK_MS         = 10000   -- How often presence is re-evaluated into at
 WarSquad.AREAS_KEY = "warsquad:areas"
 
 -- commanderOid -> { troops = { npcOid, ... }, expiresAt = <ms> }
-WarSquad.squads = {}
+-- STATE IS SHARED, NOT A LUA TABLE (2026-09-06). Each thread has its own Lua
+-- VM, so the tables this used to keep were empty on every thread but the
+-- one that filled them: the area handlers, the tick and WarCommand.take's
+-- release each saw a different squad list. The record lives in shared
+-- string data now, the way war_command.lua keeps its record:
+--   warsquad:squad:<commanderOid>   "<expiresAtMs>|oid,oid,..."
+--   warsquad:claimed:<troopOid>     commanderOid (readData; 0 = free)
+--   warsquad:commanders             "oid,oid"     (for the tick)
+--   warsquad:present                "oid,oid"     (players inside a formup area)
+WarSquad.COMMANDERS_KEY = "warsquad:commanders"
+WarSquad.PRESENT_KEY = "warsquad:present"
 -- npcOid -> commanderOid, so a trooper is never claimed twice.
-WarSquad.claimed = {}
 -- commanderOid -> pPlayer, populated by ENTEREDAREA, cleared by EXITEDAREA.
-WarSquad.present = {}
 
 local function now()
 	return os.time() * 1000
@@ -66,6 +74,74 @@ end
 
 --- Spawn the proximity area for one staged battle site.
 -- Called by war_battle.lua as it stages each site. Safe on bad input.
+local function squadKey(commanderOid)
+	return "warsquad:squad:" .. tostring(commanderOid)
+end
+
+local function claimedKey(oid)
+	return "warsquad:claimed:" .. tostring(oid)
+end
+
+local function readList(key)
+	local out = {}
+	local raw = readStringData(key)
+	if raw ~= nil and raw ~= "" then
+		for tok in string.gmatch(raw, "(%d+)") do out[#out + 1] = tonumber(tok) end
+	end
+	return out
+end
+
+local function writeList(key, list)
+	local ids = {}
+	for _, oid in ipairs(list) do ids[#ids + 1] = tostring(oid) end
+	writeStringData(key, table.concat(ids, ","))
+end
+
+local function listAdd(key, oid)
+	local list = readList(key)
+	for _, o in ipairs(list) do
+		if o == oid then return end
+	end
+	list[#list + 1] = oid
+	writeList(key, list)
+end
+
+local function listDrop(key, oid)
+	local list, kept = readList(key), {}
+	for _, o in ipairs(list) do
+		if o ~= oid then kept[#kept + 1] = o end
+	end
+	writeList(key, kept)
+end
+
+--- The squad record: { troops = {oid...}, expiresAt = ms } or nil.
+function WarSquad.squadOf(commanderOid)
+	local raw = readStringData(squadKey(commanderOid))
+	if raw == nil or raw == "" then
+		return nil
+	end
+	local expires, list = string.match(raw, "^(%d+)|(.*)$")
+	if expires == nil then
+		return nil
+	end
+	local troops = {}
+	for tok in string.gmatch(list, "(%d+)") do troops[#troops + 1] = tonumber(tok) end
+	return { troops = troops, expiresAt = tonumber(expires) or 0 }
+end
+
+local function writeSquad(commanderOid, squad)
+	local ids = {}
+	for _, oid in ipairs(squad.troops) do ids[#ids + 1] = tostring(oid) end
+	writeStringData(squadKey(commanderOid), tostring(math.floor(squad.expiresAt)) .. "|" .. table.concat(ids, ","))
+	listAdd(WarSquad.COMMANDERS_KEY, commanderOid)
+end
+
+--- Is this staged NPC in someone's automatic squad?
+function WarSquad.isClaimed(oid)
+	local c = readData(claimedKey(oid))
+	return c ~= nil and c > 0
+end
+
 function WarSquad.attachSite(zoneName, x, y)
 	if zoneName == nil or x == nil or y == nil then
 		return nil
@@ -107,25 +183,23 @@ function WarSquad:onEnteredArea(pArea, pCreature)
 		if pCreature == nil or not SceneObject(pCreature):isPlayerCreature() then
 			return
 		end
-		WarSquad.present[SceneObject(pCreature):getObjectID()] = pCreature
+		listAdd(WarSquad.PRESENT_KEY, SceneObject(pCreature):getObjectID())
 	end)
 	return 0
 end
 
---- Left the radius. Site-local means exactly this: the squad is released.
 function WarSquad:onExitedArea(pArea, pCreature)
 	pcall(function()
 		if pCreature == nil or not SceneObject(pCreature):isPlayerCreature() then
 			return
 		end
 		local oid = SceneObject(pCreature):getObjectID()
-		WarSquad.present[oid] = nil
+		listDrop(WarSquad.PRESENT_KEY, oid)
 		WarSquad.release(oid)
 	end)
 	return 0
 end
 
---- Is this player entitled to a squad right now?
 local function qualifies(pPlayer)
 	if pPlayer == nil then
 		return false
@@ -184,30 +258,20 @@ end
 function WarSquad.claimFor(pPlayer)
 	local commanderOid = SceneObject(pPlayer):getObjectID()
 	local faction = CreatureObject(pPlayer):getFaction()
-
-	local squad = WarSquad.squads[commanderOid]
+	local squad = WarSquad.squadOf(commanderOid)
 	if squad == nil then
 		squad = { troops = {}, expiresAt = now() + (WarSquad.SQUAD_SECONDS * 1000) }
-		WarSquad.squads[commanderOid] = squad
 	end
-
-	-- Only troops at THIS fight. OIDS_KEY is every live site and garrison
-	-- galaxy-wide in no particular order, so faction alone handed a commander
-	-- at Kaadara the first six Rebels on the list -- Corellian troopers as
-	-- likely as not, pulled off their own line to path toward another planet,
-	-- and invisible to the C++ side (SquadLeaderCommand only considers close
-	-- objects), so every ability reported a squad of one.
 	local zoneName = SceneObject(pPlayer):getZoneName()
 	local px, py = SceneObject(pPlayer):getWorldPositionX(), SceneObject(pPlayer):getWorldPositionY()
 	local reach2 = WarSquad.CLAIM_RADIUS_M * WarSquad.CLAIM_RADIUS_M
-
+	local changed = false
 	for _, oid in ipairs(stagedOids()) do
 		if #squad.troops >= WarSquad.MAX_TROOPS then
 			break
 		end
-		-- Slice D: a body a player commands (war_command.lua) is not fallen in.
 		local commanded = (WarCommand ~= nil and WarCommand.isCommanded ~= nil) and WarCommand.isCommanded(oid) or false
-		if WarSquad.claimed[oid] == nil and not commanded then
+		if (not WarSquad.isClaimed(oid)) and not commanded then
 			local pNpc = getSceneObject(oid)
 			local near = false
 			if pNpc ~= nil and CreatureObject(pNpc):getFaction() == faction
@@ -219,26 +283,24 @@ function WarSquad.claimFor(pPlayer)
 			if near then
 				local ok = pcall(function()
 					local agent = AiAgent(pNpc)
-					-- Store first, so release can put the trooper back on
-					-- whatever it was doing rather than leaving it oblivious
-					-- in the middle of a firefight.
 					agent:storeFollowObject()
 					agent:setFollowObject(pPlayer)
+					agent:executeBehavior()
 				end)
 				if ok then
-					WarSquad.claimed[oid] = commanderOid
+					writeData(claimedKey(oid), commanderOid)
 					squad.troops[#squad.troops + 1] = oid
+					changed = true
 				end
 			end
 		end
 	end
-
+	if changed or readStringData(squadKey(commanderOid)) == nil or readStringData(squadKey(commanderOid)) == "" then
+		writeSquad(commanderOid, squad)
+	end
 	return #squad.troops
 end
 
---- Destroy every proximity area a previous cycle spawned. Called by
--- war_battle.lua at the top of stageBattles(), before fresh sites go down.
--- Safe when there are none, and safe if an area was already reaped.
 function WarSquad.clearAreas()
 	pcall(function()
 		local raw = readStringData(WarSquad.AREAS_KEY)
@@ -262,17 +324,17 @@ end
 
 --- Release a commander's whole squad and put each trooper back.
 function WarSquad.release(commanderOid)
-	local squad = WarSquad.squads[commanderOid]
+	local squad = WarSquad.squadOf(commanderOid)
 	if squad == nil then
+		listDrop(WarSquad.COMMANDERS_KEY, commanderOid)
 		return
 	end
-
 	for _, oid in ipairs(squad.troops) do
-		WarSquad.claimed[oid] = nil
+		writeData(claimedKey(oid), 0)
 		local pNpc = getSceneObject(oid)
 		if pNpc ~= nil then
 			-- Best effort: the trooper may already have been despawned by
-			-- war_battle.lua's cleanup, which still owns it in this slice.
+			-- war_battle.lua's cleanup, which still owns it.
 			pcall(function()
 				local a = AiAgent(pNpc)
 				a:restoreFollowObject()
@@ -284,41 +346,40 @@ function WarSquad.release(commanderOid)
 				if f ~= nil and SceneObject(f):getObjectID() == commanderOid then
 					a:clearFollowObject()
 				end
+				a:executeBehavior()
 			end)
 		end
 	end
-
-	WarSquad.squads[commanderOid] = nil
+	pcall(function() deleteStringData(squadKey(commanderOid)) end)
+	listDrop(WarSquad.COMMANDERS_KEY, commanderOid)
 end
 
---- Recurring: turn presence into attachment, and expire what is stale.
 function WarSquad:tick()
 	pcall(function()
-		-- Expire first, so a released trooper can be re-claimed this same pass.
-		for commanderOid, squad in pairs(WarSquad.squads) do
+		for _, commanderOid in ipairs(readList(WarSquad.COMMANDERS_KEY)) do
+			local squad = WarSquad.squadOf(commanderOid)
 			local pCommander = getSceneObject(commanderOid)
-			if pCommander == nil or now() >= squad.expiresAt then
+			if squad == nil or pCommander == nil or now() >= squad.expiresAt then
 				WarSquad.release(commanderOid)
 			end
 		end
-
-		for commanderOid, pPlayer in pairs(WarSquad.present) do
-			if qualifies(pPlayer) then
+		for _, playerOid in ipairs(readList(WarSquad.PRESENT_KEY)) do
+			local pPlayer = getSceneObject(playerOid)
+			if pPlayer == nil then
+				listDrop(WarSquad.PRESENT_KEY, playerOid)
+			elseif qualifies(pPlayer) then
 				local n = WarSquad.claimFor(pPlayer)
 				if n > 0 then
-					printf("WarSquad: commander " .. tostring(commanderOid)
+					printf("WarSquad: commander " .. tostring(playerOid)
 						.. " has " .. tostring(n) .. " troop(s)\n")
 				end
 			end
 		end
 	end)
-
 	createEvent(WarSquad.TICK_MS, "WarSquad", "tick", nil, "")
 	return 0
 end
 
---- Started from war_battle.lua's own start path so there is one owner of the
--- war screenplays' lifecycle, not two competing ones.
 function WarSquad:start()
 	createEvent(WarSquad.TICK_MS, "WarSquad", "tick", nil, "")
 end
