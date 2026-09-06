@@ -29,6 +29,9 @@ includeFile("../custom_scripts/screenplays/warreport/war_voice.lua")
 -- used by war_report/war_map/war_map_pins/war_presence/war_login/war_officer*
 -- and war_announce below. Nothing runs at include time.
 includeFile("../custom_scripts/screenplays/warreport/war_lines.lua")
+-- war_standings.lua: slice 7 -- what the war gives a player back (standings
+-- on login and at the officer, the season's pay once, the rank readout).
+includeFile("../custom_scripts/screenplays/warreport/war_standings.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_contrib.lua")
 -- Must load right after war_contrib.lua: it wraps WarContrib.record, and
 -- that wrap must be (re)installed every time war_contrib.lua's own

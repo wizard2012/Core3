@@ -124,6 +124,11 @@ function WarReportLogin:sendReport(pPlayer)
 			for i = 1, #lines do
 				creature:sendSystemMessage(lines[i])
 			end
+			-- Slice 7: the season that ended (paid once), then where this
+			-- player stands this season and who leads their side.
+			if WarStandings ~= nil and WarStandings.onLogin ~= nil then
+				pcall(function() WarStandings.onLogin(pPlayer, st) end)
+			end
 			return
 		end
 

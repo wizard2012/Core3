@@ -192,6 +192,13 @@ function WarOfficerReportMenuComponent:sendReport(pPlayer, pOfficer)
 				creature:sendSystemMessage("  " .. acts[i])
 			end
 		end
+		-- Slice 7: the standings -- players counted on each side, this
+		-- player's place, the top of their side.
+		if WarStandings ~= nil and WarStandings.officerLines ~= nil then
+			for _, line in ipairs(WarStandings.officerLines(pPlayer, st)) do
+				creature:sendSystemMessage(line)
+			end
+		end
 	end
 
 	if WarReport ~= nil and WarReport.supplyOverview ~= nil then

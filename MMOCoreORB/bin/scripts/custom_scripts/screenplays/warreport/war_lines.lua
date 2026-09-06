@@ -726,6 +726,11 @@ function WarLines.transitions(st, last)
 			if (last["winner"] or "") == "" and winner ~= "" then
 				lines[#lines + 1] = "A capital has fallen. Season " .. index .. " is the " .. WarLines.side(winner) .. "'s."
 					.. ((num(s.intermission_remaining) or 0) > 0 and (" The next season begins in " .. WarLines.hoursText(s.intermission_remaining, st) .. ".") or "")
+				-- Slice 7: the most decorated, right under the result.
+				local decorated = WarLines.decoratedLine(st, 3)
+				if decorated ~= nil then
+					lines[#lines + 1] = decorated
+				end
 			elseif (last["season"] or index) ~= index and winner == "" then
 				lines[#lines + 1] = "Season " .. index .. " begins. The reserves are full and every road is open."
 			end
@@ -786,6 +791,238 @@ function WarLines.transitions(st, last)
 		end
 	end
 	return lines, snap
+end
+
+-- --------------------------------------------------------- 4.6 standings --
+-- Slice 7 (2026-09-06): who has done the most this season (export block
+-- `standings`: { season, top = { { id, name, faction, points }, ... } },
+-- best first, both sides), the season that ended last (`last_season`:
+-- index, winner, deciding_region, top) and the rank titles (`ranks`).
+-- Points are the ledger's: one point is one crate's worth.
+
+WarLines.RANK_POINTS = { 2, 8, 20, 50, 120 }
+WarLines.RANK_TITLES = {
+	imperial = { "Lieutenant", "Captain", "Major", "Colonel", "General" },
+	rebel = { "Lieutenant", "Captain", "Commander", "Major", "General" },
+}
+
+local function sameId(a, b)
+	local x, y = tonumber(a), tonumber(b)
+	return x ~= nil and y ~= nil and x == y
+end
+
+local function pointsNum(p)
+	p = num(p) or 0
+	if p >= 10 then
+		return tostring(round(p))
+	end
+	return string.format("%.1f", p)
+end
+
+local function nameOf(e)
+	if type(e.name) == "string" and e.name ~= "" then
+		return e.name
+	end
+	return "#" .. tostring(math.tointeger(tonumber(e.id)) or e.id)
+end
+
+--- 1 -> "1st", 22 -> "22nd", 111 -> "111th".
+function WarLines.ordinal(n)
+	n = math.floor(num(n) or 0)
+	local suffix = "th"
+	local last2 = n % 100
+	if last2 < 11 or last2 > 13 then
+		local last = n % 10
+		if last == 1 then
+			suffix = "st"
+		elseif last == 2 then
+			suffix = "nd"
+		elseif last == 3 then
+			suffix = "rd"
+		end
+	end
+	return tostring(n) .. suffix
+end
+
+--- "41 crates' worth" / "0.5 crates' worth".
+function WarLines.pointsText(points)
+	return pointsNum(points) .. " crates' worth"
+end
+
+--- 15000 -> "15,000".
+function WarLines.creditsText(n)
+	local s = tostring(math.floor((num(n) or 0) + 0.5))
+	local rev = s:reverse():gsub("(%d%d%d)", "%1,")
+	local out = rev:reverse()
+	return (out:gsub("^,", ""))
+end
+
+--- The entries of one side (or every side, faction nil), best first.
+function WarLines.standingsOf(block, faction)
+	local out = {}
+	if type(block) ~= "table" or type(block.top) ~= "table" then
+		return out
+	end
+	for _, e in ipairs(block.top) do
+		if type(e) == "table" and (faction == nil or e.faction == faction) then
+			out[#out + 1] = e
+		end
+	end
+	return out
+end
+
+--- One character's entry in a block, or nil.
+function WarLines.entryOf(block, oid)
+	for _, e in ipairs(WarLines.standingsOf(block, nil)) do
+		if sameId(e.id, oid) then
+			return e
+		end
+	end
+	return nil
+end
+
+--- Where one character stands on their own side: position, count, entry
+-- (nil, 0, nil when they are not counted).
+function WarLines.standingOf(block, oid)
+	local e = WarLines.entryOf(block, oid)
+	if e == nil then
+		return nil, 0, nil
+	end
+	local side = WarLines.standingsOf(block, e.faction)
+	for i, s in ipairs(side) do
+		if s == e then
+			return i, #side, e
+		end
+	end
+	return nil, #side, e
+end
+
+--- The rank title for a points total on this side: the export's titles
+-- when it carries them, the game's otherwise; nil below the first rank.
+function WarLines.rankTitle(st, faction, points)
+	local titles
+	if st ~= nil and type(st.ranks) == "table" and type(st.ranks[faction]) == "table" and #st.ranks[faction] > 0 then
+		titles = st.ranks[faction]
+	else
+		titles = WarLines.RANK_TITLES[faction]
+	end
+	if titles == nil then
+		return nil
+	end
+	local p = num(points) or 0
+	local idx = 0
+	for i, need in ipairs(WarLines.RANK_POINTS) do
+		if p >= need then
+			idx = i
+		end
+	end
+	if idx == 0 then
+		return nil
+	end
+	return titles[math.min(idx, #titles)]
+end
+
+--- "You: 41 crates' worth this season, 1st of 3 in the Alliance, rank Commander."
+-- The side is the entry's own (a defector is counted where the ledger put
+-- them); `faction` is what the caller believes and is not used for the line.
+function WarLines.ownStandingLine(st, faction, oid)
+	local pos, n, e = WarLines.standingOf(st and st.standings, oid)
+	if e == nil then
+		return "You: nothing counted this season yet. A kill at a front, a heal, a crate run or a donation is counted."
+	end
+	local line = "You: " .. WarLines.pointsText(e.points) .. " this season, " .. WarLines.ordinal(pos)
+		.. " of " .. tostring(n) .. " in the " .. WarLines.side(e.faction)
+	local rank = WarLines.rankTitle(st, e.faction, e.points)
+	if rank ~= nil then
+		line = line .. ", rank " .. rank
+	end
+	return line .. "."
+end
+
+--- "Top of the Alliance: Kessa 41, Rue 12, #1004 0.5." (nil when nobody has counted)
+function WarLines.topLine(st, faction, limit)
+	local list = WarLines.standingsOf(st and st.standings, faction)
+	if #list == 0 then
+		return nil
+	end
+	local parts = {}
+	for i = 1, math.min(#list, limit or 3) do
+		parts[#parts + 1] = nameOf(list[i]) .. " " .. pointsNum(list[i].points)
+	end
+	return "Top of the " .. WarLines.side(faction) .. ": " .. table.concat(parts, ", ") .. "."
+end
+
+--- "Season 1's most decorated: Kessa (Alliance) 41, Duros (Empire) 30, ..." (nil when empty)
+function WarLines.decoratedLine(st, limit)
+	local list = WarLines.standingsOf(st and st.standings, nil)
+	if #list == 0 then
+		return nil
+	end
+	local parts = {}
+	for i = 1, math.min(#list, limit or 3) do
+		local e = list[i]
+		parts[#parts + 1] = nameOf(e) .. " (" .. WarLines.side(e.faction) .. ") " .. pointsNum(e.points)
+	end
+	local index = st.standings.season
+	if index == nil and type(st.season) == "table" then
+		index = st.season.index
+	end
+	return "Season " .. tostring(index or "?") .. "'s most decorated: " .. table.concat(parts, ", ") .. "."
+end
+
+--- "Counted this season: Empire 1 player, 30 crates' worth; Alliance 3 players, 54 crates' worth."
+function WarLines.countedLine(st)
+	if st == nil or type(st.standings) ~= "table" then
+		return nil
+	end
+	local parts = {}
+	for _, faction in ipairs({ "imperial", "rebel" }) do
+		local list = WarLines.standingsOf(st.standings, faction)
+		local total = 0
+		for _, e in ipairs(list) do
+			total = total + (num(e.points) or 0)
+		end
+		parts[#parts + 1] = WarLines.side(faction) .. " " .. tostring(#list) .. (#list == 1 and " player" or " players")
+			.. ", " .. WarLines.pointsText(total)
+	end
+	return "Counted this season: " .. table.concat(parts, "; ") .. "."
+end
+
+--- The lines a player reads once about the season that ended last: where
+-- it went, where they finished, what it paid (`pay` from
+-- WarStandings.payoutFor; nil pays nothing and the line is not sent).
+function WarLines.seasonResultLines(st, oid, pay)
+	local ls = st and st.last_season
+	if type(ls) ~= "table" then
+		return {}
+	end
+	local lines = {}
+	local first
+	if ls.winner ~= nil and ls.winner ~= "" then
+		first = "Season " .. tostring(ls.index) .. " went to the " .. WarLines.side(ls.winner)
+		if ls.deciding_region ~= nil and ls.deciding_region ~= "" then
+			first = first .. ": " .. WarLines.name(ls.deciding_region) .. " fell"
+		end
+	else
+		first = "Season " .. tostring(ls.index) .. " ended"
+	end
+	lines[#lines + 1] = first .. "."
+	local pos, n, e = WarLines.standingOf(ls, oid)
+	if e ~= nil then
+		local l = "You finished " .. WarLines.ordinal(pos) .. " of " .. tostring(n) .. " in the " .. WarLines.side(e.faction)
+			.. " with " .. WarLines.pointsText(e.points)
+		local rank = WarLines.rankTitle(st, e.faction, e.points)
+		if rank ~= nil then
+			l = l .. " (" .. rank .. ")"
+		end
+		lines[#lines + 1] = l .. "."
+		if pay ~= nil and (num(pay.credits) or 0) > 0 then
+			lines[#lines + 1] = "Paid: " .. WarLines.creditsText(pay.credits) .. " credits and "
+				.. tostring(math.floor(num(pay.standing) or 0)) .. " " .. WarLines.side(e.faction) .. " standing"
+				.. (pay.won and ", the winner's bonus included" or "") .. "."
+		end
+	end
+	return lines
 end
 
 --- Snapshot <-> string, for shared string data.
