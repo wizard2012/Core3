@@ -32,6 +32,8 @@ includeFile("../custom_scripts/screenplays/warreport/war_lines.lua")
 -- war_standings.lua: slice 7 -- what the war gives a player back (standings
 -- on login and at the officer, the season's pay once, the rank readout).
 includeFile("../custom_scripts/screenplays/warreport/war_standings.lua")
+-- war_digest.lua: slice 9 -- while you were away (the export's events on login).
+includeFile("../custom_scripts/screenplays/warreport/war_digest.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_contrib.lua")
 -- Must load right after war_contrib.lua: it wraps WarContrib.record, and
 -- that wrap must be (re)installed every time war_contrib.lua's own

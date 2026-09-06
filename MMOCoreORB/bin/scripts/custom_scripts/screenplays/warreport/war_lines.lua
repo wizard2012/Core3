@@ -1055,6 +1055,85 @@ function WarLines.seasonResultLines(st, oid, pay)
 	return lines
 end
 
+-- ------------------------------------------------- 4.9 while you were away --
+-- Slice 9 (2026-09-06): the export's `events` (the sim's notable events,
+-- newest first: { tick, kind, faction, region, old_owner, capital,
+-- roads_held, roads_total, season, sudden_death, status, officer }) read
+-- back as a story since a tick.
+
+--- "just now" / "under an hour ago" / "~3 h ago" / "~2 days ago"
+function WarLines.agoText(ticks, st)
+	ticks = num(ticks) or 0
+	if ticks <= 0 then
+		return "just now"
+	end
+	local h = ticks * WarLines.tickSeconds(st) / 3600
+	if h < 1 then
+		return "under an hour ago"
+	end
+	if h >= 48 then
+		return "~" .. round(h / 24) .. " days ago"
+	end
+	return "~" .. round(h) .. " h ago"
+end
+
+--- One event as a sentence, or nil for a kind the game does not tell.
+function WarLines.eventLine(e, st)
+	if type(e) ~= "table" then
+		return nil
+	end
+	local town = WarLines.name(e.region)
+	if e.kind == "region_flipped" then
+		if e.capital and e.old_owner ~= nil then
+			return town .. ", the " .. WarLines.side(e.old_owner) .. "'s capital, fell to the " .. WarLines.side(e.faction) .. "."
+		end
+		return town .. " fell to the " .. WarLines.side(e.faction) .. "."
+	elseif e.kind == "siege_begun" then
+		return town .. " came under siege: the " .. WarLines.side(e.faction) .. " holds every road into it."
+	elseif e.kind == "siege_lifted" then
+		return "The siege of " .. town .. " was lifted."
+	elseif e.kind == "offensive_declared" then
+		return "The " .. WarLines.side(e.faction) .. " declared an offensive at " .. town .. "."
+	elseif e.kind == "war_won" then
+		return "Season " .. tostring(e.season or "?") .. " went to the " .. WarLines.side(e.faction)
+			.. (e.sudden_death and " on reserve" or "") .. "."
+	elseif e.kind == "officer_defeated" then
+		local who = (type(e.officer) == "string" and e.officer ~= "") and e.officer or "An officer"
+		return who .. " of the " .. WarLines.side(e.faction) .. " was " .. tostring(e.status or "defeated") .. " at " .. town .. "."
+	end
+	return nil
+end
+
+--- The events after `sinceTick`, oldest first, the newest `maxLines` kept,
+-- each with how long ago: "Moenia fell to the Alliance. (under an hour ago)".
+function WarLines.sinceLines(st, sinceTick, maxLines)
+	local out = {}
+	if st == nil or type(st.events) ~= "table" then
+		return out
+	end
+	local now = num(st.generated_at_tick) or 0
+	local since = num(sinceTick) or 0
+	local picked = {}
+	for _, e in ipairs(st.events) do
+		local t = num(e.tick) or 0
+		if t > since and WarLines.eventLine(e, st) ~= nil then
+			picked[#picked + 1] = e
+		end
+	end
+	table.sort(picked, function(a, b)
+		local ta, tb = num(a.tick) or 0, num(b.tick) or 0
+		if ta ~= tb then return ta < tb end
+		return tostring(a.kind) < tostring(b.kind)
+	end)
+	local cap = maxLines or 12
+	local first = math.max(1, #picked - cap + 1)
+	for i = first, #picked do
+		local e = picked[i]
+		out[#out + 1] = WarLines.eventLine(e, st) .. " (" .. WarLines.agoText(now - (num(e.tick) or 0), st) .. ")"
+	end
+	return out
+end
+
 --- Snapshot <-> string, for shared string data.
 function WarLines.packSnapshot(snap)
 	local keys = {}
