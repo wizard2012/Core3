@@ -24,6 +24,10 @@
            materiel_support records (war_heal.lua: 0.002 a point of health),
            so it is the one order that moves crates while it is being done.
            Offered first to a medic, before the line orders.
+    supply Donate SUPPLY_POINTS crates' worth of crafted goods or resources
+           at any recruiter of the side (war_donate.lua's materiel_donation
+           records, any town) -- the crafter's order, given after the carry
+           orders and before holding.
 
   A completed order records `mission_completed` points at its town for the
   player's side under the player's character id -- standings and rank, the
@@ -57,8 +61,9 @@ WarOrders.KILLS_NEEDED = 6
 WarOrders.HOLD_MINUTES = 10
 WarOrders.HOLD_CHECK_MS = 60 * 1000
 WarOrders.EXPIRY_MS = 2 * 60 * 60 * 1000
-WarOrders.POINTS = { line = 3.0, carry = 2.0, hold = 2.0, mend = 2.0 }
+WarOrders.POINTS = { line = 3.0, carry = 2.0, hold = 2.0, mend = 2.0, supply = 2.0 }
 WarOrders.MEND_POINTS = 3.0             -- crates' worth of healing a mend order asks for
+WarOrders.SUPPLY_POINTS = 2.0           -- crates' worth of donations a supply order asks for
 WarOrders.MEDIC_SKILLS = { "science_medic_novice", "science_combatmedic_novice", "science_doctor_novice" }
 WarOrders.SOURCE = "mission_completed"
 WarOrders.KEY_PREFIX = "warorders:"
@@ -203,6 +208,7 @@ function WarOrders.candidates(st, faction, homeRegion, isMedic)
 		out[#out + 1] = c
 	end
 	if homeRegion ~= nil and st.regions[homeRegion] ~= nil then
+		out[#out + 1] = { type = "supply", region = homeRegion, need = WarOrders.SUPPLY_POINTS }
 		out[#out + 1] = { type = "hold", region = homeRegion, need = WarOrders.HOLD_MINUTES }
 	end
 	return out
@@ -251,6 +257,8 @@ function WarOrders.text(o, st)
 		end
 		return "Keep the line standing at " .. name(o.region) .. ": heal " .. pointsText(o.need) .. " of " .. adj(o.faction)
 			.. " troopers there" .. health .. "."
+	elseif o.type == "supply" then
+		return "Supply the war: donate " .. pointsText(o.need) .. " of crafted goods or resources at a recruiter of your side."
 	end
 	return "Hold " .. name(o.region) .. ": stand your ground there for " .. tostring(o.need) .. " minutes."
 end
@@ -269,6 +277,8 @@ function WarOrders.doneText(o)
 		return "Crates delivered to " .. name(o.region) .. "."
 	elseif o.type == "mend" then
 		return "The line at " .. name(o.region) .. " stood: " .. pointsText(o.need) .. " of healing."
+	elseif o.type == "supply" then
+		return pointsText(o.need) .. " donated."
 	end
 	return name(o.region) .. " held."
 end
@@ -291,6 +301,8 @@ function WarOrders.statusLine(o, st, nowMs)
 		progress = tostring(math.floor(done)) .. " of " .. tostring(o.need) .. " minutes"
 	elseif o.type == "mend" then
 		progress = string.format("%.1f of %.1f crates' worth healed", done, tonumber(o.need) or 0)
+	elseif o.type == "supply" then
+		progress = string.format("%.1f of %.1f crates' worth donated", done, tonumber(o.need) or 0)
 	else
 		progress = "not delivered yet"
 	end
@@ -420,9 +432,13 @@ function WarOrders.observe(faction, regionId, source, points, characterId)
 		WarOrders.clear(oid)
 		return
 	end
-	-- The order's town and the order's side (a defector's old orders do
-	-- not complete on the new side's record -- verifier note, 2026-09-06).
-	if o.region ~= regionId or o.faction ~= string.lower(tostring(faction)) then
+	-- The order's side (a defector's old orders do not complete on the new
+	-- side's record -- verifier note, 2026-09-06) and, except for a supply
+	-- order (any recruiter of the side), the order's town.
+	if o.faction ~= string.lower(tostring(faction)) then
+		return
+	end
+	if o.type ~= "supply" and o.region ~= regionId then
 		return
 	end
 	local pPlayer = getSceneObject(oid)
@@ -439,16 +455,17 @@ function WarOrders.observe(faction, regionId, source, points, characterId)
 	elseif o.type == "carry" and source == "materiel_delivery" then
 		o.done = 1
 		WarOrders.complete(oid, o, pPlayer)
-	elseif o.type == "mend" and source == "materiel_support" then
+	elseif (o.type == "mend" and source == "materiel_support") or (o.type == "supply" and source == "materiel_donation") then
 		local prev = tonumber(o.done) or 0
 		o.done = prev + (tonumber(points) or 0)
 		if o.done >= o.need then
 			WarOrders.complete(oid, o, pPlayer)
 		else
 			WarOrders.save(oid, o)
-			-- one line per whole crate's worth, not one per heal
+			-- one line per whole crate's worth, not one per heal or hand-in
 			if pPlayer ~= nil and math.floor(o.done) > math.floor(prev) then
-				CreatureObject(pPlayer):sendSystemMessage(string.format("Orders: %.1f of %.1f crates' worth healed.", o.done, o.need))
+				CreatureObject(pPlayer):sendSystemMessage(string.format("Orders: %.1f of %.1f crates' worth %s.",
+					o.done, o.need, (o.type == "mend") and "healed" or "donated"))
 			end
 		end
 	end
@@ -576,6 +593,10 @@ if type(Tests) == "table" then
 			printf("WARORDERS: mend after 1.5 done=" .. tostring(WarOrders.active(oid).done) .. "\n")
 			WarOrders.observe("rebel", "tat_anchorhead", "materiel_support", 1.6, oid)
 			printf("WARORDERS: mend completes: active=" .. tostring(WarOrders.active(oid)) .. " recorded=" .. tostring(stubbed[2]) .. "\n")
+			local sup = { type = "supply", region = "tat_anchorhead", faction = "rebel", need = 2, done = 0, issuedAt = now, expiresAt = now + 60000 }
+			WarOrders.save(oid, sup)
+			WarOrders.observe("rebel", "nab_theed", "materiel_donation", 2.5, oid)
+			printf("WARORDERS: supply completes from any town: active=" .. tostring(WarOrders.active(oid)) .. " recorded=" .. tostring(stubbed[3]) .. "\n")
 			WarOrders._rawRecord = saved
 			writeStringData(lastKey(oid), "")
 			printf("WARORDERS: wrapper installed=" .. tostring(WarContrib ~= nil and WarContrib.record == WarOrders._installedWrapperRef) .. "\n")
