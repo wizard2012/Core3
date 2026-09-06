@@ -176,16 +176,16 @@ function WarStandings.onLogin(pPlayer, st)
 	local creature = CreatureObject(pPlayer)
 	pcall(function() WarStandings.settle(pPlayer, st) end)
 	local faction = WarStandings.factionOf(pPlayer)
-	if faction == nil or type(st.standings) ~= "table" then
-		return
+	if faction ~= nil and type(st.standings) == "table" then
+		local oid = SceneObject(pPlayer):getObjectID()
+		creature:sendSystemMessage(WarLines.ownStandingLine(st, faction, oid))
+		local top = WarLines.topLine(st, faction, WarStandings.TOP_LOGIN)
+		if top ~= nil then
+			creature:sendSystemMessage(top)
+		end
 	end
-	local oid = SceneObject(pPlayer):getObjectID()
-	creature:sendSystemMessage(WarLines.ownStandingLine(st, faction, oid))
-	local top = WarLines.topLine(st, faction, WarStandings.TOP_LOGIN)
-	if top ~= nil then
-		creature:sendSystemMessage(top)
-	end
-	-- Slice 8: an open order is read back on login (players forget).
+	-- Slice 8: an open order is read back on login (players forget) -- with
+	-- or without a standings block in the export (verifier note, 2026-09-06).
 	if WarOrders ~= nil and WarOrders.reportLine ~= nil then
 		local orderLine = WarOrders.reportLine(pPlayer, st)
 		if orderLine ~= nil then

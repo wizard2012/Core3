@@ -63,7 +63,8 @@ WarOrders.HOLD_CHECK_MS = 60 * 1000
 WarOrders.EXPIRY_MS = 2 * 60 * 60 * 1000
 WarOrders.POINTS = { line = 3.0, carry = 2.0, hold = 2.0, mend = 2.0, supply = 2.0 }
 WarOrders.MEND_POINTS = 3.0             -- crates' worth of healing a mend order asks for
-WarOrders.SUPPLY_POINTS = 2.0           -- crates' worth of donations a supply order asks for
+WarOrders.SUPPLY_POINTS = 6.0           -- crates' worth of donations a supply order asks for: crafted goods price
+                                        -- at up to 15 a stack (war_donate.lua), so two would be one hand-in
 WarOrders.MEDIC_SKILLS = { "science_medic_novice", "science_combatmedic_novice", "science_doctor_novice" }
 WarOrders.SOURCE = "mission_completed"
 WarOrders.KEY_PREFIX = "warorders:"
