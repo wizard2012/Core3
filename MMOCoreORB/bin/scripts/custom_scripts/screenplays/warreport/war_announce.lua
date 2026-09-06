@@ -252,14 +252,28 @@ end
 --- Slice 7 follow-up (2026-09-06): the standings, galaxy-wide, every
 -- STANDINGS_EVERY_TICKS ticks (six hours at the 15-minute tick) -- who
 -- leads each side this season, one line a side, only when someone does.
+-- The clock is the tick of the last broadcast in shared memory, not
+-- "tick % 24": a tick the announcer never claimed (312 went unclaimed on
+-- 2026-09-06 with nothing else to say) skipped the whole six hours. The
+-- first tick seen after a boot starts the clock without a broadcast.
 WarAnnounce.STANDINGS_EVERY_TICKS = 24
+WarAnnounce.STANDINGS_KEY = "warannounce:standings_tick"
 
 function WarAnnounce:standingsDispatch(tick, force)
 	if WarLines == nil or WarLines.topLine == nil or WarReport == nil or WarReport.state == nil then
 		return
 	end
-	if not force and (tonumber(tick) or 0) % WarAnnounce.STANDINGS_EVERY_TICKS ~= 0 then
-		return
+	tick = tonumber(tick) or 0
+	if not force then
+		local last = readSharedMemory(WarAnnounce.STANDINGS_KEY) or 0
+		if last == 0 then
+			writeSharedMemory(WarAnnounce.STANDINGS_KEY, tick)
+			return
+		end
+		if tick - last < WarAnnounce.STANDINGS_EVERY_TICKS then
+			return
+		end
+		writeSharedMemory(WarAnnounce.STANDINGS_KEY, tick)
 	end
 	local st = WarReport.state()
 	if st == nil or type(st.standings) ~= "table" then
