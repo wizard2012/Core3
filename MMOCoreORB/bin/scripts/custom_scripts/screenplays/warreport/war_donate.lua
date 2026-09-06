@@ -613,6 +613,25 @@ function WarDonate:_confirmDonation(pPlayer, pNpc, screen)
 	-- items or the cooldown -- see this file's header for the ordering
 	-- rationale and the bounded window that follows a success.
 	local characterId = playerOid
+	-- Slice 10: what was donated, by category, for the supply orders
+	-- (war_orders.lua reads warcontrib:lastdonation:<oid> when the record
+	-- it wraps arrives). Best effort; the donation itself does not depend on it.
+	pcall(function()
+		local byCat = {}
+		for i = 1, #validItems do
+			local cat = "goods"
+			if WarOrders ~= nil and WarOrders.categoryOf ~= nil then
+				cat = WarOrders.categoryOf(SceneObject(validItems[i]):getTemplateObjectPath())
+			end
+			byCat[cat] = (byCat[cat] or 0) + WarDonate:pointsFor(validItems[i])
+		end
+		local parts = {}
+		for cat, pts in pairs(byCat) do
+			parts[#parts + 1] = cat .. "=" .. string.format("%.2f", pts)
+		end
+		table.sort(parts)
+		writeStringData("warcontrib:lastdonation:" .. tostring(playerOid), table.concat(parts, ";"))
+	end)
 	local recorded, reason = WarContrib.record(faction, regionId, WarDonate.SOURCE, totalPoints, characterId)
 
 	if not recorded then
