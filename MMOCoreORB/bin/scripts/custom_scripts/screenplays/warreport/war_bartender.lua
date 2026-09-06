@@ -71,6 +71,15 @@ WarRumor.LINES_DRY = {
 	"Not a crate left at %s. One more push and it changes hands.",
 	"If you've got anything to carry to %s, carry it now.",
 }
+-- Slice 7 (2026-09-06): every third tick the rumour is about someone --
+-- the most decorated of the season, from the export's standings. {name}
+-- and {side} are filled by WarRumor.decoratedLine.
+WarRumor.LINES_DECORATED = {
+	"Heard {name} has done more for the {side} than the whole garrison.",
+	"{name} again. Every story out of the front has {name} in it.",
+	"If the {side} had ten more like {name}, this would be over by now.",
+	"They drink for free at the front, {name} does. Ask anyone in the {side}.",
+}
 WarRumor.LINES_SIEGE = {
 	"They've got %s surrounded. Every road in is enemy ground.",
 	"Nobody's getting cargo into %s. Not by road, anyway.",
@@ -93,6 +102,32 @@ local function pickLine(lines, salt)
 end
 
 --- The rumour, or nil if there is nothing to say (war state unavailable).
+--- The rumour about a person: one of the export's top entries, every third
+-- tick, or nil. Pure given the state.
+function WarRumor:decoratedLine(st)
+	if st == nil or type(st.standings) ~= "table" or type(st.standings.top) ~= "table" then
+		return nil
+	end
+	local top = st.standings.top
+	if #top == 0 then
+		return nil
+	end
+	local tick = tonumber(st.generated_at_tick) or 0
+	if tick % 3 ~= 0 then
+		return nil
+	end
+	local e = top[(math.floor(tick / 3) % #top) + 1]
+	if type(e) ~= "table" or type(e.name) ~= "string" or e.name == "" then
+		return nil
+	end
+	local template = pickLine(self.LINES_DECORATED, "decorated" .. tostring(tick))
+	if template == nil then
+		return nil
+	end
+	local side = (WarLines ~= nil and WarLines.side ~= nil) and WarLines.side(e.faction) or tostring(e.faction)
+	return (template:gsub("{name}", e.name):gsub("{side}", side))
+end
+
 function WarRumor:line()
 	if WarReport == nil or WarReport.state() == nil then
 		return nil
@@ -104,6 +139,12 @@ function WarRumor:line()
 	local front = WarReport.frontRegions()
 	if #front == 0 then
 		return pickLine(self.LINES_QUIET, "quiet" .. tickSalt)
+	end
+
+	-- Someone, every third tick, when anyone is counted.
+	local decorated = self:decoratedLine(st)
+	if decorated ~= nil then
+		return decorated
 	end
 
 	local worst = front[1]

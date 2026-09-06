@@ -203,6 +203,18 @@ function WarPresence:onEnteredArea(pArea, pCreature)
 				said = true
 			end
 		end
+		-- Slice 8: arriving where your orders send you reads them back.
+		if WarOrders ~= nil and WarOrders.active ~= nil and WarOrders.reportLine ~= nil then
+			pcall(function()
+				local o = WarOrders.active(SceneObject(pCreature):getObjectID())
+				if o ~= nil and o.region == regionId then
+					local line = WarOrders.reportLine(pCreature, st)
+					if line ~= nil then
+						CreatureObject(pCreature):sendSystemMessage("This is where your orders send you. " .. line)
+					end
+				end
+			end)
+		end
 		-- Supply visibility (owner ruling 2026-09-04): the sim has always
 		-- known when a line is cut; this is the first time the ground says so.
 		if not said and r ~= nil and WarVoice ~= nil and WarVoice.supply ~= nil then
