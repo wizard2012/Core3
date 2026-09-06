@@ -67,6 +67,8 @@ includeFile("../custom_scripts/screenplays/warreport/war_battle_offset_sweep.lua
 -- follows it here since both touch the same recruiter conversation surface.
 includeFile("../custom_scripts/screenplays/warreport/war_donate.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_probe.lua")
+-- war_mcp_probe.lua: the server-side action channel for tools/swgclient-mcp (B35): test mcpLua.
+includeFile("../custom_scripts/screenplays/warreport/war_mcp_probe.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_template_probe.lua")
 -- Slice D: a player takes command of a line from its sergeant (radial).
 includeFile("../custom_scripts/screenplays/warreport/war_command.lua")
