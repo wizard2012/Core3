@@ -134,6 +134,10 @@ function WarOfficerReportMenuComponent:fillObjectMenuResponse(pSceneObject, pMen
 
 	local menuResponse = LuaObjectMenuResponse(pMenuResponse)
 	menuResponse:addRadialMenuItem(20, 3, "Report")
+	-- Slice 8: a standing order from the officer (war_orders.lua).
+	if WarOrders ~= nil and WarOrders.onRadial ~= nil then
+		menuResponse:addRadialMenuItem(WarOrders.RADIAL_ID or 21, 3, "Orders")
+	end
 end
 
 function WarOfficerReportMenuComponent:handleObjectMenuSelect(pSceneObject, pPlayer, selectedID)
@@ -143,6 +147,11 @@ function WarOfficerReportMenuComponent:handleObjectMenuSelect(pSceneObject, pPla
 
 	if selectedID == 20 then
 		pcall(function() WarOfficerReportMenuComponent:sendReport(pPlayer, pSceneObject) end)
+	elseif WarOrders ~= nil and selectedID == (WarOrders.RADIAL_ID or 21) then
+		local ok, err = pcall(function() WarOrders.onRadial(pPlayer, pSceneObject) end)
+		if not ok then
+			printf("WarOrders.onRadial failed, swallowed: " .. tostring(err) .. "\n")
+		end
 	end
 
 	return 0
@@ -203,6 +212,13 @@ function WarOfficerReportMenuComponent:sendReport(pPlayer, pOfficer)
 		if WarStandings ~= nil and WarStandings.officerLines ~= nil then
 			for _, line in ipairs(WarStandings.officerLines(pPlayer, st)) do
 				creature:sendSystemMessage(line)
+			end
+		end
+		-- Slice 8: the standing order, if one is open.
+		if WarOrders ~= nil and WarOrders.reportLine ~= nil then
+			local orderLine = WarOrders.reportLine(pPlayer, st)
+			if orderLine ~= nil then
+				creature:sendSystemMessage(orderLine)
 			end
 		end
 	end

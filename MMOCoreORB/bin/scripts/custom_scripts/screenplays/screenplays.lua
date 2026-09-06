@@ -72,6 +72,9 @@ includeFile("../custom_scripts/screenplays/warreport/war_donate.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_probe.lua")
 -- war_mcp_probe.lua: the server-side action channel for tools/swgclient-mcp (B35): test mcpLua.
 includeFile("../custom_scripts/screenplays/warreport/war_mcp_probe.lua")
+-- war_orders.lua: slice 8 -- orders from the officer. After war_contrib.lua
+-- and war_contrib_counter.lua: it wraps WarContrib.record above the counter.
+includeFile("../custom_scripts/screenplays/warreport/war_orders.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_template_probe.lua")
 -- Slice D: a player takes command of a line from its sergeant (radial).
 includeFile("../custom_scripts/screenplays/warreport/war_command.lua")
