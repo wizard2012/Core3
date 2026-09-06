@@ -185,6 +185,13 @@ function WarStandings.onLogin(pPlayer, st)
 	if top ~= nil then
 		creature:sendSystemMessage(top)
 	end
+	-- Slice 8: an open order is read back on login (players forget).
+	if WarOrders ~= nil and WarOrders.reportLine ~= nil then
+		local orderLine = WarOrders.reportLine(pPlayer, st)
+		if orderLine ~= nil then
+			creature:sendSystemMessage(orderLine)
+		end
+	end
 end
 
 --- The officer's standings lines (after "What you can do here").
@@ -211,6 +218,14 @@ function WarStandings.officerLines(pPlayer, st)
 		end
 	end
 	return lines
+end
+
+-- Console probe: test warStandingsDispatchNow -- the six-hourly broadcast, now.
+if type(Tests) == "table" then
+	function Tests:warStandingsDispatchNow()
+		local ok, err = pcall(function() WarAnnounce:standingsDispatch(0, true) end)
+		printf("WARSTANDINGSDISPATCH: " .. (ok and "sent" or ("failed: " .. tostring(err))) .. "\n")
+	end
 end
 
 -- Console probe: test warStandingsCheck -- renders the standings lines from

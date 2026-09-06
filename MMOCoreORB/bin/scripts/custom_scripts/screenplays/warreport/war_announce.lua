@@ -249,6 +249,35 @@ function WarAnnounce:transitionDispatch(tick)
 	end
 end
 
+--- Slice 7 follow-up (2026-09-06): the standings, galaxy-wide, every
+-- STANDINGS_EVERY_TICKS ticks (six hours at the 15-minute tick) -- who
+-- leads each side this season, one line a side, only when someone does.
+WarAnnounce.STANDINGS_EVERY_TICKS = 24
+
+function WarAnnounce:standingsDispatch(tick, force)
+	if WarLines == nil or WarLines.topLine == nil or WarReport == nil or WarReport.state == nil then
+		return
+	end
+	if not force and (tonumber(tick) or 0) % WarAnnounce.STANDINGS_EVERY_TICKS ~= 0 then
+		return
+	end
+	local st = WarReport.state()
+	if st == nil or type(st.standings) ~= "table" then
+		return
+	end
+	for _, faction in ipairs({ "imperial", "rebel" }) do
+		local line = WarLines.topLine(st, faction, 3)
+		if line ~= nil then
+			local ok, err = pcall(function() broadcastToGalaxy(nil, line) end)
+			if ok then
+				printf("WarAnnounce: standings tick=" .. tostring(tick) .. " :: " .. line .. "\n")
+			else
+				printf("WarAnnounce: standings broadcast FAILED: " .. tostring(err) .. "\n")
+			end
+		end
+	end
+end
+
 function WarAnnounce:run()
 	if WAR_FLIPS == nil or type(WAR_FLIPS) ~= "table" then
 		return -- no flip file yet; nothing to say
@@ -274,6 +303,7 @@ function WarAnnounce:run()
 	pcall(function() WarAnnounce:dispatch(tick) end)
 	pcall(function() WarAnnounce:supplyDispatch(tick) end)
 	pcall(function() WarAnnounce:transitionDispatch(tick) end)
+	pcall(function() WarAnnounce:standingsDispatch(tick, false) end)
 
 	if #flips == 0 then
 		return -- tick claimed, dispatch sent, nothing changed hands this time
