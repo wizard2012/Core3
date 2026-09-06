@@ -970,6 +970,21 @@ function WarLines.decoratedLine(st, limit)
 	return "Season " .. tostring(index or "?") .. "'s most decorated: " .. table.concat(parts, ", ") .. "."
 end
 
+--- "All time: 60 crates' worth, 1st of 2 in the Empire." from standings.lifetime
+-- (every season, the same shape as top), or nil when this character has none.
+function WarLines.lifetimeLine(st, oid)
+	local block = st and type(st.standings) == "table" and st.standings.lifetime or nil
+	if type(block) ~= "table" then
+		return nil
+	end
+	local pos, n, e = WarLines.standingOf({ top = block }, oid)
+	if e == nil then
+		return nil
+	end
+	return "All time: " .. WarLines.pointsText(e.points) .. ", " .. WarLines.ordinal(pos) .. " of " .. tostring(n)
+		.. " in the " .. WarLines.side(e.faction) .. "."
+end
+
 --- "Counted this season: Empire 1 player, 30 crates' worth; Alliance 3 players, 54 crates' worth."
 function WarLines.countedLine(st)
 	if st == nil or type(st.standings) ~= "table" then

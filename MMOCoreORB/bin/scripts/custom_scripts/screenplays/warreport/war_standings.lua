@@ -30,10 +30,16 @@
   the twelve-hour intermission is still paid on their next login, and the
   numbers paid are final by construction (the window closed at the reset).
 
-  IDEMPOTENCE: the last season index paid is kept in screenplay state
-  (PAID_KEY) per character, written BEFORE the pay -- paying nobody twice
-  is worth more than paying everybody once -- and the log line says what
-  happened either way.
+  IDEMPOTENCE: the seasons paid are kept in screenplay state per character
+  as a BITMASK -- one bit per season, a key per block of 62 seasons -- and
+  the bit is set BEFORE the pay: paying nobody twice is worth more than
+  paying everybody once, and the log line says what happened either way.
+  Why a bitmask: CreatureObject:setScreenPlayState(value, key) does not
+  assign, it ORs the value into what is stored (LuaCreatureObject.cpp), and
+  removeScreenPlayState clears bits. The first build kept "the last season
+  index paid" there and compared with >=, which after seasons 1 and 2 reads
+  3 and skips season 3 -- every season whose index is not a power of two
+  would have gone unpaid, silently (verifier finding, 2026-09-06).
 
   POINTS ARE THE LEDGER'S: one point is one crate's worth (a crate donated,
   a crate carried, a body at a front). A rank (WarLines.rankTitle) is a
@@ -52,7 +58,8 @@ WarStandings.WIN_BONUS_CREDITS = 5000   -- on top, for a character counted on th
 WarStandings.WIN_BONUS_STANDING = 500
 WarStandings.MAX_CREDITS = 250000
 WarStandings.MAX_STANDING = 5000
-WarStandings.PAID_KEY = "war_season_paid" -- screenplay state: the last season index paid to this character
+WarStandings.PAID_KEY = "war_season_paid" -- screenplay state: one bit per season paid (see the header)
+WarStandings.SEASONS_PER_KEY = 62         -- bits 0..61 of a uint64; the key gets a block suffix past that
 WarStandings.TOP_LOGIN = 3
 WarStandings.TOP_OFFICER = 5
 
@@ -84,6 +91,30 @@ function WarStandings.payoutFor(st, oid)
 	}
 end
 
+--- Pure. The screenplay-state key and bit that mark one season paid.
+function WarStandings.paidKey(index)
+	local block = index // WarStandings.SEASONS_PER_KEY
+	if block == 0 then
+		return WarStandings.PAID_KEY
+	end
+	return WarStandings.PAID_KEY .. tostring(block)
+end
+
+function WarStandings.paidBit(index)
+	return 1 << (index % WarStandings.SEASONS_PER_KEY)
+end
+
+--- `creature` answers getScreenPlayState(key) / setScreenPlayState(bits, key)
+-- with the engine's OR semantics (a CreatureObject wrapper, or a stand-in).
+function WarStandings.isPaid(creature, index)
+	local stored = math.tointeger(tonumber(creature:getScreenPlayState(WarStandings.paidKey(index)))) or 0
+	return (stored & WarStandings.paidBit(index)) ~= 0
+end
+
+function WarStandings.markPaid(creature, index)
+	creature:setScreenPlayState(WarStandings.paidBit(index), WarStandings.paidKey(index))
+end
+
 --- The player's side in the export's vocabulary ("imperial"/"rebel"), or nil.
 function WarStandings.factionOf(pPlayer)
 	local hash = CreatureObject(pPlayer):getFaction()
@@ -112,11 +143,10 @@ function WarStandings.settle(pPlayer, st)
 		return false
 	end
 	local creature = CreatureObject(pPlayer)
-	local paid = tonumber(creature:getScreenPlayState(WarStandings.PAID_KEY)) or 0
-	if paid >= index then
+	if WarStandings.isPaid(creature, index) then
 		return false
 	end
-	creature:setScreenPlayState(index, WarStandings.PAID_KEY)
+	WarStandings.markPaid(creature, index)
 	local oid = SceneObject(pPlayer):getObjectID()
 	local pay = WarStandings.payoutFor(st, oid)
 	for _, line in ipairs(WarLines.seasonResultLines(st, oid, pay)) do
@@ -169,7 +199,12 @@ function WarStandings.officerLines(pPlayer, st)
 	end
 	local faction = WarStandings.factionOf(pPlayer)
 	if faction ~= nil then
-		lines[#lines + 1] = WarLines.ownStandingLine(st, faction, SceneObject(pPlayer):getObjectID())
+		local oid = SceneObject(pPlayer):getObjectID()
+		lines[#lines + 1] = WarLines.ownStandingLine(st, faction, oid)
+		local lifetime = WarLines.lifetimeLine(st, oid)
+		if lifetime ~= nil then
+			lines[#lines + 1] = lifetime
+		end
 		local top = WarLines.topLine(st, faction, WarStandings.TOP_OFFICER)
 		if top ~= nil then
 			lines[#lines + 1] = top

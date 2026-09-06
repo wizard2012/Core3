@@ -103,7 +103,15 @@ function WarContribCounter:add(characterId, points)
 	local creature = CreatureObject(pObj)
 	local currentCentipoints = creature:getScreenPlayState(WarContribCounter.STATE_KEY)
 	local addCentipoints = math.floor((pts * 100) + 0.5)
-	creature:setScreenPlayState(currentCentipoints + addCentipoints, WarContribCounter.STATE_KEY)
+	-- setScreenPlayState ORs the value into what is stored (LuaCreatureObject.cpp);
+	-- it does not assign. Clear the old value first, then set the new one --
+	-- found 2026-09-06 (slice 7 verifier); until then this total was an
+	-- OR-accumulation, not a sum, from its second add.
+	local current = math.tointeger(tonumber(currentCentipoints)) or 0
+	if current > 0 then
+		creature:removeScreenPlayState(current, WarContribCounter.STATE_KEY)
+	end
+	creature:setScreenPlayState(current + addCentipoints, WarContribCounter.STATE_KEY)
 end
 
 --- Lifetime total in points (fractional), for display. 0 for a character

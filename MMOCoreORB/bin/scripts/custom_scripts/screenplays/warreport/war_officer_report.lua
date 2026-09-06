@@ -171,11 +171,17 @@ end
 function WarOfficerReportMenuComponent:sendReport(pPlayer, pOfficer)
 	local creature = CreatureObject(pPlayer)
 
-	local totalText = "0.00"
-	if WarContribCounter ~= nil then
-		totalText = WarContribCounter:formatTotal(pPlayer)
+	-- Slice 7: the lifetime line comes from the export's standings (the
+	-- ledger's own numbers, WarStandings.officerLines below); the game-side
+	-- running counter is the fallback for an export without them.
+	local st0 = (WarReport ~= nil and WarReport.state ~= nil) and WarReport.state() or nil
+	if not (st0 ~= nil and type(st0.standings) == "table" and WarStandings ~= nil) then
+		local totalText = "0.00"
+		if WarContribCounter ~= nil then
+			totalText = WarContribCounter:formatTotal(pPlayer)
+		end
+		creature:sendSystemMessage("Your war contribution (lifetime): " .. totalText .. " points.")
 	end
-	creature:sendSystemMessage("Your war contribution (lifetime): " .. totalText .. " points.")
 	-- Slice 3 (DESIGN-WAR-V2 4.4): the full report, galaxy-wide, then what
 	-- a player can do at this town, with the sim's numbers.
 	local st = (WarReport ~= nil and WarReport.state ~= nil) and WarReport.state() or nil
