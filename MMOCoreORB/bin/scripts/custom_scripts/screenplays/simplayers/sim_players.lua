@@ -610,7 +610,8 @@ local function enterCourier(sim, st, idx, regionId)
 		ok, why = WarContrib.record(sim.faction, regionId, "materiel_delivery", crates, 0)
 	end
 	if ok then
-		printf(string.format("SimPlayers: %s delivered %s crate(s) at %s (courier run)\n", sim.name, tostring(crates), regionId))
+		local shown = (math.tointeger(crates) ~= nil) and tostring(math.tointeger(crates)) or string.format("%.1f", crates)
+		printf(string.format("SimPlayers: %s delivered %s crate(s) at %s (courier run)\n", sim.name, shown, regionId))
 		if p ~= nil then
 			say(p, SimVoice.delivered(sim, { dest = regionName(regionId) }, now()))
 		end
