@@ -635,3 +635,46 @@ function Tests:warSiteDistanceCheck()
 	end
 	printf("WARSITEDIST: end\n")
 end
+
+--- test warReadoutsRender (B33 slice 3): every surface's lines from the
+-- live state -- the galaxy report, every pin, the arrival lines and the
+-- actions at every front, and the transitions the announcer would send
+-- next (a dry run: the snapshot is read, not written).
+function Tests:warReadoutsRender()
+	printf("WARREADOUTS: begin\n")
+	local ok, err = pcall(function()
+		local st = (WarReport ~= nil and WarReport.state ~= nil) and WarReport.state() or nil
+		if st == nil or WarLines == nil then
+			printf("WARREADOUTS: no war state or no WarLines on this thread\n")
+			return
+		end
+		for _, line in ipairs(WarLines.report(st, nil, true)) do
+			printf("WARREADOUTS: report | " .. line .. "\n")
+		end
+		local ids = {}
+		for id, _ in pairs(st.regions) do ids[#ids + 1] = id end
+		table.sort(ids)
+		for _, id in ipairs(ids) do
+			printf("WARREADOUTS: pin | " .. WarLines.pin(st, id) .. "\n")
+		end
+		for _, fr in ipairs(st.fronts or {}) do
+			for _, line in ipairs(WarLines.arrival(st, fr.region)) do
+				printf("WARREADOUTS: arrival " .. tostring(fr.region) .. " | " .. line .. "\n")
+			end
+			for _, line in ipairs(WarLines.actions(st, fr.region)) do
+				printf("WARREADOUTS: action " .. tostring(fr.region) .. " | " .. line .. "\n")
+			end
+		end
+		local key = (WarAnnounce ~= nil and WarAnnounce.SNAPSHOT_KEY) or "warannounce:snapshot"
+		local last = WarLines.unpackSnapshot(readStringData(key))
+		local lines, snap = WarLines.transitions(st, last)
+		printf("WARREADOUTS: transitions pending=" .. #lines .. " last=" .. tostring(last ~= nil) .. " snapshot=" .. WarLines.packSnapshot(snap) .. "\n")
+		for _, line in ipairs(lines) do
+			printf("WARREADOUTS: transition | " .. line .. "\n")
+		end
+	end)
+	if not ok then
+		printf("WARREADOUTS: failed: " .. tostring(err) .. "\n")
+	end
+	printf("WARREADOUTS: end\n")
+end

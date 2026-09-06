@@ -205,6 +205,37 @@ function WarAnnounce:supplyDispatch(tick)
 	end
 end
 
+--- Slice 3 (DESIGN-WAR-V2 4.5): a siege begun or lifted, an offensive
+-- declared, a season won, a new season begun are CHANGES of state rather
+-- than events the exporter lists, so the announcer keeps the last snapshot
+-- in shared string data (the one place every thread reads) and says what
+-- moved. The first run after a boot records the snapshot and says nothing,
+-- exactly claim()'s first-tick rule.
+WarAnnounce.SNAPSHOT_KEY = "warannounce:snapshot"
+WarAnnounce.TRANSITION_MAX_LINES = 4
+
+function WarAnnounce:transitionDispatch(tick)
+	if WarLines == nil or WarLines.transitions == nil or WarReport == nil or WarReport.state == nil then
+		return
+	end
+	local st = WarReport.state()
+	if st == nil or type(st.factions) ~= "table" then
+		return
+	end
+	local last = WarLines.unpackSnapshot(readStringData(WarAnnounce.SNAPSHOT_KEY))
+	local lines, snap = WarLines.transitions(st, last)
+	writeStringData(WarAnnounce.SNAPSHOT_KEY, WarLines.packSnapshot(snap))
+	for i = 1, math.min(#lines, WarAnnounce.TRANSITION_MAX_LINES) do
+		local line = lines[i]
+		local ok, err = pcall(function() broadcastToGalaxy(nil, line) end)
+		if ok then
+			printf("WarAnnounce: transition tick=" .. tostring(tick) .. " :: " .. line .. "\n")
+		else
+			printf("WarAnnounce: transition broadcast FAILED: " .. tostring(err) .. "\n")
+		end
+	end
+end
+
 function WarAnnounce:run()
 	if WAR_FLIPS == nil or type(WAR_FLIPS) ~= "table" then
 		return -- no flip file yet; nothing to say
@@ -229,6 +260,7 @@ function WarAnnounce:run()
 	-- whole point of telling players their push registered.
 	pcall(function() WarAnnounce:dispatch(tick) end)
 	pcall(function() WarAnnounce:supplyDispatch(tick) end)
+	pcall(function() WarAnnounce:transitionDispatch(tick) end)
 
 	if #flips == 0 then
 		return -- tick claimed, dispatch sent, nothing changed hands this time

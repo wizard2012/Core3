@@ -218,18 +218,37 @@ function WarOfficer:briefEntered(pArea, pPlayer)
 			spatialChat(pNpc, headline)
 		end
 
-		-- Sent privately: the detail.
+		-- Sent privately: the detail. Slice 3 (DESIGN-WAR-V2 4.3/4.4): the
+		-- report for this planet (the headline was spoken), then what a
+		-- player can do at this town. The old shape stays for an export
+		-- without a factions block.
 		local creature = CreatureObject(pPlayer)
-		local front = WarReport.frontLine()
-		if front ~= nil then
-			creature:sendSystemMessage(front)
-		end
-
-		if regionId ~= nil and regionId ~= "" then
-			local planet = WarReport.PLANET_OF[regionId]
-			local lines = WarReport.planetLines(planet)
+		local st = WarReport.state()
+		local planet = (regionId ~= nil and regionId ~= "") and WarReport.PLANET_OF[regionId] or nil
+		if WarLines ~= nil and WarLines.report ~= nil and st ~= nil and type(st.factions) == "table" then
+			local lines = WarLines.report(st, planet, false)
 			for i = 1, #lines do
-				creature:sendSystemMessage("  " .. lines[i])
+				if lines[i] ~= headline then
+					creature:sendSystemMessage(lines[i])
+				end
+			end
+			local acts = (regionId ~= nil and regionId ~= "") and WarLines.actions(st, regionId) or {}
+			if #acts > 0 then
+				creature:sendSystemMessage("What you can do here:")
+				for i = 1, #acts do
+					creature:sendSystemMessage("  " .. acts[i])
+				end
+			end
+		else
+			local front = WarReport.frontLine()
+			if front ~= nil then
+				creature:sendSystemMessage(front)
+			end
+			if planet ~= nil then
+				local lines = WarReport.planetLines(planet)
+				for i = 1, #lines do
+					creature:sendSystemMessage("  " .. lines[i])
+				end
 			end
 		end
 	end)

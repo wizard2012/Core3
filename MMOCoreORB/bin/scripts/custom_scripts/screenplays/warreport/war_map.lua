@@ -217,6 +217,11 @@ end
 --- Full plain-text label for one region, e.g.
 --   "Doaba Guerfel (Rebel) Skirmish | Supply: degraded ~50"
 function WarMap:labelFor(regionId, region)
+	-- Slice 3: section 4.1's line, identical to the planetary map pin's
+	-- (war_map_pins.lua), so radar and map never disagree.
+	if WarLines ~= nil and WarLines.pin ~= nil and WarLines.isSupply ~= nil and WarLines.isSupply(region) then
+		return WarLines.pin(WarReport.state(), regionId)
+	end
 	local name = WarReport.regionName(regionId)
 	local adjective = WarReport.factionAdjective(region.faction)
 	local tier = WarMap:contestTier(region.contest)

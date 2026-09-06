@@ -192,9 +192,20 @@ function WarPresence:onEnteredArea(pArea, pCreature)
 			CreatureObject(pCreature):sendSystemMessage(WarVoice.held(name, r and r.faction or nil))
 		end
 
+		-- Slice 3 (DESIGN-WAR-V2 4.2): crates, road, time to fall and the
+		-- call to action, from war_lines.lua. The old supply line stays for
+		-- an export without crates.
+		local said = false
+		if r ~= nil and WarLines ~= nil and WarLines.arrival ~= nil and WarLines.isSupply(r) then
+			local lines = WarLines.arrival(st, regionId)
+			for i = 1, #lines do
+				CreatureObject(pCreature):sendSystemMessage(lines[i])
+				said = true
+			end
+		end
 		-- Supply visibility (owner ruling 2026-09-04): the sim has always
 		-- known when a line is cut; this is the first time the ground says so.
-		if r ~= nil and WarVoice ~= nil and WarVoice.supply ~= nil then
+		if not said and r ~= nil and WarVoice ~= nil and WarVoice.supply ~= nil then
 			local line = WarVoice.supply(name, r.supply_status)
 			if line ~= nil then
 				CreatureObject(pCreature):sendSystemMessage(line)

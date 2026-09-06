@@ -25,6 +25,10 @@ includeFile("../custom_scripts/screenplays/population/street_probe.lua")
 -- war_voice.lua first: every player-facing war string lives there, and
 -- three later modules (tally, presence, announce) read it.
 includeFile("../custom_scripts/screenplays/warreport/war_voice.lua")
+-- war_lines.lua: the Supply War's line shapes (DESIGN-WAR-V2 section 4), pure,
+-- used by war_report/war_map/war_map_pins/war_presence/war_login/war_officer*
+-- and war_announce below. Nothing runs at include time.
+includeFile("../custom_scripts/screenplays/warreport/war_lines.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_contrib.lua")
 -- Must load right after war_contrib.lua: it wraps WarContrib.record, and
 -- that wrap must be (re)installed every time war_contrib.lua's own

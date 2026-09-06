@@ -109,6 +109,24 @@ function WarReportLogin:sendReport(pPlayer)
 
 		local creature = CreatureObject(pPlayer)
 
+		-- Only the planet the player is actually standing on. A galaxy-wide
+		-- dump every login is the "loading screen" failure this design was
+		-- explicitly warned about.
+		local zoneName = SceneObject(pPlayer):getZoneName()
+
+		-- Slice 3 (DESIGN-WAR-V2 4.3): the report on section 4's lines --
+		-- day, who is winning by reserve, roads into the capitals, the
+		-- fronts, then this planet's towns. The old shape stays for an
+		-- export without a factions block.
+		local st = WarReport.state()
+		if WarLines ~= nil and WarLines.report ~= nil and st ~= nil and type(st.factions) == "table" then
+			local lines = WarLines.report(st, zoneName, false)
+			for i = 1, #lines do
+				creature:sendSystemMessage(lines[i])
+			end
+			return
+		end
+
 		local headline = WarReport.headline()
 		if headline == nil then
 			return
@@ -122,10 +140,6 @@ function WarReportLogin:sendReport(pPlayer)
 			creature:sendSystemMessage(front)
 		end
 
-		-- Only the planet the player is actually standing on. A galaxy-wide
-		-- dump every login is the "loading screen" failure this design was
-		-- explicitly warned about.
-		local zoneName = SceneObject(pPlayer):getZoneName()
 		local lines = WarReport.planetLines(zoneName)
 		if #lines > 0 then
 			creature:sendSystemMessage("On " .. WarReport.planetName(zoneName) .. ":")

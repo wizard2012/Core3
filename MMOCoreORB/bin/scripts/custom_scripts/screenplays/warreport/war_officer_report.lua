@@ -142,7 +142,7 @@ function WarOfficerReportMenuComponent:handleObjectMenuSelect(pSceneObject, pPla
 	end
 
 	if selectedID == 20 then
-		pcall(function() WarOfficerReportMenuComponent:sendReport(pPlayer) end)
+		pcall(function() WarOfficerReportMenuComponent:sendReport(pPlayer, pSceneObject) end)
 	end
 
 	return 0
@@ -152,7 +152,23 @@ end
 -- (Gap 1) followed by the front-scoped supply overview (Gap 2). Both are
 -- plain sendSystemMessage() calls -- see war_report.lua's own header on why
 -- that, and not a new UI screen, is the only option here.
-function WarOfficerReportMenuComponent:sendReport(pPlayer)
+--- The officer's own region: the post whose shared-memory NPC id is this
+-- officer (war_officer.lua's spawnPost writes warofficer:npc:<region>).
+function WarOfficerReportMenuComponent:regionOf(pOfficer)
+	if pOfficer == nil or WarOfficer == nil or WarOfficer.POSTS == nil then
+		return nil
+	end
+	local oid = SceneObject(pOfficer):getObjectID()
+	for i = 1, #WarOfficer.POSTS do
+		local region = WarOfficer.POSTS[i].region
+		if readSharedMemory("warofficer:npc:" .. region) == oid then
+			return region
+		end
+	end
+	return nil
+end
+
+function WarOfficerReportMenuComponent:sendReport(pPlayer, pOfficer)
 	local creature = CreatureObject(pPlayer)
 
 	local totalText = "0.00"
@@ -160,6 +176,23 @@ function WarOfficerReportMenuComponent:sendReport(pPlayer)
 		totalText = WarContribCounter:formatTotal(pPlayer)
 	end
 	creature:sendSystemMessage("Your war contribution (lifetime): " .. totalText .. " points.")
+	-- Slice 3 (DESIGN-WAR-V2 4.4): the full report, galaxy-wide, then what
+	-- a player can do at this town, with the sim's numbers.
+	local st = (WarReport ~= nil and WarReport.state ~= nil) and WarReport.state() or nil
+	if WarLines ~= nil and WarLines.report ~= nil and st ~= nil and type(st.factions) == "table" then
+		local lines = WarLines.report(st, nil, true)
+		for i = 1, #lines do
+			creature:sendSystemMessage(lines[i])
+		end
+		local region = WarOfficerReportMenuComponent:regionOf(pOfficer)
+		local acts = (region ~= nil) and WarLines.actions(st, region) or {}
+		if #acts > 0 then
+			creature:sendSystemMessage("What you can do here:")
+			for i = 1, #acts do
+				creature:sendSystemMessage("  " .. acts[i])
+			end
+		end
+	end
 
 	if WarReport ~= nil and WarReport.supplyOverview ~= nil then
 		local lines = WarReport.supplyOverview()

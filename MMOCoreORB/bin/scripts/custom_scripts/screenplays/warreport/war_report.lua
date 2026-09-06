@@ -31,6 +31,13 @@
   the war state is missing or malformed. A player must never see a Lua error
   or a half-rendered sentence because the sim has not run yet. Callers treat
   nil as "say nothing at all".
+
+  SLICE 3 (DESIGN-WAR-V2 section 4, 2026-09-06): the LINE SHAPES moved to
+  war_lines.lua (WarLines), which is pure and tested headlessly
+  (bridge/tests/t_readouts.lua). This file keeps the state accessor, the
+  names, the geometry, and the entry points older callers use -- headline()
+  is now the days-of-reserve line, regionLine() the section-4.3 town line --
+  so no caller had to change to start speaking crates.
 ]]
 
 WarReport = WarReport or {}
@@ -73,8 +80,9 @@ WarReport.PLANET_NAME = {
 -- Deliberately NOT "Imperial"/"Rebel" as bare adjectives -- these strings are
 -- dropped into sentences by four different callers and the article matters.
 function WarReport.factionName(faction)
+	-- "the Alliance", not "the Rebellion": section 4's vocabulary (2026-09-06).
 	if faction == "rebel" then
-		return "the Rebellion"
+		return "the Alliance"
 	elseif faction == "imperial" then
 		return "the Empire"
 	end
@@ -226,7 +234,17 @@ function WarReport.frontRegions(threshold)
 end
 
 --- One-line strategic summary, or nil if the war state is unavailable.
+-- Slice 3: "Empire: 19 days of supply. Alliance: 11 days." -- who is
+-- winning, from the reserves; the old holdings count only for an export
+-- without a factions block.
 function WarReport.headline()
+	local st = WarReport.state()
+	if st ~= nil and type(st.factions) == "table" and WarLines ~= nil and WarLines.reserveLine ~= nil then
+		local line = WarLines.reserveLine(st)
+		if line ~= nil then
+			return line
+		end
+	end
 	local t = WarReport.tally()
 	if t == nil or t.total == 0 then
 		return nil
@@ -280,6 +298,10 @@ function WarReport.regionLine(regionId)
 	if r == nil then
 		return nil
 	end
+	-- Slice 3: section 4.3's town line (war_lines.lua handles schema 3 too).
+	if WarLines ~= nil and WarLines.townLine ~= nil then
+		return WarLines.townLine(st, regionId)
+	end
 
 	local line = WarReport.regionName(regionId) .. " -- held by " .. WarReport.factionName(r.faction)
 
@@ -322,7 +344,8 @@ function WarReport.planetLines(planetId)
 	local ids = WarReport.regionIds()
 	for i = 1, #ids do
 		local id = ids[i]
-		if WarReport.PLANET_OF[id] == planetId then
+		local planetOfId = (WarLines ~= nil and WarLines.planetOf ~= nil) and WarLines.planetOf(id) or WarReport.PLANET_OF[id]
+		if planetOfId == planetId then
 			local line = WarReport.regionLine(id)
 			if line ~= nil then
 				out[#out + 1] = line

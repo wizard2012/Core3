@@ -87,6 +87,11 @@ function WarMapPins.label(regionId)
 	if r == nil then
 		return name .. ": no report"
 	end
+	-- Slice 3: section 4.1's line (crates and trend, road, time to fall);
+	-- the radar overlay (war_map.lua) draws the same string.
+	if WarLines ~= nil and WarLines.pin ~= nil and WarLines.isSupply ~= nil and WarLines.isSupply(r) then
+		return WarLines.pin(st, regionId)
+	end
 	-- "Imperial-held", not "the Empire-held": the adjective, not the noun.
 	local holder = (WarReport ~= nil and WarReport.factionAdjective ~= nil) and WarReport.factionAdjective(r.faction) or tostring(r.faction)
 	local supply = tostring(r.supply_status or "unknown")
