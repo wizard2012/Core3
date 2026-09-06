@@ -729,7 +729,10 @@ function WarBattle.fronts()
 		for i = 1, #st.fronts do
 			local f = st.fronts[i]
 			local r = f ~= nil and st.regions[f.region] or nil
-			if r ~= nil and r.faction ~= nil then
+			-- A front whose attacker already holds the town (the tick the
+			-- town fell; the exporter drops these since 2026-09-06) is no
+			-- fight: never stage a side against its own garrison.
+			if r ~= nil and r.faction ~= nil and f.attacker ~= r.faction then
 				local intensity = tonumber(f.intensity) or 0
 				out[#out + 1] = {
 					id = f.region, faction = r.faction, attacker = f.attacker, staging = f.staging,
