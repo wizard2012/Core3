@@ -679,12 +679,49 @@ function Tests:warReadoutsRender()
 	printf("WARREADOUTS: end\n")
 end
 
+--- test warSitesCheck: how many sites each live front is assaulted at, and
+-- where each fresh site would stand (the ring point, or the navmesh point
+-- walkableOrigin moves it to). Read-only.
+function Tests:warSitesCheck()
+	printf("WARSITES: begin\n")
+	local ok, err = pcall(function()
+		local st = (WarReport ~= nil and WarReport.state ~= nil) and WarReport.state() or nil
+		if st == nil or WarBattle == nil or WarBattle.sitesWanted == nil then
+			printf("WARSITES: no war state or no WarBattle.sitesWanted on this thread\n")
+			return
+		end
+		printf("WARSITES: alive combatants=" .. tostring(WarBattle.aliveCombatants()) .. " budget=" .. tostring(WarBattle.TOTAL_NPC_BUDGET) .. "\n")
+		for _, f in ipairs(WarBattle.fronts()) do
+			local r = st.regions[f.id]
+			local besieged = r ~= nil and r.is_capital == true and type(r.siege) == "table" and r.siege.active == true
+			local wanted = WarBattle.sitesWanted(f, besieged)
+			local coords = WarReport.COORDS[f.id]
+			local zone = WarReport.PLANET_OF[f.id]
+			printf(string.format("WARSITES: %s intensity=%.2f offensive=%s besieged=%s -> %d site(s)\n",
+				tostring(f.id), tonumber(f.intensity) or 0, tostring(f.offensive), tostring(besieged), wanted))
+			if coords ~= nil and zone ~= nil then
+				for s = 1, wanted do
+					local rx, ry = WarBattle.siteOrigin(coords, f.id, s, wanted, s == 1)
+					local wx, wy = WarBattle.walkableOrigin(zone, coords, f.id, s, wanted, s == 1)
+					local moved = (math.abs(rx - wx) > 0.5 or math.abs(ry - wy) > 0.5)
+					printf(string.format("WARSITES:   site %d ring=(%.0f, %.0f)%s\n", s, rx, ry,
+						moved and string.format(" -> moved to (%.0f, %.0f)", wx, wy) or ""))
+				end
+			end
+		end
+	end)
+	if not ok then
+		printf("WARSITES: failed: " .. tostring(err) .. "\n")
+	end
+	printf("WARSITES: end\n")
+end
+
 --- test warAllCheck: every readout probe in one console command, each in its
 -- own pcall so one failing cannot hide the others. Grep WARALL for the
 -- summary, then the probe's own marker for its lines.
 function Tests:warAllCheck()
 	printf("WARALL: begin\n")
-	local probes = { "warReadoutsRender", "warStandingsCheck", "warOrdersCheck", "warDigestCheck", "warSquadProbe" }
+	local probes = { "warReadoutsRender", "warStandingsCheck", "warOrdersCheck", "warDigestCheck", "warSquadProbe", "warSitesCheck" }
 	for _, name in ipairs(probes) do
 		local fn = Tests[name]
 		if type(fn) ~= "function" then

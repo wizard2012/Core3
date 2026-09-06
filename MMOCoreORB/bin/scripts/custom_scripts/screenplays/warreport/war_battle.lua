@@ -661,7 +661,10 @@ function WarBattle.walkableOrigin(zone, coords, regionId, siteIndex, totalSites,
 		turns = readData("warbattle:siteturn:" .. tostring(regionId)) or 0
 	end
 	local base = 45 + (siteIndex - 1) * (360 / totalSites) + turns * WarBattle.SITE_TURN_DEG
-	local rings = { { radius, { 1, -1, 2, -2 } }, { radius * 0.75, { 0, 1, -1, 2, -2 } }, { radius * 0.5, { 0, 1, -1, 2, -2 } } }
+	-- At most one SITE_TURN_DEG either way: two neighbouring bearings (90
+	-- degrees apart at four sites) moved toward each other still keep a
+	-- formup area's diameter between them (verifier, 2026-09-06).
+	local rings = { { radius, { 1, -1 } }, { radius * 0.75, { 0, 1, -1 } }, { radius * 0.5, { 0, 1, -1 } } }
 	for _, ring in ipairs(rings) do
 		local r = ring[1]
 		for _, k in ipairs(ring[2]) do
@@ -677,6 +680,25 @@ function WarBattle.walkableOrigin(zone, coords, regionId, siteIndex, totalSites,
 	printf(string.format("WarBattle: %s site %d -- no meshed point near its bearing; staging on the ring anyway\n",
 		tostring(regionId), siteIndex))
 	return ox, oy
+end
+
+--- The war's combatants alive right now (the tracked roster, minus the
+-- dead and the despawned). TOTAL_NPC_BUDGET is charged against this, not
+-- only against a cycle's fresh spawns: held sites debit nothing when they
+-- persist, and with several sites a front three cycles could otherwise
+-- stack 288 alive (verifier, 2026-09-06).
+function WarBattle.aliveCombatants()
+	local n = 0
+	for _, oid in ipairs(trackedOids()) do
+		local p = getSceneObject(oid)
+		if p ~= nil then
+			local ok, dead = pcall(function() return CreatureObject(p):isDead() end)
+			if ok and dead == false then
+				n = n + 1
+			end
+		end
+	end
+	return n
 end
 
 function WarBattle:clear()
@@ -795,17 +817,6 @@ function WarBattle.fronts()
 		return out
 	end
 	return WarReport.frontRegions(WarBattle.MIN_CONTEST)
-end
-
---- Sites a front earns: two at intensity >= FRONT_TWO_SITES_INTENSITY, else
--- one (owner ruling 2026-09-05: every front gets a fight; the hottest get
--- two). Legacy contest-ranked fronts keep the old tiering.
-WarBattle.FRONT_TWO_SITES_INTENSITY = 0.5
-local function sitesForFront(front)
-	if front.intensity ~= nil then
-		return (front.intensity >= WarBattle.FRONT_TWO_SITES_INTENSITY) and 2 or 1
-	end
-	return sitesForContest(front.contest)
 end
 
 --- Sites a front is assaulted at, each a full line per side on its own
@@ -2062,9 +2073,11 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 	end
 
 
-	local npcBudgetLeft = WarBattle.TOTAL_NPC_BUDGET
+	local alreadyAlive = WarBattle.aliveCombatants()
+	local npcBudgetLeft = math.max(0, WarBattle.TOTAL_NPC_BUDGET - alreadyAlive)
 	-- Slice A: a site costs a line per side; the offensive front's line is
 	-- longer. perSiteCost is the floor used for the "any budget left" break.
+	-- The budget is what is left after the combatants already alive.
 	local perSiteCost = WarBattle.LINE_SIZE * 2
 	-- Reap the proximity/presence areas the PREVIOUS cycle spawned, before
 	-- staging fresh ones. WarSquad.attachSite() used to be called every cycle
@@ -2119,7 +2132,17 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 			local regionSitesStaged = 0
 			local regionHeldSlots = 0
 			stagedRegions[regionId] = true
-			for s = 1, wanted do
+			-- A held slot above the current site count (the front cooled) is
+			-- still a live fight: it keeps its formup area and its waves until
+			-- it resolves or ages out; only FRESH sites stop at `wanted`.
+			local highest = wanted
+			for k, _ in pairs(heldSites) do
+				local rid, idx = string.match(k, "^(.-):(%d+)$")
+				if rid == regionId and tonumber(idx) ~= nil and tonumber(idx) > highest then
+					highest = tonumber(idx)
+				end
+			end
+			for s = 1, highest do
 				local slotKey = regionId .. ":" .. tostring(s)
 
 				local held = heldSites[slotKey]
@@ -2179,7 +2202,7 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 							printf("WarBattle: reinforceSite failed: " .. tostring(waved) .. "\n")
 						end
 					end
-				elseif npcBudgetLeft >= siteCost then
+				elseif s <= wanted and npcBudgetLeft >= siteCost then
 
 				local isRecruiterAnchor = (not primaryRegionWritten) and (s == 1)
 				local ox, oy = WarBattle.walkableOrigin(zone, coords, regionId, s, wanted, isRecruiterAnchor)
@@ -2221,9 +2244,9 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 			end
 
 			printf(string.format(
-				"WarBattle: %s (%s) contest=%.2f holder=%s -- %d/%d site(s) staged, budget left=%d\n",
+				"WarBattle: %s (%s) contest=%.2f holder=%s -- %d/%d site(s) staged, budget left=%d (alive before this cycle %d)\n",
 				tostring(regionId), tostring(zone), front[r].contest or 0, tostring(holder),
-				regionSitesStaged, wanted, npcBudgetLeft))
+				regionSitesStaged, wanted, npcBudgetLeft, alreadyAlive))
 		end
 
 		if npcBudgetLeft < perSiteCost then
