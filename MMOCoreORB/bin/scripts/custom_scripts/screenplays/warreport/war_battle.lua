@@ -1986,14 +1986,6 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 		return 0, 0
 	end
 
-	if WarBattle.ceasefire(WarReport.state()) then
-		return 0, 0
-	end
-	local front = WarBattle.fronts()
-	if #front == 0 then
-		printf("WarBattle: the war reports no fronts -- nothing to stage\n")
-		return 0, 0
-	end
 
 	local npcBudgetLeft = WarBattle.TOTAL_NPC_BUDGET
 	-- Slice A: a site costs a line per side; the offensive front's line is
@@ -2010,6 +2002,17 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 	end
 	if WarPresence ~= nil and WarPresence.clear ~= nil then
 		pcall(function() WarPresence.clear() end)
+	end
+	-- Slice 4: the season-end ceasefire, after the cycle's formup and
+	-- presence areas are cleared -- (verifier, 2026-09-06: the areas are cleared first
+	-- so nothing of the last cycle lingers through the intermission).
+	if WarBattle.ceasefire(WarReport.state()) then
+		return 0, 0
+	end
+	local front = WarBattle.fronts()
+	if #front == 0 then
+		printf("WarBattle: the war reports no fronts -- nothing to stage\n")
+		return 0, 0
 	end
 
 	local sitesStaged, npcsSpawned = 0, 0

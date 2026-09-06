@@ -11,6 +11,7 @@
 #include "templates/customization/AssetCustomizationManagerTemplate.h"
 #include "templates/appearance/PaletteTemplate.h"
 #include "server/zone/objects/player/FactionStatus.h"
+#include "server/zone/objects/resource/ResourceContainer.h"
 
 const char LuaTangibleObject::className[] = "LuaTangibleObject";
 
@@ -55,6 +56,9 @@ Luna<LuaTangibleObject>::RegType LuaTangibleObject::Register[] = {
 		{ "isBroken", &LuaTangibleObject::isBroken},
 		{ "isSliced", &LuaTangibleObject::isSliced},
 		{ "isNoTrade", &LuaTangibleObject::isNoTrade},
+		{ "isResourceContainer", &LuaTangibleObject::isResourceContainer},
+		{ "getResourceQuantity", &LuaTangibleObject::getResourceQuantity},
+		{ "getResourceSpawnName", &LuaTangibleObject::getResourceSpawnName},
 		{ "getMainDefender", &LuaTangibleObject::getMainDefender},
 		{ "getConditionDamage", &LuaTangibleObject::getConditionDamage},
 		{ "getMaxCondition", &LuaTangibleObject::getMaxCondition},
@@ -425,6 +429,49 @@ int LuaTangibleObject::isNoTrade(lua_State* L){
 	bool noTrade = realObject->isNoTrade();
 
 	lua_pushboolean(L, noTrade);
+
+	return 1;
+}
+
+/**
+ * Supply War slice 5 (raw-resource donation, custom_scripts/screenplays/
+ * warreport/war_donate.lua): nothing reachable from Lua could tell a resource
+ * container from any other tangible, let alone read its quantity. Three
+ * read-only accessors; the container is not locked (reads, like the other
+ * getters here).
+ */
+int LuaTangibleObject::isResourceContainer(lua_State* L) {
+	lua_pushboolean(L, realObject->isResourceContainer());
+
+	return 1;
+}
+
+int LuaTangibleObject::getResourceQuantity(lua_State* L) {
+	int quantity = 0;
+
+	if (realObject->isResourceContainer()) {
+		ResourceContainer* container = cast<ResourceContainer*>(realObject);
+
+		if (container != nullptr)
+			quantity = container->getQuantity();
+	}
+
+	lua_pushinteger(L, quantity);
+
+	return 1;
+}
+
+int LuaTangibleObject::getResourceSpawnName(lua_State* L) {
+	String name = "";
+
+	if (realObject->isResourceContainer()) {
+		ResourceContainer* container = cast<ResourceContainer*>(realObject);
+
+		if (container != nullptr)
+			name = container->getSpawnName();
+	}
+
+	lua_pushstring(L, name.toCharArray());
 
 	return 1;
 }

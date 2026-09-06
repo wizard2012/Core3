@@ -186,6 +186,17 @@ WarDonate.MAX_POINTS_PER_ITEM = 15.0
 -- inventory -- donate again for another batch).
 WarDonate.MAX_ITEMS_PER_DONATION = 5
 
+-- Supply War slice 5 (DESIGN-WAR-V2 2.4, "raw resource donation"): a
+-- resource container is eligible from RESOURCE_MIN_UNITS and worth one
+-- crate per UNITS_PER_CRATE (the design's 1 per 500), capped by
+-- MAX_POINTS_PER_ITEM like everything else, so a 100k stack is a full
+-- donation and no more. Junk resources are as good as fine ones -- the
+-- design took "no minimum quality, low rate" (8, second bullet). Needs
+-- TangibleObject:isResourceContainer / getResourceQuantity (C++, 2026-09-06);
+-- without them a resource container simply stays ineligible.
+WarDonate.RESOURCE_MIN_UNITS = 500
+WarDonate.UNITS_PER_CRATE = 500
+
 -- Minimum time between two SUCCESSFULLY RECORDED donations from the same
 -- player. Only ever armed when WarContrib.record actually returns true --
 -- see confirmDonation. Belt-and-braces per-player throttle, not a
@@ -195,7 +206,7 @@ WarDonate.DONATE_COOLDOWN_MS = 5 * 60 * 1000
 
 WarDonate.SOURCE = "materiel_donation"
 
-WarDonate.DONATE_OPTION_TEXT = "Donate crafted goods to the war effort."
+WarDonate.DONATE_OPTION_TEXT = "Donate crafted goods or resources to the war effort."
 
 -- The two real screens added to mobile/conversations/recruiter/
 -- {rebel,imperial}_recruiter_conv.lua for this feature.
@@ -272,6 +283,17 @@ function WarDonate:isEligible(pItem)
 	local sceno = SceneObject(pItem)
 	local tano = TangibleObject(pItem)
 
+	-- Raw resources (slice 5): quantity is the only thing that matters.
+	if tano.isResourceContainer ~= nil and tano:isResourceContainer() then
+		if tano:isNoTrade() then
+			return false, "no_trade"
+		end
+		if (tano:getResourceQuantity() or 0) < WarDonate.RESOURCE_MIN_UNITS then
+			return false, "resource_too_small"
+		end
+		return true, "resource"
+	end
+
 	-- Never destroy a container with something still inside it.
 	if sceno:getContainerObjectsSize() ~= 0 then
 		return false, "container"
@@ -317,7 +339,16 @@ end
 --- Quality-weighted points for one already-eligible item. Callers must
 -- check isEligible first -- this does not repeat those checks, only prices.
 function WarDonate:pointsFor(pItem)
-	local maxCondition = TangibleObject(pItem):getMaxCondition()
+	local tano = TangibleObject(pItem)
+	if tano.isResourceContainer ~= nil and tano:isResourceContainer() then
+		local units = tano:getResourceQuantity() or 0
+		local crates = units / WarDonate.UNITS_PER_CRATE
+		if crates > WarDonate.MAX_POINTS_PER_ITEM then
+			crates = WarDonate.MAX_POINTS_PER_ITEM
+		end
+		return crates
+	end
+	local maxCondition = tano:getMaxCondition()
 	local points = maxCondition * WarDonate.POINTS_PER_CONDITION_POINT
 
 	if points > WarDonate.MAX_POINTS_PER_ITEM then

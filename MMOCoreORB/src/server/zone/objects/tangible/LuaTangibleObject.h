@@ -65,6 +65,9 @@ namespace tangible {
 		int isBroken(lua_State* L);
 		int isSliced(lua_State* L);
 		int isNoTrade(lua_State* L);
+		int isResourceContainer(lua_State* L);
+		int getResourceQuantity(lua_State* L);
+		int getResourceSpawnName(lua_State* L);
 		int getMainDefender(lua_State* L);
 		int getConditionDamage(lua_State* L);
 		int getMaxCondition(lua_State* L);

@@ -116,6 +116,17 @@ function SimVoice.arriveFight(sim, ctx, salt)
 end
 
 -- -------------------------------------------------------------- cloned ----
+SimVoice.DELIVERED = {
+	"Crates for {dest}. Signed, sealed, and nobody shot me on the way. Today.",
+	"{dest} eats tonight. One run, one crate -- it adds up.",
+	"Supply run done. If {enemy} wants {dest} they can come and take it.",
+	"That's the crate for {dest} handed in. The road was quiet. Too quiet.",
+}
+
+function SimVoice.delivered(sim, ctx, salt)
+	return fill(pick(SimVoice.DELIVERED, sim.id .. ":deliver:" .. tostring(salt)), SimVoice.context(sim, ctx))
+end
+
 SimVoice.CLONED = {
 	"Woke up in a clone tank at {dest}. Again. It never gets better.",
 	"Back from the dead, courtesy of the clinic at {dest}. Who got me?",

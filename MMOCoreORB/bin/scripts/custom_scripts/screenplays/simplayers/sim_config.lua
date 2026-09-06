@@ -47,6 +47,18 @@ SIM_CONFIG.INVITE_RANGE_M   = 24
 -- picks the body (SIM_CONFIG.TEMPLATES) and the title. Deliberately slow:
 -- a promotion is news, and news that comes hourly is noise.
 SIM_CONFIG.XP_PER_FIGHT_TICK = 1
+
+-- Couriers (Supply War slice 6, DESIGN-WAR-V2 2.4 / 6; D27 reversed D26's
+-- "they write nothing to the sim"): when a SimPlayer's stint ends it may
+-- ship out to run a crate to a friendly town that needs one. The run is a
+-- real materiel_delivery row worth WarCourier.POINTS crates -- exactly a
+-- player's run -- announced where it lands, never galaxy-wide. Per
+-- SimPlayer at most one run per COURIER_MIN_GAP_MS; the chance is by style
+-- (a runner runs, a brawler rarely does). Twelve SimPlayers, six a side,
+-- at most one run each per 90 min is under 40 crates an hour galaxy-wide.
+SIM_CONFIG.COURIER_ENABLED     = true
+SIM_CONFIG.COURIER_MIN_GAP_MS  = 90 * 60 * 1000
+SIM_CONFIG.COURIER_CHANCE      = { runner = 60, scout = 40, homebody = 30, defender = 25, grinder = 15, brawler = 10 } -- percent
 SIM_CONFIG.RANKS = {
 	{ xp = 0,   imperial = "Recruit",    rebel = "Recruit"    },
 	{ xp = 12,  imperial = "Private",    rebel = "Trooper"    },

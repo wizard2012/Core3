@@ -497,8 +497,53 @@ local function chooseCity(sim, st, bucket)
 end
 
 --- Where to next. Returns (regionId, intent) with intent "fight" or "rest".
+--- Slice 6: a crate run. The friendly town that needs it most -- losing
+-- first, then a cut or strained road, then a front -- on any planet;
+-- nil when this SimPlayer ran recently, the dice say no, or nothing needs
+-- a crate. Reads the exported state through regionRow (schema 4's
+-- falls_in_ticks and road when present, schema 3's supply_status else).
+local function chooseCourier(sim, st, bucket)
+	local c = cfg()
+	if not c.COURIER_ENABLED or WarContrib == nil or WarContrib.record == nil then
+		return nil
+	end
+	local last = readData("simplayers:courier:" .. sim.id) or 0
+	if (now() - last) < (c.COURIER_MIN_GAP_MS or 0) then
+		return nil
+	end
+	local chance = (c.COURIER_CHANCE or {})[sim.style] or 20
+	if (stableHash(sim.id .. ":courier:" .. tostring(bucket)) % 100) >= chance then
+		return nil
+	end
+	local best, bestScore = nil, 0
+	for _, id in ipairs(allRegions()) do
+		local r = regionRow(id)
+		if r ~= nil and r.faction == sim.faction and placeable(id) and not r.is_capital then
+			local score = 0
+			if r.falls_in_ticks ~= nil then
+				score = 3
+			elseif r.road == "cut" or r.supply_status == "cut" then
+				score = 2
+			elseif r.road == "strained" or r.supply_status == "degraded" or (tonumber(r.contest) or 0) >= 1 then
+				score = 1
+			end
+			if score > bestScore or (score == bestScore and score > 0 and stableHash(id .. tostring(bucket)) % 2 == 0) then
+				best, bestScore = id, score
+			end
+		end
+	end
+	if bestScore == 0 then
+		return nil
+	end
+	return best
+end
+
 function SimPlayers.decide(sim, st)
 	local bucket = math.floor(now() / (10 * 60 * 1000))
+	local run = chooseCourier(sim, st, bucket)
+	if run ~= nil then
+		return run, "courier"
+	end
 	local front = chooseFront(sim, st, bucket)
 	if front ~= nil then
 		return front, "fight"
@@ -546,6 +591,35 @@ local function enterFight(sim, st, idx, regionId)
 	SimPlayers.save(sim.id, st)
 end
 
+--- Slice 6: arrive with a crate. Spawns at the town's rest spot, records
+-- the delivery (a real materiel_delivery row worth WarCourier.POINTS, the
+-- same as a player's run; character id 0 -- a SimPlayer has no character
+-- row), says so where it stands, stamps the per-SimPlayer gap, and rests.
+local function enterCourier(sim, st, idx, regionId)
+	local c = cfg()
+	despawn(st)
+	st.state = "rest"
+	st.last = st.region
+	st.region = regionId
+	st.until_ms = now() + window(c.REST_MIN_MS, c.REST_MAX_MS, sim.id .. tostring(now()))
+	local p = spawnBody(sim, st, restSpot(regionId, idx), true)
+	writeData("simplayers:courier:" .. sim.id, now())
+	local crates = (WarCourier ~= nil and tonumber(WarCourier.POINTS)) or 5
+	local ok, why = false, "no WarContrib"
+	if WarContrib ~= nil and WarContrib.record ~= nil then
+		ok, why = WarContrib.record(sim.faction, regionId, "materiel_delivery", crates, 0)
+	end
+	if ok then
+		printf(string.format("SimPlayers: %s delivered %s crate(s) at %s (courier run)\n", sim.name, tostring(crates), regionId))
+		if p ~= nil then
+			say(p, SimVoice.delivered(sim, { dest = regionName(regionId) }, now()))
+		end
+	else
+		printf(string.format("SimPlayers: %s could not deliver at %s: %s\n", sim.name, regionId, tostring(why)))
+	end
+	SimPlayers.save(sim.id, st)
+end
+
 local function depart(sim, st, idx, dest, intent)
 	local c = cfg()
 	local p = resolve(st)
@@ -555,6 +629,8 @@ local function depart(sim, st, idx, dest, intent)
 	if dest == st.region then
 		if intent == "fight" then
 			enterFight(sim, st, idx, dest)
+		elseif intent == "courier" then
+			enterCourier(sim, st, idx, dest)
 		else
 			enterRest(sim, st, idx, dest, nil)
 		end
@@ -671,6 +747,8 @@ function SimPlayers.step(sim, st, idx)
 			local dest = placeable(st.dest) and st.dest or (placeable(sim.home) and sim.home or "tat_mos_eisley")
 			if st.intent == "fight" then
 				enterFight(sim, st, idx, dest)
+			elseif st.intent == "courier" then
+				enterCourier(sim, st, idx, dest)
 			else
 				enterRest(sim, st, idx, dest, nil)
 			end
