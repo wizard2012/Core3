@@ -42,7 +42,7 @@ WarRumor = WarRumor or {}
 -- Vague by design. Indexed by how bad the worst front is, so the flavour
 -- tracks the actual war without quoting numbers at the player.
 WarRumor.LINES_QUIET = {
-	"Quiet season. The Empire and the Rebellion are just glaring at each other.",
+	"Quiet season. The Empire and the Alliance are just glaring at each other.",
 	"No real fighting lately. Won't last, it never does.",
 	"Folks are still moving cargo without an escort. That tells you something.",
 }

@@ -706,6 +706,24 @@ function WarLines.transitions(st, last)
 	if st == nil or type(st.regions) ~= "table" then
 		return lines, snap
 	end
+	-- The season first: the announcer caps the lines it sends and writes
+	-- the snapshot before sending (verifier, 2026-09-06), so the line that
+	-- matters most must never be the one past the cap.
+	local s = st.season
+	if type(s) == "table" then
+		local winner = (s.winner ~= nil and s.winner ~= "") and tostring(s.winner) or ""
+		local index = tostring(s.index or "")
+		snap["winner"] = winner
+		snap["season"] = index
+		if last ~= nil then
+			if (last["winner"] or "") == "" and winner ~= "" then
+				lines[#lines + 1] = "A capital has fallen. Season " .. index .. " is the " .. WarLines.side(winner) .. "'s."
+					.. ((num(s.intermission_remaining) or 0) > 0 and (" The next season begins in " .. WarLines.hoursText(s.intermission_remaining, st) .. ".") or "")
+			elseif (last["season"] or index) ~= index and winner == "" then
+				lines[#lines + 1] = "Season " .. index .. " begins. The reserves are full and every road is open."
+			end
+		end
+	end
 	local ids = {}
 	for id, _ in pairs(st.regions) do ids[#ids + 1] = id end
 	table.sort(ids)
@@ -737,21 +755,6 @@ function WarLines.transitions(st, last)
 					end
 					lines[#lines + 1] = line .. "."
 				end
-			end
-		end
-	end
-	local s = st.season
-	if type(s) == "table" then
-		local winner = (s.winner ~= nil and s.winner ~= "") and tostring(s.winner) or ""
-		local index = tostring(s.index or "")
-		snap["winner"] = winner
-		snap["season"] = index
-		if last ~= nil then
-			if (last["winner"] or "") == "" and winner ~= "" then
-				lines[#lines + 1] = "A capital has fallen. Season " .. index .. " is the " .. WarLines.side(winner) .. "'s."
-					.. ((num(s.intermission_remaining) or 0) > 0 and (" The next season begins in " .. WarLines.hoursText(s.intermission_remaining, st) .. ".") or "")
-			elseif (last["season"] or index) ~= index and winner == "" then
-				lines[#lines + 1] = "Season " .. index .. " begins. The reserves are full and every road is open."
 			end
 		end
 	end
