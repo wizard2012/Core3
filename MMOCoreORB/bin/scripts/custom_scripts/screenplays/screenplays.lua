@@ -116,6 +116,10 @@ includeFile("../custom_scripts/screenplays/spawnsafety/spawn_safety_probe.lua")
 -- see navmesh/anchorhead_outpost_navmesh.lua's own header for the full
 -- writeup). Independent of every other lane; no ordering dependency.
 includeFile("../custom_scripts/screenplays/navmesh/anchorhead_outpost_navmesh.lua")
+-- Lianorm Swamp: the sim's Rebel capital on Naboo got ground 2026-09-06; its
+-- navmesh (same unguarded-start pattern) and the WarLianormOutpost global the
+-- region map names. See that file's header.
+includeFile("../custom_scripts/screenplays/navmesh/lianorm_outpost_navmesh.lua")
 
 -- Surface 6: the war on the planetary map screen (needs the three
 -- LuaSceneObject map bindings in this branch's core3; fails closed without).

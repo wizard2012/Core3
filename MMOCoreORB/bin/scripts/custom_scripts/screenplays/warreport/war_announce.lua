@@ -145,13 +145,26 @@ function WarAnnounce:dispatch(tick)
 		end
 	end
 
+	-- Under the Supply War a front has ONE attacker (the export names it), but
+	-- the pushes list still carries both factions' points, and speaking both
+	-- produced two contradictory lines for one town in one tick (measured in
+	-- the client 2026-09-06, Keren). Speak only the exported attacker's push;
+	-- a push at a town with no front keeps the old behaviour.
+	local attackerOf = {}
+	local st = (WarReport ~= nil and WarReport.state ~= nil) and WarReport.state() or nil
+	if st ~= nil and type(st.fronts) == "table" then
+		for _, fr in ipairs(st.fronts) do
+			if fr.region ~= nil then attackerOf[fr.region] = fr.attacker end
+		end
+	end
 	local sent = 0
 	for i = 1, #pushes do
 		if sent >= WarAnnounce.DISPATCH_MAX_LINES then
 			break
 		end
 		local p = pushes[i]
-		if p ~= nil and p.region ~= nil and moved[p.region] ~= nil then
+		if p ~= nil and p.region ~= nil and moved[p.region] ~= nil
+				and (attackerOf[p.region] == nil or attackerOf[p.region] == p.faction) then
 			local name = (WarReport ~= nil and WarReport.regionName ~= nil)
 				and WarReport.regionName(p.region) or tostring(p.region)
 			local line = WarVoice.dispatch(name, p.faction, p.players, moved[p.region])

@@ -42,12 +42,13 @@
 WarOfficer = ScreenPlay:new {
 	screenplayName = "WarOfficer",
 
-	-- Where a briefing officer stands. Only capitals that are real cities
-	-- with coordinates -- nab_lianorm is a REBEL capital in the sim but is
-	-- a swamp with no city screenplay, so it gets no officer.
+	-- Where a briefing officer stands: every capital. nab_lianorm is the
+	-- sim's Rebel capital on Naboo; it has no city, so its officer stands at
+	-- the swamp outpost WarReport.COORDS gives it (ground given 2026-09-06).
 	POSTS = {
 		{ region = "cor_coronet",    zone = "corellia", x = -178,  y = -4504, heading = 0 },
 		{ region = "nab_theed",      zone = "naboo",    x = -6160, y = 3920,  heading = 0 },
+		{ region = "nab_lianorm",    zone = "naboo",    x = -416,  y = 0,     heading = 0 },
 		{ region = "tat_anchorhead", zone = "tatooine", x = 102,   y = -5360, heading = 0 },
 	},
 

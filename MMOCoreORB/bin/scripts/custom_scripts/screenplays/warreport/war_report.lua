@@ -68,6 +68,7 @@ WarReport.PLANET_OF = {
 	cor_tyrena = "corellia",
 	nab_kaadara = "naboo", nab_keren = "naboo",
 	nab_moenia = "naboo", nab_theed = "naboo",
+	nab_lianorm = "naboo", -- the Rebel outpost in the Lianorm Swamp: ground given 2026-09-06 (B33)
 	tat_anchorhead = "tatooine", tat_bestine = "tatooine",
 	tat_mos_eisley = "tatooine", tat_mos_espa = "tatooine",
 }
@@ -457,6 +458,11 @@ WarReport.COORDS = {
 	nab_keren       = {  1424,  2702 },
 	nab_moenia      = {  4800, -4784 },
 	nab_theed       = { -5320,  4368 },
+	-- The Lianorm Swamp has no city; the sim's Rebel capital on Naboo stands
+	-- at the named region's centre (naboo_regions.lua:75, lianorm_swamp_1),
+	-- solid ground at z 18.8 (measured 2026-09-06; the swamp water lies
+	-- lower). navmesh/lianorm_outpost_navmesh.lua gives it a mesh.
+	nab_lianorm     = {  -416,     0 },
 }
 
 --- KILL_BOUNDS -- the containment shape for each COORDS town centre, used
@@ -485,6 +491,7 @@ WarReport.KILL_BOUNDS = {
 
 	nab_kaadara     = { kind = "circle", radius = 320 },
 	nab_moenia      = { kind = "circle", radius = 336 },
+	nab_lianorm     = { kind = "circle", radius = 300 },
 	-- naboo_regions.lua:94 -- {336, 2140, {RECTANGLE, 2512, 3264}}
 	nab_keren       = { kind = "rect", x1 = 336,   y1 = 2140, x2 = 2512, y2 = 3264 },
 	-- naboo_regions.lua:96 -- {-6160, 3920, {RECTANGLE, -4480, 4816}}

@@ -291,9 +291,14 @@ end
 
 --- Section 4.1, one line per town; identical on the planetary map and the
 -- radar overlay.
---   Bestine: Rebel-held | 37 crates, losing 9/h | road cut | falls in ~4 h
---   Theed: Imperial capital | UNDER SIEGE, 2 of 2 roads lost | reserve 3 days | falls in ~7 h
---   Coronet: Imperial capital | reserve 19 days | 1 of 3 roads lost
+--   Bestine: 37 crates, losing 9/h | falls in ~4 h | Rebel-held | road cut
+--   Theed: UNDER SIEGE, 2 of 2 roads lost | reserve 19 days | falls in ~7 h | Imperial capital
+--   Coronet: reserve 19 days | 1 of 3 roads lost | Imperial capital
+-- FIELD ORDER (2026-09-06): the client's waypoint panel shows about 30
+-- characters of a label (measured through the client MCP: "Mos Eisley:
+-- Rebel-held | 0 crat..."), so the facts that CHANGE go first -- crates and
+-- trend, then the countdown -- and the holder and road, which a pin's colour
+-- already tells, go last. The section-4.1 example put the holder first.
 function WarLines.pin(st, regionId)
 	local r = st and st.regions and st.regions[regionId]
 	local name = WarLines.name(regionId)
@@ -305,15 +310,14 @@ function WarLines.pin(st, regionId)
 	end
 	local parts = {}
 	if r.is_capital then
-		parts[#parts + 1] = name .. ": " .. (WarLines.ADJ[r.faction] or "Neutral") .. " capital"
 		local siege = r.siege
 		local roads = WarLines.siegeRoadsText(r)
 		if type(siege) == "table" and siege.active then
-			parts[#parts + 1] = "UNDER SIEGE, " .. (roads or "roads lost")
+			parts[#parts + 1] = name .. ": UNDER SIEGE, " .. (roads or "roads lost")
 			parts[#parts + 1] = WarLines.reserveText(st, r.faction) or "reserve unknown"
 			parts[#parts + 1] = WarLines.fallText(r, st) or "holding"
 		else
-			parts[#parts + 1] = WarLines.reserveText(st, r.faction) or "reserve unknown"
+			parts[#parts + 1] = name .. ": " .. (WarLines.reserveText(st, r.faction) or "reserve unknown")
 			if roads ~= nil then
 				parts[#parts + 1] = roads
 			end
@@ -322,16 +326,17 @@ function WarLines.pin(st, regionId)
 				parts[#parts + 1] = fall
 			end
 		end
+		parts[#parts + 1] = (WarLines.ADJ[r.faction] or "Neutral") .. " capital"
 	else
-		parts[#parts + 1] = name .. ": " .. (WarLines.HELD[r.faction] or "unheld")
 		local crates = WarLines.crates(r)
 		local trend = WarLines.trendText(r)
-		parts[#parts + 1] = crates .. " crates" .. (trend and (", " .. trend) or "")
+		parts[#parts + 1] = name .. ": " .. crates .. " crates" .. (trend and (", " .. trend) or "")
+		parts[#parts + 1] = WarLines.statusText(r, st)
+		parts[#parts + 1] = WarLines.HELD[r.faction] or "unheld"
 		local road = WarLines.roadText(r)
 		if road ~= nil then
 			parts[#parts + 1] = road
 		end
-		parts[#parts + 1] = WarLines.statusText(r, st)
 	end
 	return table.concat(parts, " | ")
 end
