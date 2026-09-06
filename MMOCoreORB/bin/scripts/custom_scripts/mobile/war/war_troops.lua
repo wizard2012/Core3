@@ -501,6 +501,11 @@ war_at_at = Creature:new {
 	lootGroups = {},
 	conversationTemplate = "",
 	defaultAttack = "defaultdroidattack",
-	defaultWeapon = "object/weapon/ranged/vehicle/vehicle_atat_ranged.iff",
+	-- The AT-ST's gun: no vehicle_atat_ranged template exists server-side
+	-- (object/weapon/ranged/vehicle/ has only vehicle_atst_ranged), and the
+	-- stock at_at.lua uses this one too. With the missing template spawnMobile
+	-- returned nil everywhere -- measured 2026-09-06 at the first siege
+	-- (Lianorm): "walker war_at_at did not spawn".
+	defaultWeapon = "object/weapon/ranged/vehicle/vehicle_atst_ranged.iff",
 }
 CreatureTemplates:addCreatureTemplate(war_at_at, "war_at_at")

@@ -39,6 +39,7 @@ WarLines.ADJ  = { imperial = "Imperial", rebel = "Rebel" }
 WarLines.LINE_BODIES = 12            -- a line at a front (DESIGN-BATTLES); the "wiped line" number
 WarLines.DEFAULT_TICK_SECONDS = 900
 WarLines.SUDDEN_DEATH_WARN_TICKS = 192 -- two days at 900 s
+WarLines.FAR_TICKS = 3840 -- a countdown past the season's own horizon (40 days) is noise, not a fact
 
 -- Sim regions with no city on the game side (no coords, no officer, no
 -- battle) still exist in the war and must be readable. WarReport.PLANET_OF
@@ -179,7 +180,7 @@ end
 --- "falls in ~4 h" / "falls at the next lost fight". nil when not losing.
 function WarLines.fallText(r, st)
 	local t = num(r and r.falls_in_ticks)
-	if t == nil then
+	if t == nil or t > WarLines.FAR_TICKS then
 		return nil
 	end
 	if t <= 0 then
@@ -517,7 +518,8 @@ function WarLines.frontsLine(st)
 	for _, fr in ipairs(fronts) do
 		local r = st.regions and st.regions[fr.region]
 		local what = WarLines.side(fr.attacker) .. (fr.offensive and " offensive" or " attacking")
-		local status = WarLines.fallText(r, st) or "holding"
+		-- a capital that is not besieged does not fall with its reserve (2.8)
+		local status = ((r ~= nil and r.is_capital) and WarLines.capitalFallText(r, st) or WarLines.fallText(r, st)) or "holding"
 		local p = WarLines.name(fr.region) .. " (" .. what .. ", " .. status
 		if fr.offensive and fr.officer ~= nil and fr.officer ~= "" then
 			p = p .. ", led by " .. tostring(fr.officer)
