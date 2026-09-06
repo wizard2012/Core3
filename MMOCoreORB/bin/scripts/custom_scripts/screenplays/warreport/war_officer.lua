@@ -252,6 +252,17 @@ function WarOfficer:briefEntered(pArea, pPlayer)
 				end
 			end
 		end
+
+		-- Slice 8: the officer has orders. An open one is read back;
+		-- otherwise an enlisted player is told they can ask for one.
+		if WarOrders ~= nil and WarOrders.reportLine ~= nil then
+			local orderLine = WarOrders.reportLine(pPlayer, st)
+			if orderLine ~= nil then
+				creature:sendSystemMessage(orderLine)
+			elseif WarStandings ~= nil and WarStandings.factionOf ~= nil and WarStandings.factionOf(pPlayer) ~= nil then
+				creature:sendSystemMessage("I have orders for you when you want them: ask me (Orders).")
+			end
+		end
 	end)
 
 	return 0
