@@ -678,3 +678,21 @@ function Tests:warReadoutsRender()
 	end
 	printf("WARREADOUTS: end\n")
 end
+
+--- test warAllCheck: every readout probe in one console command, each in its
+-- own pcall so one failing cannot hide the others. Grep WARALL for the
+-- summary, then the probe's own marker for its lines.
+function Tests:warAllCheck()
+	printf("WARALL: begin\n")
+	local probes = { "warReadoutsRender", "warStandingsCheck", "warOrdersCheck", "warDigestCheck", "warSquadProbe" }
+	for _, name in ipairs(probes) do
+		local fn = Tests[name]
+		if type(fn) ~= "function" then
+			printf("WARALL: " .. name .. " -- not defined on this thread\n")
+		else
+			local ok, err = pcall(fn, Tests)
+			printf("WARALL: " .. name .. " -- " .. (ok and "ran" or ("FAILED: " .. tostring(err))) .. "\n")
+		end
+	end
+	printf("WARALL: end\n")
+end
