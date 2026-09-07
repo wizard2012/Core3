@@ -119,9 +119,14 @@ function WarContribCounter:add(characterId, points)
 	if after > before and WarLines ~= nil and WarLines.progressLine ~= nil then
 		pcall(function()
 			creature:sendSystemMessage(WarLines.progressLine(after))
-			if after % 5 == 0 and WarLines.ownStandingLine ~= nil and WarReport ~= nil and WarReport.state ~= nil then
+			-- ownStandingLine takes (st, faction, oid): a two-argument call
+			-- told every player "nothing counted this season yet" right after
+			-- their fifth crate (verifier, 2026-09-07).
+			if after % 5 == 0 and WarLines.ownStandingLine ~= nil and WarReport ~= nil and WarReport.state ~= nil
+				and WarStandings ~= nil and WarStandings.factionOf ~= nil then
 				local st = WarReport.state()
-				local line = (st ~= nil) and WarLines.ownStandingLine(st, oid) or nil
+				local faction = WarStandings.factionOf(pObj)
+				local line = (st ~= nil and faction ~= nil) and WarLines.ownStandingLine(st, faction, oid) or nil
 				if line ~= nil then
 					creature:sendSystemMessage(line)
 				end

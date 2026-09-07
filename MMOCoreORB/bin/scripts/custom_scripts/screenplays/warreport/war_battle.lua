@@ -1024,7 +1024,13 @@ function WarBattle:reconcile(advanceClock)
 			heldSites[sl.region .. ":" .. string.sub(tostring(sl.site), 2)] = { ox = sl.ox, oy = sl.oy, capture = true }
 			captureSlotsKept = captureSlotsKept + 1
 		elseif sl.isGarrison then
-			heldGarrisons[sl.region] = true
+			-- B44: raiders alone in the slot are not the holder's garrison --
+			-- the spread pass may restore it, and the presence area is not
+			-- attached for an enemy party (verifier, 2026-09-07).
+			local holder = holderOfRegion(sl.region)
+			if holder == nil or (sl.alive[holder] or 0) > 0 then
+				heldGarrisons[sl.region] = true
+			end
 		else
 			-- alive/units ride along so stageBattles() can reinforce a
 			-- thinned side (slice A waves) without a second roster walk.
@@ -1080,9 +1086,14 @@ function WarBattle:reconcile(advanceClock)
 		-- is how a raid on a quiet town becomes a lost fight the sim can
 		-- act on when the holder is dry.
 		if sl.isGarrison and (sl.sides == 0 or sl.raidWon) then
+			-- B44: only the HOLDER loses a line in its garrison slot: not
+			-- the raiders in a mutual wipe, not a garrison the sim already
+			-- flipped out from under (verifier, 2026-09-07). Without a sim
+			-- holder (no state on this thread) every seen side counts, as
+			-- before.
+			local holder = holderOfRegion(sl.region)
 			for fac, _ in pairs(sl.seen or {}) do
-				-- B44: when a raid won, the raiders' own side did not lose.
-				if not (sl.raidWon and fac == sl.survivor) then
+				if holder == nil or fac == holder then
 					local lk = tostring(sl.region) .. "|" .. tostring(fac)
 					lostLines[lk] = (lostLines[lk] or 0) + 1
 				end

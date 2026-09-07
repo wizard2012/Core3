@@ -828,7 +828,9 @@ function WarOrders.raid(pPlayer, o)
 	local px, py = SceneObject(pPlayer):getWorldPositionX(), SceneObject(pPlayer):getWorldPositionY()
 	if WarBattle.aliveCombatants ~= nil and WarBattle.TOTAL_NPC_BUDGET ~= nil
 		and WarBattle.aliveCombatants() + WarOrders.RAID_SIZE > WarBattle.TOTAL_NPC_BUDGET then
-		creature:sendSystemMessage("The garrison reports movement outside, but nothing comes: the front has every enemy body busy.")
+		if o.extra ~= "raid_wait" then
+			creature:sendSystemMessage("The garrison reports movement outside, but nothing comes yet: the front has every enemy body busy.")
+		end
 		printf("WarOrders: raid on " .. tostring(o.region) .. " skipped: budget spent\n")
 		return 0
 	end
@@ -897,9 +899,17 @@ function WarOrders:holdCheck(pPlayer)
 		if counts then
 			o.done = (o.done or 0) + 1
 			-- B44 garrison duty: the raid, once, RAID_AT_MINUTE minutes in.
+			-- The flag is burnt only by a raid that came; a refusal (the
+			-- budget, the module not visible on this thread) is retried a
+			-- minute later, and the "nothing comes" line is said once
+			-- (verifier, 2026-09-07).
 			if o.type == "hold" and o.done >= WarOrders.RAID_AT_MINUTE and o.extra ~= "raided" then
-				o.extra = "raided"
-				pcall(function() WarOrders.raid(pPlayer, o) end)
+				local okR, n = pcall(WarOrders.raid, pPlayer, o)
+				if okR and (tonumber(n) or 0) > 0 then
+					o.extra = "raided"
+				elseif o.extra ~= "raid_wait" then
+					o.extra = "raid_wait"
+				end
 			end
 			if o.done >= o.need then
 				WarOrders.complete(oid, o, pPlayer)
