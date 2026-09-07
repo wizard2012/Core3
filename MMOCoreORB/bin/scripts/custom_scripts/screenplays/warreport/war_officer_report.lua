@@ -108,6 +108,21 @@ function WarOfficerReportMenu:attachAll(pObject, args)
 			local oid = readSharedMemory("warofficer:npc:" .. region)
 			if oid ~= nil and oid > 0 then
 				local pNpc = getSceneObject(oid)
+				-- B43/B44: the posts stand at the town centres, where street
+				-- fights and raids now happen. An officer that is gone or dead
+				-- is replaced (respawnForRegion removes the remains and spawns
+				-- the current holder's officer), so Orders and Deploy never
+				-- vanish for the rest of the process.
+				local okDead, dead = pcall(function() return pNpc ~= nil and CreatureObject(pNpc):isDead() end)
+				if (pNpc == nil or (okDead and dead == true)) and WarOfficer.respawnForRegion ~= nil then
+					printf("WarOfficerReportMenu: the officer at " .. tostring(region) .. " is "
+						.. ((pNpc == nil) and "gone" or "dead") .. "; respawning\n")
+					local okR = pcall(function() WarOfficer:respawnForRegion(region) end)
+					if okR then
+						local nid = readSharedMemory("warofficer:npc:" .. region)
+						pNpc = (nid ~= nil and nid > 0) and getSceneObject(nid) or nil
+					end
+				end
 				if pNpc ~= nil then
 					SceneObject(pNpc):setObjectMenuComponent("WarOfficerReportMenuComponent")
 					attached = attached + 1
