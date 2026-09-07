@@ -822,6 +822,12 @@ function WarOrders.raid(pPlayer, o)
 	if pPlayer == nil or o == nil or WarBattle == nil or WarBattle.spawnRaid == nil then
 		return 0, "module"
 	end
+	-- No front on the ground (the intermission: WarBattle.fronts() is empty
+	-- while the map is frozen) means no raid either; tried again a minute
+	-- later, silently, like a module not visible on this thread.
+	if WarBattle.fronts ~= nil and #WarBattle.fronts() == 0 then
+		return 0, "quiet"
+	end
 	local creature = CreatureObject(pPlayer)
 	local enemy = other(o.faction)
 	local zone = SceneObject(pPlayer):getZoneName()
