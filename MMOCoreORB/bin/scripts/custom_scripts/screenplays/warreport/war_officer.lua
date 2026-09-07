@@ -260,7 +260,7 @@ function WarOfficer:briefEntered(pArea, pPlayer)
 			if orderLine ~= nil then
 				creature:sendSystemMessage(orderLine)
 			elseif WarStandings ~= nil and WarStandings.factionOf ~= nil and WarStandings.factionOf(pPlayer) ~= nil then
-				creature:sendSystemMessage("I have orders for you when you want them: ask me (Orders).")
+				creature:sendSystemMessage("I have orders for you when you want them: ask me (Orders). I can get you to the front (Deploy).")
 			end
 		end
 	end)
