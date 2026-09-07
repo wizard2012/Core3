@@ -122,11 +122,13 @@ function WarContribCounter:add(characterId, points)
 			-- ownStandingLine takes (st, faction, oid): a two-argument call
 			-- told every player "nothing counted this season yet" right after
 			-- their fifth crate (verifier, 2026-09-07).
-			if after % 5 == 0 and WarLines.ownStandingLine ~= nil and WarReport ~= nil and WarReport.state ~= nil
-				and WarStandings ~= nil and WarStandings.factionOf ~= nil then
+			-- The faction argument is decorative in ownStandingLine (it reads the
+			-- standings by id), so a faction that does not resolve on this
+			-- thread must not suppress the line (re-verifier, 2026-09-07).
+			if after % 5 == 0 and WarLines.ownStandingLine ~= nil and WarReport ~= nil and WarReport.state ~= nil then
 				local st = WarReport.state()
-				local faction = WarStandings.factionOf(pObj)
-				local line = (st ~= nil and faction ~= nil) and WarLines.ownStandingLine(st, faction, oid) or nil
+				local faction = (WarStandings ~= nil and WarStandings.factionOf ~= nil) and WarStandings.factionOf(pObj) or nil
+				local line = (st ~= nil) and WarLines.ownStandingLine(st, faction, oid) or nil
 				if line ~= nil then
 					creature:sendSystemMessage(line)
 				end

@@ -820,7 +820,7 @@ end
 -- with a line, when the NPC budget is spent. Returns the bodies spawned.
 function WarOrders.raid(pPlayer, o)
 	if pPlayer == nil or o == nil or WarBattle == nil or WarBattle.spawnRaid == nil then
-		return 0
+		return 0, "module"
 	end
 	local creature = CreatureObject(pPlayer)
 	local enemy = other(o.faction)
@@ -832,7 +832,7 @@ function WarOrders.raid(pPlayer, o)
 			creature:sendSystemMessage("The garrison reports movement outside, but nothing comes yet: the front has every enemy body busy.")
 		end
 		printf("WarOrders: raid on " .. tostring(o.region) .. " skipped: budget spent\n")
-		return 0
+		return 0, "budget"
 	end
 	local function walkable(x, y)
 		if type(isPointWalkable) ~= "function" or type(getWorldFloor) ~= "function" then
@@ -904,10 +904,13 @@ function WarOrders:holdCheck(pPlayer)
 			-- minute later, and the "nothing comes" line is said once
 			-- (verifier, 2026-09-07).
 			if o.type == "hold" and o.done >= WarOrders.RAID_AT_MINUTE and o.extra ~= "raided" then
-				local okR, n = pcall(WarOrders.raid, pPlayer, o)
+				local okR, n, why = pcall(WarOrders.raid, pPlayer, o)
 				if okR and (tonumber(n) or 0) > 0 then
 					o.extra = "raided"
-				elseif o.extra ~= "raid_wait" then
+				elseif okR and why == "budget" and o.extra ~= "raid_wait" then
+					-- Only a budget refusal (which spoke) sets the flag that
+					-- silences the next one; a module not visible on this
+					-- thread says nothing and keeps trying (re-verifier).
 					o.extra = "raid_wait"
 				end
 			end
