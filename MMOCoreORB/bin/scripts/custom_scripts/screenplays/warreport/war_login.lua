@@ -133,6 +133,11 @@ function WarReportLogin:sendReport(pPlayer)
 			if WarStandings ~= nil and WarStandings.onLogin ~= nil then
 				pcall(function() WarStandings.onLogin(pPlayer, st) end)
 			end
+			-- B41: an order pin with no order behind it (a restart) goes.
+			-- After the standings readback, which lapses an expired order.
+			if WarOrders ~= nil and WarOrders.sweepWaypoints ~= nil then
+				pcall(function() WarOrders.sweepWaypoints(pPlayer) end)
+			end
 			return
 		end
 

@@ -93,6 +93,8 @@ WarOrders.SUPPLY_ROTATION_TICKS = 24
 
 WarOrders.WP_PREFIX = "warorders:wp:"      -- the datapad waypoint an order placed (its object id)
 WarOrders.WAYPOINT_COLOR = 3              -- not the recruiter's front-line colour (2), so the two read apart
+WarOrders.WAYPOINT_TYPE = 1101            -- our own specialTypeID: the engine keeps one pin of a type, and the
+                                          -- login sweep (sweepWaypoints) can find a pin a restart orphaned
 
 local function key(oid)
 	return WarOrders.KEY_PREFIX .. tostring(oid)
@@ -591,7 +593,7 @@ function WarOrders.placeWaypoint(pPlayer, oid, o)
 	end
 	WarOrders.removeWaypoint(pPlayer, oid)
 	local ok, wp = pcall(function()
-		return PlayerObject(pGhost):addWaypoint(zone, wpName, "", x, 0, y, WarOrders.WAYPOINT_COLOR, true, true, 0, 1)
+		return PlayerObject(pGhost):addWaypoint(zone, wpName, "", x, 0, y, WarOrders.WAYPOINT_COLOR, true, true, WarOrders.WAYPOINT_TYPE, 1)
 	end)
 	if ok and wp ~= nil and wp ~= 0 then
 		writeStringData(wpKey(oid), tostring(wp))
@@ -627,6 +629,28 @@ function WarOrders.removeWaypoint(pPlayer, oid)
 	end
 	pcall(function() PlayerObject(pGhost):removeWaypoint(wp, true) end)
 	return true
+end
+
+--- At login: a pin of our type with no live order behind it (a restart
+-- loses the shared string data the order and the pin id live in, and the
+-- persistent pin would stay on the datapad for good) is swept by type.
+-- A live order keeps its pin. Returns true when something was removed.
+function WarOrders.sweepWaypoints(pPlayer)
+	if pPlayer == nil then
+		return false
+	end
+	local oid = SceneObject(pPlayer):getObjectID()
+	local o = WarOrders.active(oid)
+	if o ~= nil and getTimestampMilli() < (o.expiresAt or 0) then
+		return false
+	end
+	local pGhost = CreatureObject(pPlayer):getPlayerObject()
+	if pGhost == nil then
+		return false
+	end
+	writeStringData(wpKey(oid), "")
+	local ok = pcall(function() PlayerObject(pGhost):removeWaypointBySpecialType(WarOrders.WAYPOINT_TYPE) end)
+	return ok
 end
 
 local function isPresenceOrder(o)
