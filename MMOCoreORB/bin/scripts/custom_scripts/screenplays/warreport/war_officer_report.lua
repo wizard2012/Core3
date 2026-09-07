@@ -208,6 +208,21 @@ function WarOfficerReportMenuComponent:sendReport(pPlayer, pOfficer)
 		for i = 1, #lines do
 			creature:sendSystemMessage(lines[i])
 		end
+		-- B43: fights standing in a town's streets right now, from the
+		-- ground's own keys (minutes old; the export is a tick old and its
+		-- street_fight events are history, not presence).
+		if WarBattle ~= nil and WarBattle.fronts ~= nil and WarVoice ~= nil and WarVoice.streetsNote ~= nil
+			and WarReport.regionName ~= nil then
+			local nowMs = getTimestampMilli()
+			local cap = (WarPresence ~= nil and WarPresence.STREETS_NOTE_MS) or (30 * 60 * 1000)
+			for _, f in ipairs(WarBattle.fronts()) do
+				local by = readStringData("warbattle:streets:" .. tostring(f.id))
+				local at = readData("warbattle:streets_ms:" .. tostring(f.id)) or 0
+				if by ~= nil and by ~= "" and at > 0 and (nowMs - at) <= cap then
+					creature:sendSystemMessage(WarVoice.streetsNote(by, WarReport.regionName(f.id)))
+				end
+			end
+		end
 		local region = WarOfficerReportMenuComponent:regionOf(pOfficer)
 		local acts = (region ~= nil) and WarLines.actions(st, region) or {}
 		if #acts > 0 then
