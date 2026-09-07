@@ -112,6 +112,22 @@ function WarContribCounter:add(characterId, points)
 		creature:removeScreenPlayState(current, WarContribCounter.STATE_KEY)
 	end
 	creature:setScreenPlayState(current + addCentipoints, WarContribCounter.STATE_KEY)
+
+	-- B45 progress text (owner ruling 2026-09-07): a line when the running
+	-- total crosses a whole crate, and the season standing every fifth.
+	local before, after = current // 100, (current + addCentipoints) // 100
+	if after > before and WarLines ~= nil and WarLines.progressLine ~= nil then
+		pcall(function()
+			creature:sendSystemMessage(WarLines.progressLine(after))
+			if after % 5 == 0 and WarLines.ownStandingLine ~= nil and WarReport ~= nil and WarReport.state ~= nil then
+				local st = WarReport.state()
+				local line = (st ~= nil) and WarLines.ownStandingLine(st, oid) or nil
+				if line ~= nil then
+					creature:sendSystemMessage(line)
+				end
+			end
+		end)
+	end
 end
 
 --- Lifetime total in points (fractional), for display. 0 for a character

@@ -198,6 +198,8 @@ WarVoice.BATTLE = {
 	-- B43: the fight moves into town.
 	streets      = { imperial = "The line outside broke -- into the town! Take the streets!", rebel = "They broke outside -- into the town, take the streets!" },
 	streets_hold = { imperial = "They are in the streets -- hold every corner!",               rebel = "They are inside -- every doorway, every corner, hold!" },
+	-- B44: garrison duty -- the raid on a held town.
+	raid         = { imperial = "Raiding party -- hit the garrison and get out!",               rebel = "Raid! Hit them hard and pull back!" },
 	wave     = { imperial = "Reinforcements on the line! Close it up!",        rebel = "Fresh squad coming in -- form on me!" },
 	fallback = { imperial = "Fall back to the marker and regroup!",            rebel = "Fall back! Regroup at the marker!" },
 	breaking = { imperial = "The line is breaking -- hold, damn you!",         rebel = "They are through -- every man for himself!" },

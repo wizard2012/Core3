@@ -787,6 +787,31 @@ function Tests:warStreetsStageNow()
 	printf("WARSTREETS: end\n")
 end
 
+--- test warRaidStageNow: AN ACTION, not a check -- spawns one raiding party
+-- (B44) of the attacker's side at the town of the hottest front, on a
+-- meshed point near the centre, set on nobody (a player's hold order sets
+-- them on the player), so the spawn, the roster tracking in the garrison
+-- slot and the next reconcile's two-sided garrison can be seen.
+function Tests:warRaidStageNow()
+	printf("WARRAID: begin\n")
+	local ok, err = pcall(function()
+		local fronts = (WarBattle ~= nil and WarBattle.fronts ~= nil) and WarBattle.fronts() or {}
+		if #fronts == 0 or WarBattle.spawnRaid == nil then
+			printf("WARRAID: no live front or no spawnRaid on this thread\n")
+			return
+		end
+		local f = fronts[1]
+		local zone, coords = WarReport.PLANET_OF[f.id], WarReport.COORDS[f.id]
+		local x, y = WarBattle.streetOrigin(zone, coords, f.id)
+		local n = WarBattle.spawnRaid(zone, f.id, f.attacker, x + 20, y + 20, WarOrders and WarOrders.RAID_SIZE or 4, nil)
+		printf("WARRAID: " .. tostring(n) .. " " .. tostring(f.attacker) .. " raiders at " .. tostring(f.id) .. " (" .. tostring(math.floor(x + 20)) .. ", " .. tostring(math.floor(y + 20)) .. ")\n")
+	end)
+	if not ok then
+		printf("WARRAID: failed: " .. tostring(err) .. "\n")
+	end
+	printf("WARRAID: end\n")
+end
+
 --- test warAllCheck: every readout probe in one console command, each in its
 -- own pcall so one failing cannot hide the others. Grep WARALL for the
 -- summary, then the probe's own marker for its lines.

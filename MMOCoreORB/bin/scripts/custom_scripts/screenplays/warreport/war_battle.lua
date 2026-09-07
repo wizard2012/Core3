@@ -853,6 +853,15 @@ function WarBattle.sitesWanted(front, besieged)
 	return math.max(1, math.min(n, WarBattle.MAX_SITES_PER_REGION))
 end
 
+--- The sim's holder of a town, or nil. B44: a town garrison slot whose only
+-- side left is not the holder is a raid that won (or a garrison the sim
+-- flipped out from under), and is resolved rather than held.
+local function holderOfRegion(regionId)
+	local st = (WarReport ~= nil and WarReport.state ~= nil) and WarReport.state() or nil
+	local r = (st ~= nil and type(st.regions) == "table") and st.regions[regionId] or nil
+	return (r ~= nil) and r.faction or nil
+end
+
 function WarBattle:reconcile(advanceClock)
 	local heldSites, heldGarrisons, captures = {}, {}, {}
 
@@ -958,6 +967,23 @@ function WarBattle:reconcile(advanceClock)
 		-- A garrison is single-faction by definition, so "one side left" is
 		-- its healthy state, not a capture.
 		local stillContested = sl.isGarrison and (sides >= 1) or (sides >= 2)
+		-- B44: the town garrison slot ("0") also carries raiders (garrison
+		-- duty, war_orders.lua). Two sides there is a raid in progress and
+		-- the slot holds. ONE side that is not the holder is a raid that
+		-- won -- or a garrison the sim flipped out from under -- and the
+		-- slot resolves: the raiders stand down, the holder's line is lost
+		-- (below), the spread pass restores the holder's garrison.
+		-- Only when the holder's garrison WAS in the slot this cycle
+		-- (sl.seen): raiders alone at a front town, which has no garrison
+		-- slot of its own, are a live raid, not a won one (measured
+		-- 2026-09-07: a Theed raid was stood down the moment it spawned).
+		if stillContested and sl.isGarrison and (not sl.isCapture) and sides == 1 then
+			local holder = holderOfRegion(sl.region)
+			if holder ~= nil and survivor ~= holder and sl.seen ~= nil and sl.seen[holder] == true then
+				stillContested = false
+				sl.raidWon = true
+			end
+		end
 
 		if not stillContested then
 			resolved[#resolved + 1] = sl
@@ -1052,10 +1078,16 @@ function WarBattle:reconcile(advanceClock)
 		-- nobody left standing was wiped: the holder lost a fight here. This
 		-- is how a raid on a quiet town becomes a lost fight the sim can
 		-- act on when the holder is dry.
-		if sl.isGarrison and sl.sides == 0 then
+		if sl.isGarrison and (sl.sides == 0 or sl.raidWon) then
 			for fac, _ in pairs(sl.seen or {}) do
-				local lk = tostring(sl.region) .. "|" .. tostring(fac)
-				lostLines[lk] = (lostLines[lk] or 0) + 1
+				-- B44: when a raid won, the raiders' own side did not lose.
+				if not (sl.raidWon and fac == sl.survivor) then
+					local lk = tostring(sl.region) .. "|" .. tostring(fac)
+					lostLines[lk] = (lostLines[lk] or 0) + 1
+				end
+			end
+			if sl.raidWon then
+				printf("WarBattle: the garrison at " .. tostring(sl.region) .. " fell to a " .. tostring(sl.survivor) .. " raid\n")
 			end
 		end
 
@@ -1902,8 +1934,11 @@ local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFac
 	end
 	local rr = WarReport.state() and WarReport.state().regions[regionId] or nil
 	local besieged = rr ~= nil and rr.is_capital == true and type(rr.siege) == "table" and rr.siege.active == true
-	shout(attackers[1], besieged and "siege" or "contact", attackerFaction, nil)
-	shout(defenders[1], besieged and "siege_hold" or "hold", defenderFaction, officerAt(regionId))
+	-- B43: a street fight has its own two lines (stageStreetFight), not these.
+	if tostring(siteIndex) ~= tostring(WarBattle.STREET_SITE) then
+		shout(attackers[1], besieged and "siege" or "contact", attackerFaction, nil)
+		shout(defenders[1], besieged and "siege_hold" or "hold", defenderFaction, officerAt(regionId))
+	end
 
 	-- Slice C: walkers behind the lines.
 	local walkersUp = 0
@@ -1933,6 +1968,36 @@ local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFac
 			string.format("%.4f", ux), string.format("%.4f", uy), string.format("%.1f", approach) }, "|"))
 
 	return #defenders + #attackers + walkersUp
+end
+
+--- B44 garrison duty: a raiding party of `n` for `faction` around (x, y),
+-- a sergeant, a medic and riflemen, tracked in the town's garrison slot
+-- ("0") so reconcile sees it (two sides there is a raid in progress; the
+-- raiders winning is a lost line for the holder; survivors age out with
+-- the slot), set on pTarget when given. Returns the bodies spawned.
+function WarBattle.spawnRaid(zone, regionId, faction, x, y, n, pTarget)
+	local spawned = {}
+	for i = 1, n do
+		local role = (i == 1) and "sergeant" or ((i == 2) and "medic" or "rifleman")
+		local ang = (i - 1) * (2 * math.pi / n)
+		local px, py = x + 3 * math.cos(ang), y + 3 * math.sin(ang)
+		local p = spawnTroop(zone, faction, role, px, py, 0, regionId .. "raid", i)
+		if p ~= nil then
+			spawned[#spawned + 1] = p
+			trackUnit(SceneObject(p):getObjectID(), regionId, "0", faction, x, y)
+			if WarHeal ~= nil and WarHeal.attach ~= nil then WarHeal.attach(p) end
+		end
+	end
+	if pTarget ~= nil then
+		for i = 1, #spawned do
+			WarBattle.engage(spawned[i], pTarget, true)
+		end
+	end
+	if #spawned > 0 then
+		shout(spawned[1], "raid", faction, nil)
+		printf(string.format("WarBattle: a %s raid of %d on %s at (%.0f, %.0f)\n", tostring(faction), #spawned, tostring(regionId), x, y))
+	end
+	return #spawned
 end
 
 --- B43: does an attacking line's win at a site send the fight into town?
@@ -2331,7 +2396,11 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 					end
 					-- Slice A: reinforce a thinned side of a live fight.
 					if not isCaptureGround then
-						local okw, waved = pcall(reinforceSite, zone, regionId, s, defender, attacker, held, lineSize, npcBudgetLeft)
+						-- B43: the streets are cramped -- waves top a street fight up to
+						-- STREET_LINE_SIZE, not the front's line (verifier, 2026-09-07:
+						-- a street fight was heading for 12-16 a side).
+						local waveLine = (tostring(s) == tostring(WarBattle.STREET_SITE)) and WarBattle.STREET_LINE_SIZE or lineSize
+						local okw, waved = pcall(reinforceSite, zone, regionId, s, defender, attacker, held, waveLine, npcBudgetLeft)
 						if okw and waved and waved > 0 then
 							npcBudgetLeft = npcBudgetLeft - waved
 							npcsSpawned = npcsSpawned + waved

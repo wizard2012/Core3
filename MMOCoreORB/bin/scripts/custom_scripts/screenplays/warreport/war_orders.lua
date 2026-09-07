@@ -91,6 +91,9 @@ WarOrders.HUNTER_SKILLS = { "combat_bountyhunter_novice" }
 WarOrders.SUPPLY_CATEGORIES = { "weapons", "armour", "medicine", "food", "clothing" }
 WarOrders.SUPPLY_ROTATION_TICKS = 24
 
+WarOrders.RAID_AT_MINUTE = 2               -- B44 garrison duty: the raid comes this many held minutes in
+WarOrders.RAID_SIZE = 4                    -- raiders: a sergeant, a medic, two riflemen
+WarOrders.RAID_DISTANCE_M = 60             -- they start this far from the player, on a meshed point
 WarOrders.WP_PREFIX = "warorders:wp:"      -- the datapad waypoint an order placed (its object id)
 WarOrders.WAYPOINT_COLOR = 3              -- not the recruiter's front-line colour (2), so the two read apart
 WarOrders.WAYPOINT_TYPE = 1101            -- our own specialTypeID: the engine keeps one pin of a type, and the
@@ -403,7 +406,7 @@ function WarOrders.text(o, st)
 		end
 		return "Supply the war: donate " .. pointsText(o.need) .. " of crafted goods or resources at a recruiter of your side."
 	end
-	return "Hold " .. name(o.region) .. ": stand your ground there for " .. tostring(o.need) .. " minutes."
+	return "Hold " .. name(o.region) .. ": stand your ground there for " .. tostring(o.need) .. " minutes; the enemy will test the garrison."
 end
 
 function WarOrders.rewardText(o)
@@ -810,6 +813,60 @@ function WarOrders.observe(faction, regionId, source, points, characterId)
 end
 
 --- The per-minute check behind a hold, rally or scout order.
+--- B44 garrison duty: the raid a hold order draws, RAID_AT_MINUTE minutes
+-- into the hold (holdCheck), once per order (o.extra = "raided"): RAID_SIZE
+-- enemy troopers on a meshed point RAID_DISTANCE_M from the player, set on
+-- the player, tracked in the town's garrison slot (war_battle.lua). Skipped,
+-- with a line, when the NPC budget is spent. Returns the bodies spawned.
+function WarOrders.raid(pPlayer, o)
+	if pPlayer == nil or o == nil or WarBattle == nil or WarBattle.spawnRaid == nil then
+		return 0
+	end
+	local creature = CreatureObject(pPlayer)
+	local enemy = other(o.faction)
+	local zone = SceneObject(pPlayer):getZoneName()
+	local px, py = SceneObject(pPlayer):getWorldPositionX(), SceneObject(pPlayer):getWorldPositionY()
+	if WarBattle.aliveCombatants ~= nil and WarBattle.TOTAL_NPC_BUDGET ~= nil
+		and WarBattle.aliveCombatants() + WarOrders.RAID_SIZE > WarBattle.TOTAL_NPC_BUDGET then
+		creature:sendSystemMessage("The garrison reports movement outside, but nothing comes: the front has every enemy body busy.")
+		printf("WarOrders: raid on " .. tostring(o.region) .. " skipped: budget spent\n")
+		return 0
+	end
+	local function walkable(x, y)
+		if type(isPointWalkable) ~= "function" or type(getWorldFloor) ~= "function" then
+			return true
+		end
+		local okz, z = pcall(getWorldFloor, x, y, zone)
+		if not okz or type(z) ~= "number" then
+			return false
+		end
+		local ok, w = pcall(isPointWalkable, zone, x, z, y)
+		return ok and w == true
+	end
+	local x, y = nil, nil
+	local first = math.random() * 2 * math.pi
+	for _, r in ipairs({ WarOrders.RAID_DISTANCE_M, WarOrders.RAID_DISTANCE_M * 0.6 }) do
+		for k = 0, 3 do
+			local ang = first + k * (math.pi / 2)
+			local cx, cy = px + r * math.cos(ang), py + r * math.sin(ang)
+			if x == nil and walkable(cx, cy) then
+				x, y = cx, cy
+			end
+		end
+	end
+	if x == nil then
+		x, y = px + 10, py
+	end
+	local n = WarBattle.spawnRaid(zone, o.region, enemy, x, y, WarOrders.RAID_SIZE, pPlayer)
+	if n > 0 then
+		creature:sendSystemMessage("Raiders! " .. tostring(n) .. " " .. adj(enemy) .. " troopers are coming for the garrison -- hold "
+			.. name(o.region) .. ".")
+	end
+	printf("WarOrders: raid on " .. tostring(o.region) .. " for " .. tostring(SceneObject(pPlayer):getObjectID())
+		.. ": " .. tostring(n) .. " " .. tostring(enemy) .. " bodies\n")
+	return n
+end
+
 function WarOrders:holdCheck(pPlayer)
 	if pPlayer == nil then
 		return
@@ -839,6 +896,11 @@ function WarOrders:holdCheck(pPlayer)
 		end
 		if counts then
 			o.done = (o.done or 0) + 1
+			-- B44 garrison duty: the raid, once, RAID_AT_MINUTE minutes in.
+			if o.type == "hold" and o.done >= WarOrders.RAID_AT_MINUTE and o.extra ~= "raided" then
+				o.extra = "raided"
+				pcall(function() WarOrders.raid(pPlayer, o) end)
+			end
 			if o.done >= o.need then
 				WarOrders.complete(oid, o, pPlayer)
 				return
@@ -968,6 +1030,11 @@ if type(Tests) == "table" then
 		if not ok then
 			printf("WARORDERS: failed: " .. tostring(err) .. "\n")
 		end
+		-- garrison duty (B44): the raid mechanism is reachable and sized
+		printf("WARORDERS: " .. ((WarBattle ~= nil and WarBattle.spawnRaid ~= nil) and "PASS" or "FAIL") .. " WarBattle.spawnRaid is visible\n")
+		printf("WARORDERS: " .. ((WarOrders.RAID_SIZE >= 2 and WarOrders.RAID_AT_MINUTE < WarOrders.HOLD_MINUTES) and "PASS" or "FAIL")
+			.. " raid of " .. tostring(WarOrders.RAID_SIZE) .. " at minute " .. tostring(WarOrders.RAID_AT_MINUTE) .. " of " .. tostring(WarOrders.HOLD_MINUTES) .. "\n")
+		printf("WARORDERS: " .. ((WarVoice ~= nil and WarVoice.battle ~= nil and WarVoice.battle("raid", "rebel", nil) ~= nil) and "PASS" or "FAIL") .. " the raid has a voice line\n")
 		-- waypoints (B41): every region an order can name has a planet and coords
 		pcall(function()
 			local st = (WarReport ~= nil and WarReport.state ~= nil) and WarReport.state() or nil

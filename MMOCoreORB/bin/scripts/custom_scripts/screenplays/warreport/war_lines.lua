@@ -1154,3 +1154,13 @@ function WarLines.unpackSnapshot(raw)
 	end
 	return out
 end
+
+--- B45 progress text: the line a player reads when their running total
+-- (the officer's counter, lifetime) crosses a whole crate. Pure.
+function WarLines.progressLine(wholeCrates)
+	local n = math.floor(tonumber(wholeCrates) or 0)
+	if n == 1 then
+		return "War record: 1 crate's worth to your name."
+	end
+	return "War record: " .. tostring(n) .. " crates' worth to your name."
+end
