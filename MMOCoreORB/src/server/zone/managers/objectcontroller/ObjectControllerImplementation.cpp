@@ -211,6 +211,10 @@ float ObjectControllerImplementation::activateCommand(CreatureObject* object, un
 				Vector<String> ignore;
 				ignore.add("command_message");
 				ignore.add("autoAttackDelay");
+				// The group MFD refresh timer (2 s) starts on a position update; a
+				// command that moves the player synchronously (dismount, teleport)
+				// would otherwise report a 2 s sweep that is nobody's recharge.
+				ignore.add("groupMFDUpdate");
 				float startedSeconds = timers->longestStartedSince(cooldownsBefore, ignore) / 1000.f;
 				float cap = (float) ConfigManager::instance()->getInt("Core3.ShowCooldownsMaxSeconds", 600);
 				// Only what outlasts the command itself, and never more than the cap.
