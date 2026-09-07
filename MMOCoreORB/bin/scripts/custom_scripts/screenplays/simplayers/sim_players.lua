@@ -598,7 +598,15 @@ local function enterFight(sim, st, idx, regionId)
 	st.until_ms = now() + window(c.FIGHT_MIN_MS, c.FIGHT_MAX_MS, sim.id .. tostring(now()))
 	local p = spawnBody(sim, st, fightSpot(regionId, idx), false)
 	if p ~= nil then
-		say(p, SimVoice.arriveFight(sim, { dest = regionName(regionId) }, now()))
+		-- B43: a street fight standing here gets its own arrival line.
+		local by = readStringData("warbattle:streets:" .. tostring(regionId))
+		local at = readData("warbattle:streets_ms:" .. tostring(regionId)) or 0
+		local cap = (WarPresence ~= nil and WarPresence.STREETS_NOTE_MS) or (30 * 60 * 1000)
+		if by ~= nil and by ~= "" and at > 0 and (now() - at) <= cap and SimVoice.arriveStreets ~= nil then
+			say(p, SimVoice.arriveStreets(sim, { dest = regionName(regionId) }, now()))
+		else
+			say(p, SimVoice.arriveFight(sim, { dest = regionName(regionId) }, now()))
+		end
 		engage(sim, st, p)
 	end
 	SimPlayers.save(sim.id, st)

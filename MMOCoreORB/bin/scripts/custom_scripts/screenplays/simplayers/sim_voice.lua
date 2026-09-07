@@ -111,6 +111,18 @@ SimVoice.ARRIVE_FIGHT = {
 	"{dest}. Good. I was getting bored.",
 }
 
+-- B43: arriving where the fight is in the streets.
+SimVoice.ARRIVE_STREETS = {
+	"{dest} -- they are in the streets. Every doorway is a firing position now.",
+	"Street fight at {dest}. Stay off the open ground and watch the corners.",
+	"Into {dest}, block by block. Nobody said it would be tidy.",
+	"The line broke outside {dest}, so we hold it inside. Move.",
+}
+
+function SimVoice.arriveStreets(sim, ctx, salt)
+	return fill(pick(SimVoice.ARRIVE_STREETS, sim.id .. ":streets:" .. tostring(salt)), SimVoice.context(sim, ctx))
+end
+
 function SimVoice.arriveFight(sim, ctx, salt)
 	return fill(pick(SimVoice.ARRIVE_FIGHT, sim.id .. ":arrive:" .. tostring(salt)), SimVoice.context(sim, ctx))
 end
