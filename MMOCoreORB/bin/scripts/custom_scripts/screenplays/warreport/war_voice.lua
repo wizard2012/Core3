@@ -82,6 +82,13 @@ function WarVoice.noWarZone()
 	return "No war zone here -- command has no use for these kills."
 end
 
+--- Presence line while a fight stands in a town's streets (B43). `faction`
+-- is the side that broke in; `townName` the town.
+function WarVoice.streetsNote(faction, townName)
+	return string.format("The fighting is in the streets of %s: %s are inside the town.",
+		tostring(townName), pick(WarVoice.FORCES, faction, "Enemy forces"))
+end
+
 --- Presence line when ground changed hands recently. `faction` is the CAPTOR.
 function WarVoice.captureNote(faction)
 	return string.format("%s took a position here within the hour.", pick(WarVoice.FORCES, faction, "Enemy forces"))

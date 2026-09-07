@@ -1091,6 +1091,11 @@ function WarBattle:reconcile(advanceClock)
 			end
 		end
 
+		-- B43: the street fight is over one way or the other; the arrival
+		-- note goes with it.
+		if tostring(sl.site) == tostring(WarBattle.STREET_SITE) then
+			pcall(function() deleteStringData("warbattle:streets:" .. sl.region) end)
+		end
 		standDown(sl)
 		writeData(sl.bornKey, 0)
 		writeData("warbattle:waves:" .. sl.key .. ":imperial", 0)

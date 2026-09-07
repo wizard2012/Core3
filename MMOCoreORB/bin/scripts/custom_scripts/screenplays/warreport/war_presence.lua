@@ -52,6 +52,7 @@ WarPresence.COOLDOWN_MS = 10 * 60 * 1000
 -- How long a capture is news on arrival. Matches WarVoice.captureNote's
 -- own words (\"within the hour\").
 WarPresence.CAPTURE_NOTE_MS = 60 * 60 * 1000
+WarPresence.STREETS_NOTE_MS = 30 * 60 * 1000   -- B43: a street fight ages out inside this anyway
 
 -- Persistent registries. Plain Lua tables do NOT survive reload-lua.sh (see
 -- war_login.lua's header on PlayerTriggers being rebuilt), and an area whose
@@ -235,6 +236,16 @@ function WarPresence:onEnteredArea(pArea, pCreature)
 		if captor ~= nil and captor ~= "" and capturedAt > 0 and (now - capturedAt) <= WarPresence.CAPTURE_NOTE_MS
 			and WarVoice ~= nil and WarVoice.captureNote ~= nil then
 			CreatureObject(pCreature):sendSystemMessage(WarVoice.captureNote(captor))
+		end
+
+		-- B43: a fight in the streets is news on arrival too. Written by
+		-- stageStreetFight, cleared when the street slot resolves, and never
+		-- repeated past STREETS_NOTE_MS whatever became of the slot.
+		local streetsBy = readStringData("warbattle:streets:" .. tostring(regionId))
+		local streetsAt = readData("warbattle:streets_ms:" .. tostring(regionId)) or 0
+		if streetsBy ~= nil and streetsBy ~= "" and streetsAt > 0 and (now - streetsAt) <= WarPresence.STREETS_NOTE_MS
+			and WarVoice ~= nil and WarVoice.streetsNote ~= nil then
+			CreatureObject(pCreature):sendSystemMessage(WarVoice.streetsNote(streetsBy, name))
 		end
 
 		if sites > 0 then

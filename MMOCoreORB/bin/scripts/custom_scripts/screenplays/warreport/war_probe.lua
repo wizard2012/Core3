@@ -723,6 +723,13 @@ function Tests:warSitesCheck()
 		end
 		printf("WARSITES: " .. ((WarBattle.streetFightFollows ~= nil and WarBattle.streetFightFollows("__none__", "rebel", "1") == false) and "PASS" or "FAIL")
 			.. " no street fight for an unknown region\n")
+		printf("WARSITES: streets note | " .. tostring(WarVoice ~= nil and WarVoice.streetsNote ~= nil and WarVoice.streetsNote("rebel", "Theed") or "none") .. "\n")
+		for _, f in ipairs(WarBattle.fronts()) do
+			local by = readStringData("warbattle:streets:" .. tostring(f.id))
+			if by ~= nil and by ~= "" then
+				printf("WARSITES: streets key | " .. tostring(f.id) .. " = " .. tostring(by) .. " since " .. tostring(readData("warbattle:streets_ms:" .. tostring(f.id)) or 0) .. "\n")
+			end
+		end
 		printf("WARSITES: " .. ((WarBattle.streetFightFollows ~= nil and WarBattle.streetFightFollows("nab_theed", "rebel", tostring(WarBattle.STREET_SITE)) == false) and "PASS" or "FAIL")
 			.. " a street fight does not follow itself\n")
 		for _, f in ipairs(WarBattle.fronts()) do
