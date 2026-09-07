@@ -86,6 +86,17 @@ function WarDeploy.text(d)
 	return "Transport to " .. name(d.region) .. ": it is under assault and the garrison needs you."
 end
 
+--- What to do where you already are. Pure.
+function WarDeploy.hereText(d)
+	if d == nil then
+		return nil
+	end
+	if d.role == "assault" then
+		return "the assault on " .. name(d.front) .. " forms up here."
+	end
+	return "hold it."
+end
+
 --- The refusal while the transport is out. Pure.
 function WarDeploy.waitText(msLeft)
 	local m = math.max(1, math.ceil((tonumber(msLeft) or 0) / 60000))
@@ -167,12 +178,26 @@ function WarDeploy.onRadial(pPlayer, pOfficer)
 		creature:sendSystemMessage("No transport: nobody here knows the way to " .. name(d.region) .. ".")
 		return
 	end
+	-- Already there (the verifier, 2026-09-07: a defender standing in the
+	-- besieged town would burn the wait for a three-metre hop).
+	if WarReport ~= nil and WarReport.regionAt ~= nil then
+		local here = WarReport.regionAt(SceneObject(pPlayer):getZoneName(),
+			SceneObject(pPlayer):getWorldPositionX(), SceneObject(pPlayer):getWorldPositionY())
+		if here == d.region then
+			creature:sendSystemMessage("You are already at " .. name(d.region) .. ": " .. WarDeploy.hereText(d))
+			return
+		end
+	end
 	local z = getWorldFloor(x, y, zone)
-	writeData(lastKey(oid), now)
 	creature:sendSystemMessage(WarDeploy.text(d))
 	printf("WarDeploy: " .. tostring(oid) .. " (" .. faction .. ") to " .. d.region .. " -- " .. d.role .. " of " .. d.front
 		.. " at " .. zone .. " " .. tostring(x) .. ", " .. tostring(y) .. "\n")
-	SceneObject(pPlayer):switchZone(zone, x, z, y, 0)
+	local moved = pcall(function() SceneObject(pPlayer):switchZone(zone, x, z, y, 0) end)
+	-- The wait is charged for a ride that happened, not for a refusal
+	-- (the verifier, 2026-09-07).
+	if moved then
+		writeData(lastKey(oid), now)
+	end
 end
 
 -- Console probe: test warDeployCheck
