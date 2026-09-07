@@ -91,6 +91,9 @@ WarOrders.HUNTER_SKILLS = { "combat_bountyhunter_novice" }
 WarOrders.SUPPLY_CATEGORIES = { "weapons", "armour", "medicine", "food", "clothing" }
 WarOrders.SUPPLY_ROTATION_TICKS = 24
 
+WarOrders.WP_PREFIX = "warorders:wp:"      -- the datapad waypoint an order placed (its object id)
+WarOrders.WAYPOINT_COLOR = 3              -- not the recruiter's front-line colour (2), so the two read apart
+
 local function key(oid)
 	return WarOrders.KEY_PREFIX .. tostring(oid)
 end
@@ -516,8 +519,114 @@ function WarOrders.save(oid, o)
 	writeStringData(key(oid), WarOrders.encode(o))
 end
 
-function WarOrders.clear(oid)
+--- Forget the order; the datapad waypoint it placed goes with it.
+function WarOrders.clear(oid, pPlayer)
 	writeStringData(key(oid), "")
+	pcall(function() WarOrders.removeWaypoint(pPlayer, oid) end)
+end
+
+local function wpKey(oid)
+	return WarOrders.WP_PREFIX .. tostring(oid)
+end
+
+--- The datapad waypoint's name for an order; nil for a hunt (its target is a
+-- player, anywhere). Pure.
+function WarOrders.waypointName(o)
+	if o == nil then
+		return nil
+	end
+	local n = name(o.region)
+	if o.type == "line" then
+		return "Orders: the line at " .. n
+	elseif o.type == "mend" then
+		return "Orders: mend the line at " .. n
+	elseif o.type == "carry" then
+		return "Orders: courier to " .. n
+	elseif o.type == "blockade" then
+		return "Orders: run the blockade to " .. n
+	elseif o.type == "hold" then
+		return "Orders: hold " .. n
+	elseif o.type == "rally" then
+		return "Orders: rally " .. n
+	elseif o.type == "scout" then
+		return "Orders: scout " .. n
+	elseif o.type == "supply" then
+		return "Orders: supply " .. n
+	end
+	return nil
+end
+
+--- Where the waypoint points, from the region's town-centre coords: the fight
+-- orders (line, mend) at the recruiter-anchor battle site -- through
+-- WarBattle.anchorPoint, the ONE place that arithmetic lives, so the pin and
+-- the fight cannot drift apart -- and every other order at the town centre.
+-- nil for a hunt or without coords. Pure.
+function WarOrders.waypointPoint(o, coords)
+	if o == nil or coords == nil or o.type == "hunt" then
+		return nil
+	end
+	local x, y = coords[1], coords[2]
+	if (o.type == "line" or o.type == "mend") and WarBattle ~= nil and WarBattle.anchorPoint ~= nil then
+		x, y = WarBattle.anchorPoint(coords, o.region)
+	end
+	return x, y
+end
+
+--- Put the order's waypoint on the player's datapad (persistent: it survives
+-- a relog) and remember its object id so the order's end can remove it.
+function WarOrders.placeWaypoint(pPlayer, oid, o)
+	if pPlayer == nil or o == nil then
+		return false
+	end
+	local wpName = WarOrders.waypointName(o)
+	local coords = (WarReport ~= nil and WarReport.COORDS ~= nil) and WarReport.COORDS[o.region] or nil
+	local zone = (WarReport ~= nil and WarReport.PLANET_OF ~= nil) and WarReport.PLANET_OF[o.region] or nil
+	local x, y = WarOrders.waypointPoint(o, coords)
+	if wpName == nil or x == nil or zone == nil then
+		return false
+	end
+	local pGhost = CreatureObject(pPlayer):getPlayerObject()
+	if pGhost == nil then
+		return false
+	end
+	WarOrders.removeWaypoint(pPlayer, oid)
+	local ok, wp = pcall(function()
+		return PlayerObject(pGhost):addWaypoint(zone, wpName, "", x, 0, y, WarOrders.WAYPOINT_COLOR, true, true, 0, 1)
+	end)
+	if ok and wp ~= nil and wp ~= 0 then
+		writeStringData(wpKey(oid), tostring(wp))
+		return true
+	end
+	printf("WarOrders: waypoint for " .. tostring(oid) .. " not placed: " .. tostring(wp) .. "\n")
+	return false
+end
+
+--- Take the order's waypoint off the datapad, if one was placed. The player
+-- pointer when the caller holds one, else the object id resolves it. False
+-- when nothing was placed.
+function WarOrders.removeWaypoint(pPlayer, oid)
+	local raw = readStringData(wpKey(oid))
+	if raw == nil or raw == "" then
+		return false
+	end
+	writeStringData(wpKey(oid), "")
+	local n = tonumber(raw)
+	local wp = (n ~= nil and math.tointeger ~= nil) and math.tointeger(n) or n
+	if wp == nil then
+		return false
+	end
+	if pPlayer == nil then
+		pPlayer = getSceneObject(oid)
+	end
+	if pPlayer == nil then
+		return false
+	end
+	local pGhost = CreatureObject(pPlayer):getPlayerObject()
+	if pGhost == nil then
+		return false
+	end
+	pcall(function() PlayerObject(pGhost):removeWaypoint(wp, true) end)
+	return true
 end
 
 local function isPresenceOrder(o)
@@ -541,7 +650,7 @@ function WarOrders.onRadial(pPlayer, pOfficer)
 	local now = getTimestampMilli()
 	local o = WarOrders.active(oid)
 	if o ~= nil and now >= (o.expiresAt or 0) then
-		WarOrders.clear(oid)
+		WarOrders.clear(oid, pPlayer)
 		creature:sendSystemMessage("Your orders have lapsed.")
 		o = nil
 	end
@@ -565,6 +674,9 @@ function WarOrders.onRadial(pPlayer, pOfficer)
 	WarOrders.save(oid, o)
 	creature:sendSystemMessage("Orders: " .. WarOrders.text(o, st))
 	creature:sendSystemMessage(WarOrders.rewardText(o))
+	if WarOrders.placeWaypoint(pPlayer, oid, o) then
+		creature:sendSystemMessage("The place is marked on your datapad.")
+	end
 	if isPresenceOrder(o) then
 		createEvent(WarOrders.HOLD_CHECK_MS, "WarOrders", "holdCheck", pPlayer, "")
 	end
@@ -586,7 +698,7 @@ function WarOrders.complete(oid, o, pPlayer)
 		end
 	end
 	writeStringData(lastKey(oid), o.type .. ":" .. o.region)
-	WarOrders.clear(oid)
+	WarOrders.clear(oid, pPlayer)
 	if pPlayer ~= nil then
 		local creature = CreatureObject(pPlayer)
 		creature:sendSystemMessage("Orders complete: " .. WarOrders.doneText(o) .. " " .. pointsText(pts) .. " to your name"
@@ -686,7 +798,7 @@ function WarOrders:holdCheck(pPlayer)
 		end
 		local now = getTimestampMilli()
 		if now >= (o.expiresAt or 0) then
-			WarOrders.clear(oid)
+			WarOrders.clear(oid, pPlayer)
 			CreatureObject(pPlayer):sendSystemMessage("Your orders have lapsed: " .. name(o.region) .. " was not "
 				.. ((o.type == "scout") and "scouted." or ((o.type == "rally") and "rallied." or "held.")))
 			return
@@ -726,7 +838,7 @@ function WarOrders.reportLine(pPlayer, st)
 	end
 	local now = getTimestampMilli()
 	if now >= (o.expiresAt or 0) then
-		WarOrders.clear(oid)
+		WarOrders.clear(oid, pPlayer)
 		return nil
 	end
 	return WarOrders.statusLine(o, st, now)
@@ -832,6 +944,34 @@ if type(Tests) == "table" then
 		if not ok then
 			printf("WARORDERS: failed: " .. tostring(err) .. "\n")
 		end
+		-- waypoints (B41): every region an order can name has a planet and coords
+		pcall(function()
+			local st = (WarReport ~= nil and WarReport.state ~= nil) and WarReport.state() or nil
+			local missing, total = 0, 0
+			if st ~= nil and type(st.regions) == "table" then
+				for id, _ in pairs(st.regions) do
+					total = total + 1
+					if WarReport.COORDS[id] == nil or WarReport.PLANET_OF[id] == nil then
+						missing = missing + 1
+						printf("WARORDERS: FAIL region without a waypoint target: " .. tostring(id) .. "\n")
+					end
+				end
+			end
+			printf("WARORDERS: " .. ((missing == 0 and total > 0) and "PASS" or "FAIL") .. " waypoint targets for "
+				.. tostring(total) .. " regions (" .. tostring(missing) .. " missing)\n")
+			local sample = { type = "line", region = "nab_moenia", faction = "rebel" }
+			local wx, wy = WarOrders.waypointPoint(sample, WarReport.COORDS[sample.region])
+			printf("WARORDERS: waypoint " .. tostring(WarOrders.waypointName(sample)) .. " -> "
+				.. tostring(WarReport.PLANET_OF[sample.region]) .. " " .. tostring(wx) .. ", " .. tostring(wy) .. "\n")
+			local hold = { type = "hold", region = "nab_moenia", faction = "rebel" }
+			local hx, hy = WarOrders.waypointPoint(hold, WarReport.COORDS[hold.region])
+			printf("WARORDERS: " .. ((hx ~= wx or hy ~= wy) and "PASS" or "FAIL") .. " the line's pin is not the town centre ("
+				.. tostring(hx) .. ", " .. tostring(hy) .. ")\n")
+			printf("WARORDERS: " .. ((WarOrders.waypointName({ type = "hunt", region = "nab_moenia" }) == nil) and "PASS" or "FAIL")
+				.. " hunt has no waypoint\n")
+			printf("WARORDERS: " .. ((WarOrders.removeWaypoint(nil, 4242) == false) and "PASS" or "FAIL")
+				.. " removing a waypoint nobody placed is a no-op\n")
+		end)
 		printf("WARORDERS: end\n")
 	end
 end
