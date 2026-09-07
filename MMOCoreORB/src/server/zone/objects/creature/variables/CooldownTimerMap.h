@@ -186,6 +186,50 @@ public:
 		return cooldown;
 	}
 
+	/**
+	 * Every timer still in the future, as name -> expiry in milliseconds.
+	 * Cooldown visibility (SWGWar, 2026-09-07): the object controller takes
+	 * one of these before a command runs and asks longestStartedSince()
+	 * afterwards, so the cooldown the command started can be sent to the
+	 * client as the command's timer (the toolbar icon's recharge sweep).
+	 */
+	void snapshotFuture(VectorMap<String, uint64>& out) const {
+		Locker locker(&cooldownMutex);
+		HashTableIterator<String, CooldownTimer> iterator = timers.iterator();
+		String key;
+		CooldownTimer value;
+		for (int i = 0; i < timers.size(); ++i) {
+			iterator.getNextKeyAndValue(key, value);
+			Time* stamp = value.getTime();
+			if (stamp != nullptr && !stamp->isPast())
+				out.put(key, stamp->getMiliTime());
+		}
+	}
+
+	/**
+	 * The longest remaining time, in milliseconds, among the timers that
+	 * were added or pushed further out since `before` (a snapshotFuture()
+	 * result); 0 when the command started nothing.
+	 */
+	uint64 longestStartedSince(const VectorMap<String, uint64>& before) const {
+		VectorMap<String, uint64> now;
+		snapshotFuture(now);
+		Time current;
+		uint64 nowMs = current.getMiliTime();
+		uint64 best = 0;
+		for (int i = 0; i < now.size(); ++i) {
+			const String& key = now.elementAt(i).getKey();
+			uint64 expiry = now.elementAt(i).getValue();
+			uint64 previous = before.contains(key) ? before.get(key) : 0;
+			if (expiry > previous && expiry > nowMs) {
+				uint64 remaining = expiry - nowMs;
+				if (remaining > best)
+					best = remaining;
+			}
+		}
+		return best;
+	}
+
 	Object* clone() {
 		return ObjectCloner<CooldownTimerMap>::clone(this);
 	}

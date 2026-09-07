@@ -11,6 +11,7 @@
 #include "server/zone/managers/skill/SkillModManager.h"
 #include "server/zone/objects/creature/CreatureObject.h"
 #include "server/zone/objects/player/PlayerObject.h"
+#include "server/zone/objects/creature/variables/CooldownTimerMap.h"
 
 void ObjectControllerImplementation::loadCommands() {
 	configManager = new CommandConfigManager(server);
@@ -141,6 +142,21 @@ float ObjectControllerImplementation::activateCommand(CreatureObject* object, un
 		object->addSkillMod(SkillModManager::ABILITYBONUS, skillMod, value, false);
 	}
 
+	// Cooldown visibility (SWGWar, 2026-09-07). The named cooldowns a command
+	// starts (rally, retreat, force of will, the innate abilities, gallop...)
+	// were enforced and never reported, so the toolbar could only ever show
+	// the attack-speed sweep. The creature's timers are snapshotted here and,
+	// after a successful command, the longest one it started or extended is
+	// sent as the client timer -- the icon's recharge. Core3.ShowCooldowns = 0
+	// in the config turns it off; Core3.ShowCooldownsMaxSeconds caps it.
+	bool showCooldowns = ConfigManager::instance()->getInt("Core3.ShowCooldowns", 1) != 0 && object->isPlayerCreature();
+	VectorMap<String, uint64> cooldownsBefore;
+	if (showCooldowns) {
+		CooldownTimerMap* timers = object->getCooldownTimerMap();
+		if (timers != nullptr)
+			timers->snapshotFuture(cooldownsBefore);
+	}
+
 	int errorNumber = queueCommand->doQueueCommand(object, targetID, arguments);
 
 #ifdef WITH_DEV_MODE
@@ -180,6 +196,21 @@ float ObjectControllerImplementation::activateCommand(CreatureObject* object, un
 			durationTime = commandTime;
 		}
 
+		if (showCooldowns) {
+			CooldownTimerMap* timers = object->getCooldownTimerMap();
+			if (timers != nullptr) {
+				float startedSeconds = timers->longestStartedSince(cooldownsBefore) / 1000.f;
+				float cap = (float) ConfigManager::instance()->getInt("Core3.ShowCooldownsMaxSeconds", 600);
+				// Only what outlasts the command itself (the swing delay is the
+				// command time already), and never more than the cap.
+				if (startedSeconds > durationTime && startedSeconds <= cap) {
+					durationTime = startedSeconds;
+
+					if (ConfigManager::instance()->getInt("Core3.ShowCooldownsLog", 0) != 0)
+						object->info(true) << "cooldown shown: /" << queueCommand->getQueueCommandName() << " " << startedSeconds << " s";
+				}
+			}
+		}
 
 		queueCommand->onComplete(actionCount, object, durationTime);
 	}
