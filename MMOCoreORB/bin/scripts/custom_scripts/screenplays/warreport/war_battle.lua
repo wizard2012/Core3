@@ -291,6 +291,7 @@ WarBattle.TOTAL_NPC_BUDGET = 192
 WarBattle.STREET_SITE = 9
 WarBattle.STREET_LINE_SIZE = 8         -- bodies per side in the streets: cramped ground
 WarBattle.STREET_RING_M = { 40, 80 }   -- fallbacks around the centre when it is off the navmesh
+WarBattle.STREETS_BROADCAST_MS = 2 * 60 * 60 * 1000  -- galaxy-wide news of a street fight: once per town per two hours
 
 -- SPREAD LAYER (2026-09-04, owner ruling). The simulation runs only 3 active
 -- fronts, so on any given tick TEN of the thirteen war regions have nothing
@@ -2107,6 +2108,18 @@ function WarBattle.stageStreetFight(regionId, attacker, heldSites, cycleNo)
 	-- For readouts: who is in the streets of this town, and since when.
 	writeStringData("warbattle:streets:" .. regionId, attacker)
 	writeData("warbattle:streets_ms:" .. regionId, getTimestampMilli())
+	-- Galaxy-wide, like a flip or a siege: the war reaching a town's streets
+	-- is news everywhere. Once per town per STREETS_BROADCAST_MS, so a town
+	-- that trades its outside sites back and forth does not shout hourly.
+	local nowMs = getTimestampMilli()
+	local lastMs = readData("warbattle:streets_broadcast_ms:" .. regionId) or 0
+	if (nowMs - lastMs) >= WarBattle.STREETS_BROADCAST_MS and WarVoice ~= nil and WarVoice.streetsBroadcast ~= nil then
+		writeData("warbattle:streets_broadcast_ms:" .. regionId, nowMs)
+		local townName = (WarReport.regionName ~= nil) and WarReport.regionName(regionId) or tostring(regionId)
+		local line = WarVoice.streetsBroadcast(attacker, townName)
+		local okB = pcall(function() broadcastToGalaxy(nil, line) end)
+		printf("WarBattle: streets broadcast " .. (okB and "sent" or "FAILED") .. " :: " .. tostring(line) .. "\n")
+	end
 	local pA = getSceneObject(readData("warbattle:sgt:" .. slotKey .. ":" .. attacker) or 0)
 	local pD = getSceneObject(readData("warbattle:sgt:" .. slotKey .. ":" .. front.faction) or 0)
 	shout(pA, "streets", attacker, nil)

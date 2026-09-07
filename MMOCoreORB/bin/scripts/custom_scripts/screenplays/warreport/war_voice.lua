@@ -89,6 +89,12 @@ function WarVoice.streetsNote(faction, townName)
 		tostring(townName), pick(WarVoice.FORCES, faction, "Enemy forces"))
 end
 
+--- Galaxy-wide line when a fight reaches a town's streets (B43).
+function WarVoice.streetsBroadcast(faction, townName)
+	return string.format("The fighting has reached the streets of %s: %s are inside the town.",
+		tostring(townName), pick(WarVoice.FORCES, faction, "Enemy forces"))
+end
+
 --- Presence line when ground changed hands recently. `faction` is the CAPTOR.
 function WarVoice.captureNote(faction)
 	return string.format("%s took a position here within the hour.", pick(WarVoice.FORCES, faction, "Enemy forces"))

@@ -724,6 +724,8 @@ function Tests:warSitesCheck()
 		printf("WARSITES: " .. ((WarBattle.streetFightFollows ~= nil and WarBattle.streetFightFollows("__none__", "rebel", "1") == false) and "PASS" or "FAIL")
 			.. " no street fight for an unknown region\n")
 		printf("WARSITES: streets note | " .. tostring(WarVoice ~= nil and WarVoice.streetsNote ~= nil and WarVoice.streetsNote("rebel", "Theed") or "none") .. "\n")
+		printf("WARSITES: streets broadcast | " .. tostring(WarVoice ~= nil and WarVoice.streetsBroadcast ~= nil and WarVoice.streetsBroadcast("imperial", "Anchorhead") or "none")
+			.. " (once per " .. tostring((WarBattle.STREETS_BROADCAST_MS or 0) // 60000) .. " min per town)\n")
 		for _, f in ipairs(WarBattle.fronts()) do
 			local by = readStringData("warbattle:streets:" .. tostring(f.id))
 			if by ~= nil and by ~= "" then
