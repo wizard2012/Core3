@@ -691,6 +691,40 @@ function Tests:warSitesCheck()
 			return
 		end
 		printf("WARSITES: alive combatants=" .. tostring(WarBattle.aliveCombatants()) .. " budget=" .. tostring(WarBattle.TOTAL_NPC_BUDGET) .. "\n")
+		-- B43: the street slot, the street fights standing now (from the roster), each front's street origin
+		printf("WARSITES: " .. ((WarBattle.STREET_SITE ~= nil and WarBattle.STREET_SITE > WarBattle.MAX_SITES_PER_REGION) and "PASS" or "FAIL")
+			.. " the street slot sits above the fresh-site range (" .. tostring(WarBattle.STREET_SITE) .. " > " .. tostring(WarBattle.MAX_SITES_PER_REGION) .. ")\n")
+		local streets = {}
+		local raw = readStringData(WarBattle.ROSTER_KEY) or ""
+		for rec in string.gmatch(raw, "[^;]+") do
+			local f = {}
+			for field in string.gmatch(rec .. "|", "([^|]*)|") do f[#f + 1] = field end
+			if f[3] == tostring(WarBattle.STREET_SITE) then
+				local k = tostring(f[2]) .. " " .. tostring(f[4])
+				streets[k] = (streets[k] or 0) + 1
+			end
+		end
+		local anyStreets = false
+		for k, n in pairs(streets) do
+			anyStreets = true
+			printf("WARSITES: streets | " .. k .. " x" .. tostring(n) .. "\n")
+		end
+		if not anyStreets then
+			printf("WARSITES: streets | none standing\n")
+		end
+		for _, f in ipairs(WarBattle.fronts()) do
+			local coords = WarReport.COORDS[f.id]
+			local zone = WarReport.PLANET_OF[f.id]
+			if coords ~= nil and zone ~= nil and WarBattle.streetOrigin ~= nil then
+				local sx, sy = WarBattle.streetOrigin(zone, coords, f.id)
+				printf(string.format("WARSITES: streets origin %s -> (%.0f, %.0f)%s\n", tostring(f.id), sx, sy,
+					(math.abs(sx - coords[1]) > 0.5 or math.abs(sy - coords[2]) > 0.5) and " (moved off the centre)" or ""))
+			end
+		end
+		printf("WARSITES: " .. ((WarBattle.streetFightFollows ~= nil and WarBattle.streetFightFollows("__none__", "rebel", "1") == false) and "PASS" or "FAIL")
+			.. " no street fight for an unknown region\n")
+		printf("WARSITES: " .. ((WarBattle.streetFightFollows ~= nil and WarBattle.streetFightFollows("nab_theed", "rebel", tostring(WarBattle.STREET_SITE)) == false) and "PASS" or "FAIL")
+			.. " a street fight does not follow itself\n")
 		for _, f in ipairs(WarBattle.fronts()) do
 			local r = st.regions[f.id]
 			local besieged = r ~= nil and r.is_capital == true and type(r.siege) == "table" and r.siege.active == true
@@ -714,6 +748,43 @@ function Tests:warSitesCheck()
 		printf("WARSITES: failed: " .. tostring(err) .. "\n")
 	end
 	printf("WARSITES: end\n")
+end
+
+--- test warStreetsStageNow: AN ACTION, not a check -- stages a street fight
+-- at the hottest live front right now (B43), exactly as reconcile() would
+-- after an attacking line won an outside site, so the mechanism can be seen
+-- without waiting for a win: 2 x STREET_LINE_SIZE bodies in the town, the
+-- sergeants' shouts, the held slot 9 that the next staging cycle
+-- re-attaches. Skips when a street fight already stands there (the roster
+-- has slot 9 records), like the real path.
+function Tests:warStreetsStageNow()
+	printf("WARSTREETS: begin\n")
+	local ok, err = pcall(function()
+		local fronts = (WarBattle ~= nil and WarBattle.fronts ~= nil) and WarBattle.fronts() or {}
+		if #fronts == 0 or WarBattle.stageStreetFight == nil then
+			printf("WARSTREETS: no live front or no stageStreetFight on this thread\n")
+			return
+		end
+		local f = fronts[1]
+		local held = {}
+		local raw = readStringData(WarBattle.ROSTER_KEY) or ""
+		for rec in string.gmatch(raw, "[^;]+") do
+			local fields = {}
+			for field in string.gmatch(rec .. "|", "([^|]*)|") do fields[#fields + 1] = field end
+			if fields[2] == f.id and fields[3] == tostring(WarBattle.STREET_SITE) then
+				held[f.id .. ":" .. tostring(WarBattle.STREET_SITE)] = true
+			end
+		end
+		printf("WARSTREETS: front " .. tostring(f.id) .. " attacker=" .. tostring(f.attacker) .. " holder=" .. tostring(f.faction)
+			.. " follows=" .. tostring(WarBattle.streetFightFollows(f.id, f.attacker, "1")) .. "\n")
+		local cycleNo = readData("warbattle:cycle") or 0
+		local n = WarBattle.stageStreetFight(f.id, f.attacker, held, cycleNo)
+		printf("WARSTREETS: staged " .. tostring(n) .. " bodies at " .. tostring(f.id) .. "\n")
+	end)
+	if not ok then
+		printf("WARSTREETS: failed: " .. tostring(err) .. "\n")
+	end
+	printf("WARSTREETS: end\n")
 end
 
 --- test warAllCheck: every readout probe in one console command, each in its

@@ -282,6 +282,15 @@ WarBattle.MAX_SITES_PER_REGION = 4
 -- cap on simultaneously-live combat AI, and nothing else in this file scales
 -- with it.
 WarBattle.TOTAL_NPC_BUDGET = 192
+-- B43 (owner ruling 2026-09-07, "fights move into town"): when an attacking
+-- line wins a site outside a town, the fight moves into the streets -- a
+-- second, smaller engagement at the town centre in slot STREET_SITE, above
+-- MAX_SITES_PER_REGION so the fresh-site loop never stages it and the
+-- held-slot walk treats it as the live fight it is (formup area, waves).
+-- One per town at a time; charged against the alive count like any site.
+WarBattle.STREET_SITE = 9
+WarBattle.STREET_LINE_SIZE = 8         -- bodies per side in the streets: cramped ground
+WarBattle.STREET_RING_M = { 40, 80 }   -- fallbacks around the centre when it is off the navmesh
 
 -- SPREAD LAYER (2026-09-04, owner ruling). The simulation runs only 3 active
 -- fronts, so on any given tick TEN of the thirteen war regions have nothing
@@ -909,6 +918,7 @@ function WarBattle:reconcile(advanceClock)
 
 	local keptRecs, keptOids = {}, {}
 	local pendingGarrisons = {}
+	local pendingStreets = {}
 	local captureSlotsKept = 0
 
 	local function standDown(sl)
@@ -1026,6 +1036,13 @@ function WarBattle:reconcile(advanceClock)
 			pendingGarrisons[#pendingGarrisons + 1] = {
 				region = sl.region, site = sl.site, faction = sl.survivor, ox = sl.ox, oy = sl.oy,
 			}
+			-- B43: the attackers won ground outside the town -- the fight
+			-- moves into the streets (staged below, after the roster
+			-- rewrite, for the same trackUnit reason). Never from a street
+			-- fight itself, never when the survivor already holds the town.
+			if WarBattle.streetFightFollows ~= nil and WarBattle.streetFightFollows(sl.region, sl.survivor, sl.site) then
+				pendingStreets[sl.region] = sl.survivor
+			end
 		elseif sl.isCapture then
 			-- A capture garrison aging out or wiped: the ground is open
 			-- again, and the "took a position here" note is stale.
@@ -1089,6 +1106,15 @@ function WarBattle:reconcile(advanceClock)
 				writeData("warbattle:lastcapture_ms:" .. pg.region, getTimestampMilli())
 				room = room - 1
 			end
+		end
+	end
+
+	-- B43: fights that move into town. After the garrisons: the winners'
+	-- garrison stands on the ground they took, the fight goes on inside.
+	for region, attacker in pairs(pendingStreets) do
+		local okS, n = pcall(WarBattle.stageStreetFight, region, attacker, heldSites, cycleNo)
+		if not okS then
+			printf("WarBattle: street fight at " .. tostring(region) .. " failed: " .. tostring(n) .. "\n")
 		end
 	end
 
@@ -1907,6 +1933,117 @@ local function spawnSite(zone, regionId, siteIndex, defenderFaction, attackerFac
 			string.format("%.4f", ux), string.format("%.4f", uy), string.format("%.1f", approach) }, "|"))
 
 	return #defenders + #attackers + walkersUp
+end
+
+--- B43: does an attacking line's win at a site send the fight into town?
+-- Only from an outside site (not the streets, not a garrison), only when
+-- the survivor is not the town's holder, and only while the sim still has
+-- this attacker at this front (fronts() is empty in the intermission).
+function WarBattle.streetFightFollows(regionId, survivor, site)
+	if regionId == nil or survivor == nil or tostring(site) == tostring(WarBattle.STREET_SITE) then
+		return false
+	end
+	local s = tostring(site)
+	if s == "0" or string.sub(s, 1, 1) == "c" then
+		return false
+	end
+	local st = (WarReport ~= nil and WarReport.state ~= nil) and WarReport.state() or nil
+	local r = (st ~= nil and type(st.regions) == "table") and st.regions[regionId] or nil
+	if r == nil or r.faction == nil or r.faction == survivor then
+		return false
+	end
+	for _, f in ipairs(WarBattle.fronts()) do
+		if f.id == regionId and f.attacker == survivor then
+			return true
+		end
+	end
+	return false
+end
+
+--- The street fight's ground: the town centre when it is on the navmesh,
+-- else the first of four bearings at each STREET_RING_M radius that is;
+-- the centre anyway when nothing near it is meshed (the staging log says
+-- so, like walkableOrigin).
+function WarBattle.streetOrigin(zone, coords, regionId)
+	local cx, cy = coords[1], coords[2]
+	if zone == nil or type(isPointWalkable) ~= "function" or type(getWorldFloor) ~= "function" then
+		return cx, cy
+	end
+	local function walkable(x, y)
+		local okz, z = pcall(getWorldFloor, x, y, zone)
+		if not okz or type(z) ~= "number" then
+			return false
+		end
+		local ok, w = pcall(isPointWalkable, zone, x, z, y)
+		return ok and w == true
+	end
+	if walkable(cx, cy) then
+		return cx, cy
+	end
+	for _, r in ipairs(WarBattle.STREET_RING_M) do
+		for _, deg in ipairs({ 0, 90, 180, 270 }) do
+			local rad = deg * math.pi / 180
+			local x, y = cx + r * math.cos(rad), cy + r * math.sin(rad)
+			if walkable(x, y) then
+				printf(string.format("WarBattle: %s streets moved %d deg at %d m: the centre is off the navmesh\n",
+					tostring(regionId), deg, r))
+				return x, y
+			end
+		end
+	end
+	printf("WarBattle: " .. tostring(regionId) .. " streets -- no meshed point near the centre; staging there anyway\n")
+	return cx, cy
+end
+
+--- B43: stage the street fight at a town the attackers just won ground
+-- outside of. One per town at a time (the held slot persists until it
+-- resolves or ages out), budget-aware against the alive count, the holder
+-- defends. Returns the bodies spawned (0 when nothing was staged).
+function WarBattle.stageStreetFight(regionId, attacker, heldSites, cycleNo)
+	local slotKey = regionId .. ":" .. tostring(WarBattle.STREET_SITE)
+	if heldSites ~= nil and heldSites[slotKey] ~= nil then
+		return 0
+	end
+	local front = nil
+	for _, f in ipairs(WarBattle.fronts()) do
+		if f.id == regionId and f.attacker == attacker then
+			front = f
+		end
+	end
+	if front == nil or front.faction == nil then
+		return 0
+	end
+	local zone = (WarReport ~= nil) and WarReport.PLANET_OF[regionId] or nil
+	local coords = (WarReport ~= nil) and WarReport.COORDS[regionId] or nil
+	if zone == nil or coords == nil or not isZoneEnabled(zone) then
+		return 0
+	end
+	local alive = WarBattle.aliveCombatants()
+	local cost = WarBattle.STREET_LINE_SIZE * 2
+	if alive + cost > WarBattle.TOTAL_NPC_BUDGET then
+		printf(string.format("WarBattle: %s -- the fight would move into town but the budget is spent (%d alive + %d > %d)\n",
+			tostring(regionId), alive, cost, WarBattle.TOTAL_NPC_BUDGET))
+		return 0
+	end
+	local ox, oy = WarBattle.streetOrigin(zone, coords, regionId)
+	local n = spawnSite(zone, regionId, WarBattle.STREET_SITE, front.faction, attacker, ox, oy, WarBattle.STREET_LINE_SIZE, nil)
+	if n == nil or n <= 0 then
+		return 0
+	end
+	if heldSites ~= nil then
+		heldSites[slotKey] = { ox = ox, oy = oy }
+	end
+	writeData("warbattle:born:" .. slotKey, cycleNo or 0)
+	-- For readouts: who is in the streets of this town, and since when.
+	writeStringData("warbattle:streets:" .. regionId, attacker)
+	writeData("warbattle:streets_ms:" .. regionId, getTimestampMilli())
+	local pA = getSceneObject(readData("warbattle:sgt:" .. slotKey .. ":" .. attacker) or 0)
+	local pD = getSceneObject(readData("warbattle:sgt:" .. slotKey .. ":" .. front.faction) or 0)
+	shout(pA, "streets", attacker, nil)
+	shout(pD, "streets_hold", front.faction, officerAt(regionId))
+	printf(string.format("WarBattle: the fight moves into %s: %s in the streets against the %s garrison, %d bodies at (%.0f, %.0f)\n",
+		tostring(regionId), tostring(attacker), tostring(front.faction), n, ox, oy))
+	return n
 end
 
 --- Scheduled STALL_CHECK_MS after a site is staged. If most of the attacking
