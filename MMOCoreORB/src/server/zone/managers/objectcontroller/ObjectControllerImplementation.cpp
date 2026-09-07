@@ -196,15 +196,26 @@ float ObjectControllerImplementation::activateCommand(CreatureObject* object, un
 			durationTime = commandTime;
 		}
 
+		// The cooldown rides ONLY the packet the client draws. durationTime
+		// itself is this function's return value, and CommandQueue pushes
+		// the player's nextActionTime by it (CommandQueue.cpp, the "time > 0"
+		// branch after activateCommand): inflating it would have locked the
+		// player out of every command for the cooldown (verifier, 2026-09-07).
+		float reportedTime = durationTime;
 		if (showCooldowns) {
 			CooldownTimerMap* timers = object->getCooldownTimerMap();
 			if (timers != nullptr) {
-				float startedSeconds = timers->longestStartedSince(cooldownsBefore) / 1000.f;
+				// Timers that are not an ability's recharge: the chat-shout
+				// throttle (warcry, intimidate, form up... set it for 30 s
+				// while the ability itself is usable at once) and the swing.
+				Vector<String> ignore;
+				ignore.add("command_message");
+				ignore.add("autoAttackDelay");
+				float startedSeconds = timers->longestStartedSince(cooldownsBefore, ignore) / 1000.f;
 				float cap = (float) ConfigManager::instance()->getInt("Core3.ShowCooldownsMaxSeconds", 600);
-				// Only what outlasts the command itself (the swing delay is the
-				// command time already), and never more than the cap.
-				if (startedSeconds > durationTime && startedSeconds <= cap) {
-					durationTime = startedSeconds;
+				// Only what outlasts the command itself, and never more than the cap.
+				if (startedSeconds > reportedTime && startedSeconds <= cap) {
+					reportedTime = startedSeconds;
 
 					if (ConfigManager::instance()->getInt("Core3.ShowCooldownsLog", 0) != 0)
 						object->info(true) << "cooldown shown: /" << queueCommand->getQueueCommandName() << " " << startedSeconds << " s";
@@ -212,7 +223,7 @@ float ObjectControllerImplementation::activateCommand(CreatureObject* object, un
 			}
 		}
 
-		queueCommand->onComplete(actionCount, object, durationTime);
+		queueCommand->onComplete(actionCount, object, reportedTime);
 	}
 
 

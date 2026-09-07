@@ -209,9 +209,11 @@ public:
 	/**
 	 * The longest remaining time, in milliseconds, among the timers that
 	 * were added or pushed further out since `before` (a snapshotFuture()
-	 * result); 0 when the command started nothing.
+	 * result); 0 when the command started nothing. Names in `ignore` are
+	 * skipped: the chat-shout throttle and the swing delay are timers too,
+	 * and neither is the ability's recharge.
 	 */
-	uint64 longestStartedSince(const VectorMap<String, uint64>& before) const {
+	uint64 longestStartedSince(const VectorMap<String, uint64>& before, const Vector<String>& ignore) const {
 		VectorMap<String, uint64> now;
 		snapshotFuture(now);
 		Time current;
@@ -219,6 +221,8 @@ public:
 		uint64 best = 0;
 		for (int i = 0; i < now.size(); ++i) {
 			const String& key = now.elementAt(i).getKey();
+			if (ignore.contains(key))
+				continue;
 			uint64 expiry = now.elementAt(i).getValue();
 			uint64 previous = before.contains(key) ? before.get(key) : 0;
 			if (expiry > previous && expiry > nowMs) {
