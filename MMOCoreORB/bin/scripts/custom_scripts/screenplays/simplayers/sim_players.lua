@@ -326,6 +326,19 @@ local function fightSpot(regionId, idx)
 			ox, oy = sx, sy
 		end
 	end
+	-- B43: a fight standing in the town's streets pulls them into town --
+	-- the ground's keys (stageStreetFight writes them, reconcile deletes
+	-- them on resolution), capped like the presence note.
+	local by = readStringData("warbattle:streets:" .. tostring(regionId))
+	local at = readData("warbattle:streets_ms:" .. tostring(regionId)) or 0
+	local xy = readStringData("warbattle:streets_xy:" .. tostring(regionId))
+	local cap = (WarPresence ~= nil and WarPresence.STREETS_NOTE_MS) or (30 * 60 * 1000)
+	if by ~= nil and by ~= "" and at > 0 and (now() - at) <= cap and xy ~= nil and xy ~= "" then
+		local sx, sy = string.match(xy, "^(-?[%d%.]+),(-?[%d%.]+)$")
+		if sx ~= nil and tonumber(sx) ~= nil and tonumber(sy) ~= nil then
+			ox, oy = tonumber(sx), tonumber(sy)
+		end
+	end
 	return { zone = zone, x = ox + 6 + ((idx or 0) % 4) * 2, z = 0, y = oy + 6 + (math.floor((idx or 0) / 4) % 3) * 2, cell = 0 }
 end
 

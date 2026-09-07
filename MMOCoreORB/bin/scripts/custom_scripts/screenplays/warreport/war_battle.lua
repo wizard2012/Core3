@@ -1107,6 +1107,7 @@ function WarBattle:reconcile(advanceClock)
 		-- note goes with it.
 		if tostring(sl.site) == tostring(WarBattle.STREET_SITE) then
 			pcall(function() deleteStringData("warbattle:streets:" .. sl.region) end)
+			pcall(function() deleteStringData("warbattle:streets_xy:" .. sl.region) end)
 		end
 		standDown(sl)
 		writeData(sl.bornKey, 0)
@@ -2119,6 +2120,8 @@ function WarBattle.stageStreetFight(regionId, attacker, heldSites, cycleNo)
 	-- For readouts: who is in the streets of this town, and since when.
 	writeStringData("warbattle:streets:" .. regionId, attacker)
 	writeData("warbattle:streets_ms:" .. regionId, getTimestampMilli())
+	-- Where it stands, for the SimPlayers (sim_players.lua fightSpot).
+	writeStringData("warbattle:streets_xy:" .. regionId, string.format("%.1f,%.1f", ox, oy))
 	-- B46: the ground reports it (channels NEWS `street_fight`), the sim
 	-- makes it an event, the login digest reads it back.
 	WarBattle.report({ [regionId .. "|" .. attacker] = 1 }, "street_fight")
