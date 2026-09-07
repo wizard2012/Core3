@@ -1097,6 +1097,8 @@ function WarLines.eventLine(e, st)
 	elseif e.kind == "war_won" then
 		return "Season " .. tostring(e.season or "?") .. " went to the " .. WarLines.side(e.faction)
 			.. (e.sudden_death and " on reserve" or "") .. "."
+	elseif e.kind == "street_fight" then
+		return "The fighting reached the streets of " .. town .. ": the " .. WarLines.side(e.faction) .. " got inside."
 	elseif e.kind == "officer_defeated" then
 		local who = (type(e.officer) == "string" and e.officer ~= "") and e.officer or "An officer"
 		return who .. " of the " .. WarLines.side(e.faction) .. " was " .. tostring(e.status or "defeated") .. " at " .. town .. "."

@@ -140,6 +140,10 @@ local VALID_SOURCES = {
 	-- ground reports what happened; the sim decides what it costs.
 	casualty                = true,
 	site_lost               = true,
+	-- B46: the fighting reached a town's streets (war_battle.lua's
+	-- stageStreetFight; points = stagings). The sim turns it into a
+	-- street_fight event for the login digest.
+	street_fight            = true,
 }
 WarContrib.VALID_SOURCES = VALID_SOURCES
 

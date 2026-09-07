@@ -2119,6 +2119,9 @@ function WarBattle.stageStreetFight(regionId, attacker, heldSites, cycleNo)
 	-- For readouts: who is in the streets of this town, and since when.
 	writeStringData("warbattle:streets:" .. regionId, attacker)
 	writeData("warbattle:streets_ms:" .. regionId, getTimestampMilli())
+	-- B46: the ground reports it (channels NEWS `street_fight`), the sim
+	-- makes it an event, the login digest reads it back.
+	WarBattle.report({ [regionId .. "|" .. attacker] = 1 }, "street_fight")
 	-- Galaxy-wide, like a flip or a siege: the war reaching a town's streets
 	-- is news everywhere. Once per town per STREETS_BROADCAST_MS, so a town
 	-- that trades its outside sites back and forth does not shout hourly.
