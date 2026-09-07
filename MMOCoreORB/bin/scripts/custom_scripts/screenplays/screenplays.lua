@@ -77,6 +77,9 @@ includeFile("../custom_scripts/screenplays/warreport/war_mcp_probe.lua")
 -- war_orders.lua: slice 8 -- orders from the officer. After war_contrib.lua
 -- and war_contrib_counter.lua: it wraps WarContrib.record above the counter.
 includeFile("../custom_scripts/screenplays/warreport/war_orders.lua")
+-- war_deploy.lua: B42 -- the officer's transport to the front. After war_orders.lua
+-- (an open order picks the front) and war_battle.lua (WarBattle.fronts()).
+includeFile("../custom_scripts/screenplays/warreport/war_deploy.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_template_probe.lua")
 -- Slice D: a player takes command of a line from its sergeant (radial).
 includeFile("../custom_scripts/screenplays/warreport/war_command.lua")

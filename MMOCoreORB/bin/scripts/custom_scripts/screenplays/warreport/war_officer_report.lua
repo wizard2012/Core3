@@ -138,6 +138,10 @@ function WarOfficerReportMenuComponent:fillObjectMenuResponse(pSceneObject, pMen
 	if WarOrders ~= nil and WarOrders.onRadial ~= nil then
 		menuResponse:addRadialMenuItem(WarOrders.RADIAL_ID or 21, 3, "Orders")
 	end
+	-- B42: transport to the front (war_deploy.lua).
+	if WarDeploy ~= nil and WarDeploy.onRadial ~= nil then
+		menuResponse:addRadialMenuItem(WarDeploy.RADIAL_ID or 22, 3, "Deploy")
+	end
 end
 
 function WarOfficerReportMenuComponent:handleObjectMenuSelect(pSceneObject, pPlayer, selectedID)
@@ -151,6 +155,11 @@ function WarOfficerReportMenuComponent:handleObjectMenuSelect(pSceneObject, pPla
 		local ok, err = pcall(function() WarOrders.onRadial(pPlayer, pSceneObject) end)
 		if not ok then
 			printf("WarOrders.onRadial failed, swallowed: " .. tostring(err) .. "\n")
+		end
+	elseif WarDeploy ~= nil and selectedID == (WarDeploy.RADIAL_ID or 22) then
+		local ok, err = pcall(function() WarDeploy.onRadial(pPlayer, pSceneObject) end)
+		if not ok then
+			printf("WarDeploy.onRadial failed, swallowed: " .. tostring(err) .. "\n")
 		end
 	end
 
