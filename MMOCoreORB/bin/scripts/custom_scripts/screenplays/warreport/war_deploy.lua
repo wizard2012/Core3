@@ -75,15 +75,28 @@ function WarDeploy.destination(fronts, faction, orderRegion)
 	return best
 end
 
+--- "Mos Eisley on Tatooine" when the ride crosses planets (the sim stages
+-- Coronet from Mos Eisley), else just the town. Pure.
+local function whereText(d)
+	local where = name(d.region)
+	if WarLines ~= nil and WarLines.planetOf ~= nil and WarLines.planetName ~= nil and d.front ~= nil then
+		local there, here = WarLines.planetOf(d.region), WarLines.planetOf(d.front)
+		if there ~= nil and here ~= nil and there ~= here then
+			where = where .. " on " .. tostring(WarLines.planetName(there))
+		end
+	end
+	return where
+end
+
 --- The line the player reads as the transport leaves. Pure.
 function WarDeploy.text(d)
 	if d == nil then
 		return nil
 	end
 	if d.role == "assault" then
-		return "Transport to " .. name(d.region) .. ": the assault on " .. name(d.front) .. " stages there."
+		return "Transport to " .. whereText(d) .. ": the assault on " .. name(d.front) .. " stages there."
 	end
-	return "Transport to " .. name(d.region) .. ": it is under assault and the garrison needs you."
+	return "Transport to " .. whereText(d) .. ": it is under assault and the garrison needs you."
 end
 
 --- What to do where you already are. Pure.
