@@ -281,7 +281,11 @@ WarBattle.MAX_SITES_PER_REGION = 4
 -- THIS IS THE DIAL TO TURN DOWN FIRST if the server struggles: it is a hard
 -- cap on simultaneously-live combat AI, and nothing else in this file scales
 -- with it.
-WarBattle.TOTAL_NPC_BUDGET = 192
+-- 192 -> 224 on 2026-09-07 (autonomous): street fights (16 a town) and raids
+-- (4 an order) share the budget with the sites now, and 184 alive of 192 was
+-- starving fresh fronts (a cycle staged 3 sites / 24 bodies) at 32-57 % of one
+-- core on a 16-core host. Reversible: one number. The monitor alarms at 300 %.
+WarBattle.TOTAL_NPC_BUDGET = 224
 -- B43 (owner ruling 2026-09-07, "fights move into town"): when an attacking
 -- line wins a site outside a town, the fight moves into the streets -- a
 -- second, smaller engagement at the town centre in slot STREET_SITE, above
