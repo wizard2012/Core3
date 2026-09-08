@@ -292,6 +292,42 @@ function WarAnnounce:standingsDispatch(tick, force)
 	end
 end
 
+--- B56 the finale: a capital in its last hour is news every FINALE_EVERY
+-- ticks (an hour), per capital.
+WarAnnounce.FINALE_KEY_PREFIX = "warannounce:finale:"
+WarAnnounce.FINALE_EVERY_TICKS = 4
+
+function WarAnnounce:finaleDispatch(tick)
+	if WarLines == nil or WarLines.finaleLine == nil or WarReport == nil or WarReport.state == nil then
+		return
+	end
+	tick = tonumber(tick) or 0
+	local st = WarReport.state()
+	if st == nil or type(st.regions) ~= "table" then
+		return
+	end
+	local ids = {}
+	for id, r in pairs(st.regions) do
+		if r.is_capital == true then ids[#ids + 1] = id end
+	end
+	table.sort(ids)
+	for _, id in ipairs(ids) do
+		local line = WarLines.finaleLine(st, id)
+		if line ~= nil then
+			local last = readSharedMemory(WarAnnounce.FINALE_KEY_PREFIX .. id) or 0
+			if last == 0 or (tick - last) >= WarAnnounce.FINALE_EVERY_TICKS then
+				writeSharedMemory(WarAnnounce.FINALE_KEY_PREFIX .. id, tick)
+				local ok, err = pcall(function() broadcastToGalaxy(nil, line) end)
+				if ok then
+					printf("WarAnnounce: finale tick=" .. tostring(tick) .. " :: " .. line .. "\n")
+				else
+					printf("WarAnnounce: finale broadcast FAILED: " .. tostring(err) .. "\n")
+				end
+			end
+		end
+	end
+end
+
 function WarAnnounce:run()
 	if WAR_FLIPS == nil or type(WAR_FLIPS) ~= "table" then
 		return -- no flip file yet; nothing to say
@@ -318,6 +354,7 @@ function WarAnnounce:run()
 	pcall(function() WarAnnounce:supplyDispatch(tick) end)
 	pcall(function() WarAnnounce:transitionDispatch(tick) end)
 	pcall(function() WarAnnounce:standingsDispatch(tick, false) end)
+	pcall(function() WarAnnounce:finaleDispatch(tick) end)
 
 	if #flips == 0 then
 		return -- tick claimed, dispatch sent, nothing changed hands this time

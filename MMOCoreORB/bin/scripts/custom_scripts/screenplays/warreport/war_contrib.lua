@@ -151,6 +151,9 @@ local VALID_SOURCES = {
 	-- B55: a supply convoy destroyed on the road in (war_convoy.lua); the
 	-- holder's side, the town, points 1. News for the digest.
 	convoy_lost             = true,
+	-- B56: an offensive's commander killed (war_battle.lua tendCommander);
+	-- the attacker's side, the front. The sim ends the offensive on it.
+	commander_killed        = true,
 }
 WarContrib.VALID_SOURCES = VALID_SOURCES
 

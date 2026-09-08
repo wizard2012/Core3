@@ -95,6 +95,14 @@ function WarVoice.streetsBroadcast(faction, townName)
 		tostring(townName), pick(WarVoice.FORCES, faction, "Enemy forces"))
 end
 
+--- B56: galaxy-wide, when an offensive's commander falls. `faction` is the
+-- attacker's side.
+function WarVoice.commanderDown(faction, townName, commanderName)
+	local sideName = (faction == "imperial") and "Empire" or ((faction == "rebel") and "Alliance" or "enemy")
+	return string.format("%s, the %s's commander at %s, has fallen. The offensive falters.",
+		tostring(commanderName or "The commander"), sideName, tostring(townName))
+end
+
 --- Presence line when ground changed hands recently. `faction` is the CAPTOR.
 function WarVoice.captureNote(faction)
 	return string.format("%s took a position here within the hour.", pick(WarVoice.FORCES, faction, "Enemy forces"))
@@ -229,6 +237,8 @@ WarVoice.BATTLE = {
 	order_hold     = { imperial = "Hold position. Nobody moves.",                  rebel = "Hold here! Dig in!" },
 	order_fallback = { imperial = "Fall back on the commander -- move!",           rebel = "Back to the commander -- go, go!" },
 	order_advance  = { imperial = "Advance to the marker -- move, move!",           rebel = "On the marker -- go, go, go!" },
+	-- B56: the offensive's commander takes the field.
+	commander      = { imperial = "I have the field. This town falls today.",       rebel = "On me. We take this town and we keep it." },
 	dismissed      = { imperial = "Resuming command. Good hunting.",               rebel = "I have the squad again. Thanks for the help." },
 	released       = { imperial = "Commander down -- I have the squad!",           rebel = "We lost the commander -- on me!" },
 }

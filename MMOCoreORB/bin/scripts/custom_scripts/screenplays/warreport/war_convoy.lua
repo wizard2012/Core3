@@ -223,6 +223,13 @@ function WarConvoy.spawn(regionId, holder)
 			if spec[4] ~= nil then
 				pcall(function() SceneObject(p):setCustomObjectName(spec[4]) end)
 			end
+			-- The stock walking recipe (kidnappedNobleConvoHandler.lua): patrol
+			-- state at spawn, then a next position per leg with stopWaiting and
+			-- executeBehavior -- setNextPosition alone leaves them standing.
+			pcall(function()
+				AiAgent(p):addObjectFlag(AI_NOAIAGGRO)
+				AiAgent(p):setMovementState(AI_PATROLLING)
+			end)
 			oids[#oids + 1] = SceneObject(p):getObjectID()
 			bodies[#bodies + 1] = p
 		end
@@ -348,7 +355,12 @@ function WarConvoy.stepOnce()
 						local side = (i == 2) and 1 or -1
 						ox, oy = -uy * 3 * side, ux * 3 * side
 					end
-					pcall(function() AiAgent(p):setNextPosition(nx + ox, z, ny + oy, 0) end)
+					pcall(function()
+						local a = AiAgent(p)
+						a:stopWaiting()
+						a:setNextPosition(nx + ox, z, ny + oy, 0)
+						a:executeBehavior()
+					end)
 				end
 			end
 			moved = moved + 1

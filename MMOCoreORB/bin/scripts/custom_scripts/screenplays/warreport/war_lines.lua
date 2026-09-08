@@ -1101,6 +1101,8 @@ function WarLines.eventLine(e, st)
 		return "The fighting reached the streets of " .. town .. ": the " .. WarLines.side(e.faction) .. " got inside."
 	elseif e.kind == "convoy_lost" then
 		return "A supply convoy into " .. town .. " was destroyed on the road: the " .. WarLines.side(e.faction) .. " lost its crates."
+	elseif e.kind == "commander_killed" then
+		return "The " .. WarLines.side(e.faction) .. "'s commander fell at " .. town .. "; the offensive faltered."
 	elseif e.kind == "officer_defeated" then
 		local who = (type(e.officer) == "string" and e.officer ~= "") and e.officer or "An officer"
 		return who .. " of the " .. WarLines.side(e.faction) .. " was " .. tostring(e.status or "defeated") .. " at " .. town .. "."
@@ -1234,4 +1236,37 @@ function WarLines.craftLine(st)
 	local pays = tonumber(WarOrders.SUPPLY_POINTS) or 6
 	return "The line wants " .. tostring(category) .. " this watch: " .. string.format("%.1f", pays)
 		.. " crates' worth of it at a recruiter pays a supply order."
+end
+
+--- B56 the finale: a capital in its last hour (falls_in_ticks at or under
+-- FINALE_TICKS). lastStand(st, regionId, faction) is true for the HOLDER's
+-- side at such a capital -- the defenders' kills count double there. Pure.
+WarLines.FINALE_TICKS = 4
+
+function WarLines.finaleAt(st, regionId)
+	local r = (st ~= nil and type(st.regions) == "table") and st.regions[regionId] or nil
+	if r == nil or r.is_capital ~= true then
+		return false
+	end
+	local t = num(r.falls_in_ticks)
+	return t ~= nil and t >= 0 and t <= WarLines.FINALE_TICKS
+end
+
+function WarLines.lastStand(st, regionId, faction)
+	if not WarLines.finaleAt(st, regionId) then
+		return false
+	end
+	local r = st.regions[regionId]
+	return faction ~= nil and r.faction == faction
+end
+
+--- The galaxy line for a capital in its last hour. Pure.
+function WarLines.finaleLine(st, regionId)
+	if not WarLines.finaleAt(st, regionId) then
+		return nil
+	end
+	local r = st.regions[regionId]
+	local town = WarLines.name(regionId)
+	return town .. ", the " .. WarLines.side(r.faction) .. "'s capital, falls within the hour unless its roads are retaken. Last stand at "
+		.. town .. ": a defender's kill there counts double."
 end

@@ -305,6 +305,15 @@ WarBattle.GATE_TEMPLATE = "object/installation/faction_perk/turret/block_sm.iff"
 WarBattle.GATE_FRACTION = 0.55           -- along the line from the centre to the site origin
 WarBattle.GATES_KEY_PREFIX = "warbattle:gates:"   -- <region> -> comma-separated turret oids
 WarBattle.GATE_FACTION_HASH = { imperial = FACTIONIMPERIAL, rebel = FACTIONREBEL }
+-- B56 (owner ruling 2026-09-07, evening: "commanders and a finale"): a declared
+-- offensive has a named commander -- the attacking line's first sergeant --
+-- and the commander falling is a ground report the sim ends the offensive on.
+WarBattle.COMMANDERS = {
+	imperial = { "Colonel Dravik Thane", "Major Sera Vantos", "Commander Ilo Kesh", "Colonel Bren Sarkan" },
+	rebel    = { "Colonel Mira Sandoval", "Major Teo Ranse", "Commander Jhal Orrin", "Colonel Ysa Threnody" },
+}
+WarBattle.COMMANDER_KEY_PREFIX = "warbattle:commander:"       -- <region> -> the commander's oid
+WarBattle.COMMANDER_LOST_PREFIX = "warbattle:commander_lost:" -- <region> -> ms the commander fell (one per offensive)
 
 -- SPREAD LAYER (2026-09-04, owner ruling). The simulation runs only 3 active
 -- fronts, so on any given tick TEN of the thirteen war regions have nothing
@@ -2292,6 +2301,72 @@ function WarBattle:gateDestroyed(pTurret, pKiller)
 	return 1
 end
 
+--- B56: the commander's name for an offensive at a town: stable per town
+-- and side. Pure.
+function WarBattle.commanderName(regionId, faction)
+	local pool = WarBattle.COMMANDERS[faction]
+	if pool == nil or #pool == 0 then
+		return nil
+	end
+	local h = 0
+	for i = 1, #tostring(regionId) do
+		h = (h * 31 + string.byte(tostring(regionId), i)) % 1000003
+	end
+	return pool[(h % #pool) + 1]
+end
+
+--- B56: once per region per staging cycle. A declared offensive names the
+-- attacking line's first sergeant its commander; a commander found dead or
+-- gone is reported (`commander_killed`, the attacker's side) once per
+-- offensive, shouted galaxy-wide, and not replaced until the offensive ends
+-- (the sim ends it on the report). Returns what happened.
+function WarBattle.tendCommander(regionId, f)
+	local key = WarBattle.COMMANDER_KEY_PREFIX .. tostring(regionId)
+	local lostKey = WarBattle.COMMANDER_LOST_PREFIX .. tostring(regionId)
+	if f == nil or f.offensive ~= true or f.attacker == nil then
+		if (readData(key) or 0) > 0 or (readData(lostKey) or 0) > 0 then
+			writeData(key, 0)
+			writeData(lostKey, 0)
+		end
+		return "none"
+	end
+	if (readData(lostKey) or 0) > 0 then
+		return "fallen"
+	end
+	local oid = readData(key) or 0
+	if oid > 0 then
+		local p = getSceneObject(oid)
+		local okd, dead = pcall(function() return p ~= nil and CreatureObject(p):isDead() end)
+		if p ~= nil and not (okd and dead == true) then
+			return "standing"
+		end
+		writeData(lostKey, getTimestampMilli())
+		writeData(key, 0)
+		local nm = WarBattle.commanderName(regionId, f.attacker) or "The commander"
+		WarBattle.report({ [regionId .. "|" .. f.attacker] = 1 }, "commander_killed")
+		if WarVoice ~= nil and WarVoice.commanderDown ~= nil and WarReport ~= nil and WarReport.regionName ~= nil then
+			local line = WarVoice.commanderDown(f.attacker, WarReport.regionName(regionId), nm)
+			local okB = pcall(function() broadcastToGalaxy(nil, line) end)
+			printf("WarBattle: commander broadcast " .. (okB and "sent" or "FAILED") .. " :: " .. tostring(line) .. "\n")
+		end
+		return "fell"
+	end
+	local sgt = readData("warbattle:sgt:" .. regionId .. ":1:" .. f.attacker) or 0
+	local p = (sgt > 0) and getSceneObject(sgt) or nil
+	local okd, dead = pcall(function() return p ~= nil and CreatureObject(p):isDead() end)
+	if p == nil or (okd and dead == true) then
+		return "waiting"
+	end
+	local nm = WarBattle.commanderName(regionId, f.attacker)
+	if nm ~= nil then
+		pcall(function() SceneObject(p):setCustomObjectName(nm) end)
+	end
+	writeData(key, sgt)
+	shout(p, "commander", f.attacker, nil)
+	printf("WarBattle: " .. tostring(nm) .. " commands the " .. tostring(f.attacker) .. " offensive at " .. tostring(regionId) .. "\n")
+	return "named"
+end
+
 --- Scheduled STALL_CHECK_MS after a site is staged. If most of the attacking
 -- line is still at its form-up distance, it is moved to STALL_FALLBACK_M
 -- along the same radial, spread abreast, and set on the defenders again.
@@ -2636,6 +2711,8 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 				regionSitesStaged, wanted, npcBudgetLeft, alreadyAlive))
 			-- B53: the gates of a besieged capital.
 			pcall(function() WarBattle.tendGates(zone, regionId, holder, coords, besieged, wanted) end)
+			-- B56: the offensive's commander.
+			pcall(function() WarBattle.tendCommander(regionId, front[r]) end)
 		end
 
 		if npcBudgetLeft < perSiteCost then

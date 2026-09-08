@@ -830,12 +830,46 @@ function Tests:warRestartNotice()
 	printf("WARRESTART: notice " .. (ok and "sent" or "FAILED") .. " :: " .. line .. "\n")
 end
 
+--- test warFinaleCheck (B56): the commanders of the offensives and the
+-- capitals in their last hour, from the live state. Read-only.
+function Tests:warFinaleCheck()
+	printf("WARFINALE: begin\n")
+	local ok, err = pcall(function()
+		local st = WarReport.state()
+		if st == nil then
+			printf("WARFINALE: no war state\n")
+			return
+		end
+		for _, f in ipairs(WarBattle.fronts()) do
+			local oid = readData(WarBattle.COMMANDER_KEY_PREFIX .. f.id) or 0
+			local lost = readData(WarBattle.COMMANDER_LOST_PREFIX .. f.id) or 0
+			printf(string.format("WARFINALE: front %s attacker=%s offensive=%s commander=%s oid=%d fallen=%s\n",
+				f.id, tostring(f.attacker), tostring(f.offensive), tostring(WarBattle.commanderName(f.id, f.attacker)), oid, tostring(lost > 0)))
+		end
+		for id, r in pairs(st.regions) do
+			if r.is_capital == true then
+				printf(string.format("WARFINALE: capital %s holder=%s falls_in=%s finale=%s | %s\n", id, tostring(r.faction),
+					tostring(r.falls_in_ticks), tostring(WarLines.finaleAt(st, id)), tostring(WarLines.finaleLine(st, id))))
+			end
+		end
+		printf("WARFINALE: " .. ((WarBattle.commanderName("nab_theed", "rebel") ~= nil and WarBattle.commanderName("nab_theed", "rebel") == WarBattle.commanderName("nab_theed", "rebel")) and "PASS" or "FAIL") .. " a commander name is stable\n")
+		printf("WARFINALE: " .. ((WarBattle.commanderName("nab_theed", "nobody") == nil) and "PASS" or "FAIL") .. " no roster, no name\n")
+		local fake = { regions = { x = { is_capital = true, faction = "rebel", falls_in_ticks = 2 } } }
+		printf("WARFINALE: " .. ((WarLines.lastStand(fake, "x", "rebel") == true and WarLines.lastStand(fake, "x", "imperial") == false) and "PASS" or "FAIL") .. " the last stand is the holder's\n")
+		printf("WARFINALE: " .. ((WarVoice.commanderDown("rebel", "Theed", "Major Teo Ranse")):find("has fallen", 1, true) ~= nil and "PASS" or "FAIL") .. " the commander line\n")
+	end)
+	if not ok then
+		printf("WARFINALE: failed: " .. tostring(err) .. "\n")
+	end
+	printf("WARFINALE: end\n")
+end
+
 --- test warAllCheck: every readout probe in one console command, each in its
 -- own pcall so one failing cannot hide the others. Grep WARALL for the
 -- summary, then the probe's own marker for its lines.
 function Tests:warAllCheck()
 	printf("WARALL: begin\n")
-	local probes = { "warReadoutsRender", "warStandingsCheck", "warOrdersCheck", "warDigestCheck", "warSquadProbe", "warSitesCheck", "warDeployCheck", "warWindowCheck", "warConvoyCheck", "warGatesCheck", "warAdvanceCheck" }
+	local probes = { "warReadoutsRender", "warStandingsCheck", "warOrdersCheck", "warDigestCheck", "warSquadProbe", "warSitesCheck", "warDeployCheck", "warWindowCheck", "warConvoyCheck", "warGatesCheck", "warAdvanceCheck", "warFinaleCheck" }
 	for _, name in ipairs(probes) do
 		local fn = Tests[name]
 		if type(fn) ~= "function" then

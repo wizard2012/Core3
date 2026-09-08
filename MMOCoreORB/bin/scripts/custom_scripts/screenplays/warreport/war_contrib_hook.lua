@@ -219,6 +219,18 @@ function WarContribHook:onKilledCreature(pPlayer, pVictim, arg2)
 				.. ") faction=" .. tostring(factionStr) .. " region=" .. tostring(regionId)
 				.. " source=" .. tostring(source) .. "\n")
 		end
+		-- B56 the finale: a defender's kill at their capital in its last
+		-- hour counts double (a second mission_completed row of the same
+		-- points to their name). WarLines.lastStand reads the export.
+		if recorded and WarLines ~= nil and WarLines.lastStand ~= nil and WarReport ~= nil and WarReport.state ~= nil then
+			pcall(function()
+				local st = WarReport.state()
+				if st ~= nil and WarLines.lastStand(st, regionId, factionStr) then
+					WarContrib.record(factionStr, regionId, "mission_completed", points, characterId)
+					CreatureObject(pPlayer):sendSystemMessage("Last stand at " .. WarLines.name(regionId) .. ": that one counted double.")
+				end
+			end)
+		end
 
 		-- D27 slice 2 (owner ruling: name the player): remember who last
 		-- killed one of the war's own troops here, so that if the sim flips
