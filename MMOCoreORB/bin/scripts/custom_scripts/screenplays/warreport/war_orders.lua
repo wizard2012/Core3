@@ -526,7 +526,7 @@ end
 
 function WarOrders.save(oid, o)
 	writeStringData(key(oid), WarOrders.encode(o))
-	indexAdd(oid)
+	WarOrders.indexAdd(oid)
 	pcall(WarOrders.persist)
 end
 
@@ -534,7 +534,7 @@ end
 function WarOrders.clear(oid, pPlayer)
 	writeStringData(key(oid), "")
 	pcall(function() WarOrders.removeWaypoint(pPlayer, oid) end)
-	indexRemove(oid)
+	WarOrders.indexRemove(oid)
 	pcall(WarOrders.persist)
 end
 
@@ -559,7 +559,10 @@ local function indexWrite(list)
 	writeStringData(WarOrders.INDEX_KEY, table.concat(list, ","))
 end
 
-local function indexAdd(oid)
+-- Table functions, not locals: save() and clear() sit above this point in
+-- the file and a local defined below them is nil there (the trap in
+-- CLAUDE.md part 4; it bit this very slice on its first probe).
+function WarOrders.indexAdd(oid)
 	local list = indexList()
 	for _, id in ipairs(list) do
 		if id == tostring(oid) then
@@ -570,7 +573,7 @@ local function indexAdd(oid)
 	indexWrite(list)
 end
 
-local function indexRemove(oid)
+function WarOrders.indexRemove(oid)
 	local keep = {}
 	for _, id in ipairs(indexList()) do
 		if id ~= tostring(oid) then
@@ -625,7 +628,7 @@ function WarOrders.restoreFromDisk()
 				if last ~= "" then
 					writeStringData(lastKey(id), last)
 				end
-				indexAdd(id)
+				WarOrders.indexAdd(id)
 				restored = restored + 1
 			end
 		end
@@ -1182,9 +1185,10 @@ if type(Tests) == "table" then
 			printf("WARORDERS: failed: " .. tostring(err) .. "\n")
 		end
 		-- B47: the disk mirror round-trips a synthetic order and forgets it on clear
-		do
+		pcall(function()
 			local pid = 4243
-			local rec = { type = "hold", region = "nab_theed", faction = "imperial", need = 10, done = 1, issuedAt = now, expiresAt = now + 60000, extra = "raided" }
+			local nowMs = getTimestampMilli()
+			local rec = { type = "hold", region = "nab_theed", faction = "imperial", need = 10, done = 1, issuedAt = nowMs, expiresAt = nowMs + 60000, extra = "raided" }
 			WarOrders.save(pid, rec)
 			local fh = io.open(WarOrders.STATE_FILE, "r")
 			local found = false
@@ -1206,7 +1210,7 @@ if type(Tests) == "table" then
 			end
 			printf("WARORDERS: " .. (gone and "PASS" or "FAIL") .. " a cleared order leaves the mirror\n")
 			printf("WARORDERS: " .. ((WarOrders.restoreFromDisk() == 0) and "PASS" or "FAIL") .. " a second restore in the same process is a no-op\n")
-		end
+		end)
 		-- garrison duty (B44): the raid mechanism is reachable and sized
 		printf("WARORDERS: " .. ((WarBattle ~= nil and WarBattle.spawnRaid ~= nil) and "PASS" or "FAIL") .. " WarBattle.spawnRaid is visible\n")
 		printf("WARORDERS: " .. ((WarOrders.RAID_SIZE >= 2 and WarOrders.RAID_AT_MINUTE < WarOrders.HOLD_MINUTES) and "PASS" or "FAIL")
