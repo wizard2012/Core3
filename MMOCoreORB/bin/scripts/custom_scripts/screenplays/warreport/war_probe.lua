@@ -933,15 +933,25 @@ function Tests:warSpaceCheck()
 		printf("WARSPACE: " .. (hooks and "PASS" or "FAIL") .. " the S4 hooks are present on this thread\n")
 		for _, id in ipairs(WarSpace.orbitIds()) do
 			local pside, alive = WarSpace.picketState(id)
-			local parts = {}
+			local cfg = WarSpace.ORBITS[id]
+			local parts, allFine = {}, true
 			for _, sd in ipairs({ "imperial", "rebel" }) do
 				local target = WarSpace.deliveryTarget(id, sd, st)
-				local holds = st.orbits[id] ~= nil and st.orbits[id].faction == sd
-				local fine = (holds and target == id) or ((not holds) and (target ~= id or true))
-				parts[#parts + 1] = sd .. " -> " .. tostring(target) .. (fine and "" or " (?)")
+				-- the expected landing, from the export alone: the orbit when held,
+				-- else the first port of the sky the side holds, else the orbit
+				local expected = id
+				if not (st.orbits[id] ~= nil and st.orbits[id].faction == sd) then
+					for _, rid in ipairs(cfg.ports or {}) do
+						if expected == id and st.regions[rid] ~= nil and st.regions[rid].faction == sd then expected = rid end
+					end
+				end
+				local fine = (target == expected)
+				allFine = allFine and fine
+				parts[#parts + 1] = sd .. " -> " .. tostring(target) .. (fine and "" or (" (expected " .. tostring(expected) .. ")"))
 			end
-			printf(string.format("WARSPACE: PASS %s -- picket %s x%d live now; an owned convoy lands: %s\n",
-				id, tostring(pside), alive, table.concat(parts, ", ")))
+			local chain = (readData(WarSpace.INTERCEPT_KEY .. id) or 0) == 1
+			printf(string.format("WARSPACE: %s %s -- picket %s x%d live now%s; an owned convoy lands: %s\n",
+				allFine and "PASS" or "FAIL", id, tostring(pside), alive, chain and " (intercepting)" or "", table.concat(parts, ", ")))
 		end
 	end)
 	if not ok then

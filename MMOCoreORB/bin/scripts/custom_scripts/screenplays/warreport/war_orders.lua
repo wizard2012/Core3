@@ -335,7 +335,7 @@ function WarOrders.candidates(st, faction, homeRegion, prof)
 				out[#out + 1] = { type = "picket", region = orbit, need = 1 }
 			end
 			local conv = (WarSpace ~= nil and WarSpace.convoyRecord ~= nil) and WarSpace.convoyRecord(orbit) or nil
-			if conv == nil or conv.side == faction then
+			if conv == nil or (conv.side == faction and (conv.owner or 0) == 0) then
 				out[#out + 1] = { type = "escort", region = orbit, need = WarOrders.ESCORT_MINUTES }
 			end
 			out[#out + 1] = { type = "sky", region = orbit, need = WarOrders.SKY_KILLS }
@@ -914,7 +914,9 @@ function WarOrders.onRadial(pPlayer, pOfficer)
 			WarOrders.clear(oid, pPlayer)
 			creature:sendSystemMessage((status == "busy")
 				and ("No orders after all: the lane over " .. planet .. " is busy with an enemy convoy. Come back in a few minutes.")
-				or ("No orders after all: no convoy can launch over " .. planet .. " right now."))
+				or ((status == "taken")
+				and ("No orders after all: the convoy over " .. planet .. " is another pilot's. Come back when it is in.")
+				or ("No orders after all: no convoy can launch over " .. planet .. " right now.")))
 			printf("WarOrders: " .. tostring(oid) .. " escort at " .. o.region .. " refused: " .. tostring(status) .. "\n")
 			return
 		end
@@ -994,14 +996,8 @@ function WarOrders.observe(faction, regionId, source, points, characterId)
 	end
 	local pPlayer = getSceneObject(oid)
 	if o.type == "picket" then
-		-- B61 S4: one of the picket yours; the wipe itself is seen by skyCheck
-		if source == "npc_kill_faction" then
-			o.done = (o.done or 0) + 1
-			WarOrders.save(oid, o)
-			if pPlayer ~= nil then
-				CreatureObject(pPlayer):sendSystemMessage("Orders: " .. tostring(math.floor(o.done)) .. " of the picket yours; break the rest.")
-			end
-		end
+		-- B61 S4: picket hulls are counted by onPicketHull (war_space.lua says
+		-- which hull was a picket's); any other kill at the orbit is not the order's
 		return
 	end
 	if (o.type == "line" and (source == "npc_kill_faction" or source == "pvp_kill"))
@@ -1242,6 +1238,21 @@ function WarOrders.onConvoyDocked(orbitId, sideStr, ownerOid)
 			.. tostring(math.floor(o.done or 0)) .. " of " .. tostring(o.need) .. " minutes: no credit. See an officer for new orders.")
 	end
 	printf("WarOrders: " .. tostring(oid) .. " escort at " .. orbitId .. " docked without the escort\n")
+end
+
+--- B61 S4: a picket hull the pilot brought down (war_space.lua
+-- onShipDestroyed, role picket). One of the picket theirs.
+function WarOrders.onPicketHull(orbitId, pilotOid)
+	local oid = math.tointeger(tonumber(pilotOid))
+	if oid == nil or oid <= 0 then return end
+	local o = WarOrders.active(oid)
+	if o == nil or o.type ~= "picket" or o.region ~= orbitId then return end
+	o.done = (o.done or 0) + 1
+	WarOrders.save(oid, o)
+	local pPlayer = getSceneObject(oid)
+	if pPlayer ~= nil then
+		CreatureObject(pPlayer):sendSystemMessage("Orders: " .. tostring(math.floor(o.done)) .. " of the picket yours; break the rest.")
+	end
 end
 
 --- B61 S4: an owned convoy lost (war_space.lua sweepConvoy).

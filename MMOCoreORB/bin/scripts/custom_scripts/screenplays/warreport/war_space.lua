@@ -90,6 +90,13 @@ WarSpace.ESCORT_RANGE_M = 1500
 -- slow transform branch, measured 2026-09-08). The sweep also reads the
 -- freighter's distance to the point, in case the event was missed.
 WarSpace.DOCK_RADIUS_M = 500
+-- The intercept: a shout (engageShipTarget) is dropped beyond the AI's
+-- MAX_ATTACK_DISTANCE (1280 m, ShipAiAgent.idl), so the picket flies the
+-- convoy's route (meet point, then the dock) and is re-engaged every
+-- minute while within ENGAGE_RANGE_M of a convoy hull.
+WarSpace.ENGAGE_RANGE_M = 1200
+WarSpace.INTERCEPT_MS = 60 * 1000
+WarSpace.INTERCEPT_KEY = "warspace:intercept:"   -- .. "<orbit>" -> 1 while a chain runs
 WarSpace.DOCKAREA_KEY = "warspace:dockarea:"   -- .. "<orbit>" -> the area's oid
 WarSpace.SCHEDULED_KEY = "warspace:scheduled"
 WarSpace.LAST_KEY      = "warspace:last_ms"
@@ -106,13 +113,13 @@ WarSpace.CYCLE_KEY     = "warspace:cycle"
 WarSpace.ORBITS = {
 	cor_orbit = { zone = "space_corellia", planet = "corellia",
 		picket = { x = 5020, z = -5000, y = -1700 }, attack = { x = 2520, z = -4400, y = -200 },
-		dock = "rebel_patrol_2", dockPos = { x = 6031, z = -4540, y = -1962 }, ports = { "cor_doaba", "cor_coronet" } },
+		dock = "rebel_patrol_2", dockPos = { x = 6031, z = -4540, y = -1962 }, meet = "corellia_station_mission5a_2", ports = { "cor_doaba", "cor_coronet" } },
 	nab_orbit = { zone = "space_naboo", planet = "naboo",
 		picket = { x = -1000, z = 1300, y = -5600 }, attack = { x = 1500, z = 1900, y = -4100 },
-		dock = "freighters_station_1_04", dockPos = { x = -1488, z = 259, y = -6266 }, ports = { "nab_kaadara", "nab_theed" } },
+		dock = "freighters_station_1_04", dockPos = { x = -1488, z = 259, y = -6266 }, meet = "privateer_tier2_escort_3", ports = { "nab_kaadara", "nab_theed" } },
 	tat_orbit = { zone = "space_tatooine", planet = "tatooine",
 		picket = { x = 800, z = -5500, y = 1000 }, attack = { x = -1700, z = -4900, y = -500 },
-		dock = "mos_eisley_police_1_06", dockPos = { x = 133, z = -5427, y = 737 }, ports = { "tat_bestine", "tat_mos_eisley" } },
+		dock = "mos_eisley_police_1_06", dockPos = { x = 133, z = -5427, y = 737 }, meet = "mos_eisley_police_1_00", ports = { "tat_bestine", "tat_mos_eisley" } },
 }
 
 -- Stock ship-agent templates (bin/scripts/ship_mobile/ships/). Tier 1-2:
@@ -233,7 +240,7 @@ function WarSpace.spawnWing(orbitId, cfg, side, point, count, role, startIndex)
 		else
 			local oid = SceneObject(p):getObjectID()
 			out[#out + 1] = oid
-			writeStringData(tostring(oid) .. ":warspace", orbitId .. "|" .. side)
+			writeStringData(tostring(oid) .. ":warspace", orbitId .. "|" .. side .. "|" .. role)
 			pcall(function() ShipAiAgent(p):setDespawnOnNoPlayerInRange(false) end)
 			createObserver(SHIPDESTROYED, "WarSpace", "onShipDestroyed", p)
 			if role == "picket" then
@@ -398,7 +405,7 @@ function WarSpace.flyConvoy(orbitId, cfg, side, tick, ownerOid)
 		else
 			local oid = SceneObject(p):getObjectID()
 			oids[#oids + 1] = oid
-			writeStringData(tostring(oid) .. ":warspace", orbitId .. "|" .. side)
+			writeStringData(tostring(oid) .. ":warspace", orbitId .. "|" .. side .. "|" .. plan[i][2])
 			pcall(function() ShipAiAgent(p):setDespawnOnNoPlayerInRange(false) end)
 			createObserver(SHIPDESTROYED, "WarSpace", "onShipDestroyed", p)
 			if plan[i][2] == "freighter" then
@@ -439,10 +446,20 @@ function WarSpace.requestConvoy(orbitId, side, ownerOid)
 		return "unavailable"
 	end
 	local rec = WarSpace.convoyRecord(orbitId)
+	local owner = math.tointeger(tonumber(ownerOid)) or 0
+	if rec ~= nil and (readData(WarSpace.CONVOY_KEY .. orbitId .. ":in") or 0) == 1 then
+		-- docked and waiting for the sweep: retire it now, the lane is wanted
+		WarSpace.despawnAll(rec.oids)
+		pcall(function() deleteData(WarSpace.CONVOY_KEY .. orbitId .. ":in") end)
+		WarSpace.saveConvoy(orbitId, nil)
+		printf(string.format("WarSpace: the docked %s convoy over %s cleared the lane\n", rec.side, WarSpace.planetName(orbitId)))
+		rec = nil
+	end
 	if rec ~= nil then
 		if rec.side ~= side then return "busy" end
+		if (rec.owner or 0) ~= 0 and rec.owner ~= owner then return "taken" end
 		if (rec.owner or 0) == 0 then
-			rec.owner = math.tointeger(tonumber(ownerOid)) or 0
+			rec.owner = owner
 			WarSpace.saveConvoy(orbitId, rec)
 		end
 		return "joined"
@@ -454,8 +471,9 @@ function WarSpace.requestConvoy(orbitId, side, ownerOid)
 		WarSpace.ensureDockArea(orbitId, cfg)
 		local holder = (st ~= nil and type(st.orbits) == "table" and st.orbits[orbitId] ~= nil) and st.orbits[orbitId].faction or nil
 		local pside, palive = WarSpace.sweep(WarSpace.PICKET_KEY .. orbitId)
-		if pside == holder and WarSpace.interceptConvoy(orbitId, rec, holder, palive) then
-			printf(string.format("WarSpace: the %s picket over %s goes for the %s convoy\n", tostring(holder), WarSpace.planetName(orbitId), side))
+		if pside == holder then
+			local engaged, routed = WarSpace.interceptConvoy(orbitId, rec, holder, palive)
+			printf(string.format("WarSpace: the %s picket over %s goes for the %s convoy (%d engaged, %d on the route)\n", tostring(holder), WarSpace.planetName(orbitId), side, engaged, routed))
 		end
 	end
 	return (rec ~= nil) and "launched" or "unavailable"
@@ -611,13 +629,102 @@ function WarSpace.freighterToDock(orbitId, rec)
 	return d
 end
 
---- The holder's picket goes for a convoy of the other side (round-robin
--- over its hulls, the freighter first). Called at launch and every cycle
--- while it is up; a picket on guard never noticed one passing.
+--- Metres between two objects, or nil.
+function WarSpace.distance(pA, pB)
+	local d = nil
+	pcall(function()
+		local dx = SceneObject(pA):getWorldPositionX() - SceneObject(pB):getWorldPositionX()
+		local dy = SceneObject(pA):getWorldPositionY() - SceneObject(pB):getWorldPositionY()
+		local dz = SceneObject(pA):getWorldPositionZ() - SceneObject(pB):getWorldPositionZ()
+		d = math.sqrt(dx * dx + dy * dy + dz * dz)
+	end)
+	return d
+end
+
+--- The holder's picket goes for a convoy of the other side: every hull
+-- within ENGAGE_RANGE_M of a convoy hull is sent at it (the freighter
+-- first); the rest fly the convoy's route (the meet point, then the dock)
+-- as a fixed patrol. A per-minute chain (interceptTick) repeats this while
+-- the convoy is up and puts the picket back on guard after. Returns how
+-- many hulls were engaged and how many routed.
 function WarSpace.interceptConvoy(orbitId, rec, holder, picketOids)
-	if rec == nil or holder == nil or rec.side == holder or picketOids == nil or #picketOids == 0 then return false end
-	WarSpace.engage(picketOids, rec.oids)
-	return true
+	if rec == nil or holder == nil or rec.side == holder or picketOids == nil or #picketOids == 0 then return 0, 0 end
+	local cfg = WarSpace.ORBITS[orbitId]
+	if cfg == nil then return 0, 0 end
+	local targets = {}
+	for i = 1, #rec.oids do
+		local pT = getSceneObject(rec.oids[i])
+		if pT ~= nil then targets[#targets + 1] = pT end
+	end
+	if #targets == 0 then return 0, 0 end
+	local route = {}
+	if cfg.meet ~= nil then route[#route + 1] = cfg.meet end
+	if cfg.dock ~= nil then route[#route + 1] = cfg.dock end
+	local engaged, routed = 0, 0
+	for i = 1, #picketOids do
+		local pA = getSceneObject(picketOids[i])
+		if pA ~= nil then
+			local near = nil
+			for _, pT in ipairs(targets) do
+				local d = WarSpace.distance(pA, pT)
+				if d ~= nil and d <= WarSpace.ENGAGE_RANGE_M then near = pT; break end
+			end
+			if near ~= nil then
+				if pcall(function() ShipAiAgent(pA):engageShipTarget(near) end) then engaged = engaged + 1 end
+			elseif #route > 0 then
+				local ok = pcall(function()
+					ShipAiAgent(pA):setFixedPatrol()
+					ShipAiAgent(pA):assignFixedPatrolPointsTable(route)
+				end)
+				if ok then routed = routed + 1 end
+			end
+		end
+	end
+	if (readData(WarSpace.INTERCEPT_KEY .. orbitId) or 0) ~= 1 then
+		writeData(WarSpace.INTERCEPT_KEY .. orbitId, 1)
+		createEvent(WarSpace.INTERCEPT_MS, "WarSpace", "interceptTick", nil, orbitId)
+	end
+	return engaged, routed
+end
+
+--- The picket back on guard at its station (the spawn settings again).
+function WarSpace.standDown(picketOids)
+	for i = 1, #picketOids do
+		local pA = getSceneObject(picketOids[i])
+		if pA ~= nil then
+			pcall(function()
+				ShipAiAgent(pA):clearPatrolPoints()
+				ShipAiAgent(pA):setMinimumGuardPatrol(WarSpace.GUARD_MIN)
+				ShipAiAgent(pA):setMaximumGuardPatrol(WarSpace.GUARD_MAX)
+				ShipAiAgent(pA):setGuardPatrol()
+			end)
+		end
+	end
+end
+
+--- The per-minute intercept chain for one orbit (args = the orbit id).
+function WarSpace:interceptTick(pNil, orbitId)
+	if orbitId == nil or orbitId == "" then return end
+	local ok, err = pcall(function()
+		local rec = WarSpace.convoyRecord(orbitId)
+		local docked = (readData(WarSpace.CONVOY_KEY .. orbitId .. ":in") or 0) == 1
+		local st = (WarReport ~= nil and WarReport.state ~= nil) and WarReport.state() or nil
+		local holder = (st ~= nil and type(st.orbits) == "table" and st.orbits[orbitId] ~= nil) and st.orbits[orbitId].faction or nil
+		local pside, palive = WarSpace.sweep(WarSpace.PICKET_KEY .. orbitId)
+		if rec == nil or docked or holder == nil or rec.side == holder or pside ~= holder then
+			writeData(WarSpace.INTERCEPT_KEY .. orbitId, 0)
+			WarSpace.standDown(palive)
+			printf(string.format("WarSpace: the %s picket over %s stands down (%d hulls)\n", tostring(pside), WarSpace.planetName(orbitId), #palive))
+			return
+		end
+		local engaged, routed = WarSpace.interceptConvoy(orbitId, rec, holder, palive)
+		printf(string.format("WarSpace: intercept over %s: %d engaged, %d on the route, convoy %d hull(s)\n", WarSpace.planetName(orbitId), engaged, routed, #rec.oids))
+		createEvent(WarSpace.INTERCEPT_MS, "WarSpace", "interceptTick", nil, orbitId)
+	end)
+	if not ok then
+		writeData(WarSpace.INTERCEPT_KEY .. orbitId, 0)
+		printf("WarSpace: interceptTick " .. tostring(orbitId) .. " failed: " .. tostring(err) .. "\n")
+	end
 end
 
 -- ---------------------------------------------------------------- cycle --
@@ -698,8 +805,9 @@ function WarSpace.reconcileOrbit(orbitId, o, cfg, seasonOver, casualties, lost, 
 	end
 
 	-- S4: the holder's picket goes for a convoy of the other side, at launch and every cycle
-	if convoy ~= nil and pside == holder and WarSpace.interceptConvoy(orbitId, convoy, holder, palive) then
-		printf(string.format("WarSpace: the %s picket over %s goes for the %s convoy\n", tostring(holder), WarSpace.planetName(orbitId), convoy.side))
+	if convoy ~= nil and pside == holder and convoy.side ~= holder then
+		local engaged, routed = WarSpace.interceptConvoy(orbitId, convoy, holder, palive)
+		printf(string.format("WarSpace: the %s picket over %s goes for the %s convoy (%d engaged, %d on the route)\n", tostring(holder), WarSpace.planetName(orbitId), convoy.side, engaged, routed))
 	end
 	printf(string.format("WarSpace: %s -- %s holds the sky, picket %d/%d (%d lost); %s; %s\n",
 		orbitId, tostring(holder), #palive, WarSpace.PICKET_SIZE, pdead,
@@ -771,7 +879,7 @@ function WarSpace:onShipDestroyed(pShip, pKiller)
 	if pKiller == nil or tag == nil or tag == "" then
 		return 1
 	end
-	local orbitId, victimSide = string.match(tag, "^([a-z_]+)|([a-z]+)$")
+	local orbitId, victimSide, role = string.match(tag, "^([a-z_]+)|([a-z]+)|?([a-z]*)$")
 	if orbitId == nil then
 		return 1
 	end
@@ -790,6 +898,10 @@ function WarSpace:onShipDestroyed(pShip, pKiller)
 		end
 		WarContrib.record(side, orbitId, "npc_kill_faction", WarSpace.KILL_POINTS, CreatureObject(pPilot):getObjectID())
 		CreatureObject(pPilot):sendSystemMessage("[War] Splash one over " .. WarSpace.planetName(orbitId) .. ". Your side will hear of it.")
+		-- S4: a picket hull of theirs counts for a picket order (only those)
+		if role == "picket" and WarOrders ~= nil and WarOrders.onPicketHull ~= nil then
+			pcall(WarOrders.onPicketHull, orbitId, CreatureObject(pPilot):getObjectID())
+		end
 	end)
 	return 1
 end
