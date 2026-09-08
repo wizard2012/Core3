@@ -105,7 +105,7 @@ public:
 		return 0;
 	}
 
-	uint64 getWaypointBySpecialType(const uint8 specialTypeID) const {
+	uint64 getWaypointBySpecialType(const int specialTypeID) const {  // SWGWar 2026-09-08: was uint8, so every type above 255 never matched (pins multiplied)
 		if (specialTypeID == 0)
 			return 0;
 

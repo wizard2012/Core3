@@ -677,12 +677,7 @@ function WarBattle.walkableOrigin(zone, coords, regionId, siteIndex, totalSites,
 		return ox, oy
 	end
 	local function walkable(x, y)
-		local okz, z = pcall(getWorldFloor, x, y, zone)
-		if not okz or type(z) ~= "number" then
-			return false
-		end
-		local ok, w = pcall(isPointWalkable, zone, x, z, y)
-		return ok and w == true
+		return WarBattle.groundOk(zone, x, y)
 	end
 	if walkable(ox, oy) then
 		return ox, oy
@@ -1237,10 +1232,8 @@ function WarBattle.formUpDistance(zone, originX, originY, ux, uy, regionId, site
 	for i = 1, #candidates do
 		local d = candidates[i]
 		local x, y = originX + ux * d, originY + uy * d
-		local okz, z = pcall(getWorldFloor, x, y, zone)
-		if okz and type(z) == "number" then
-			local ok, walkable = pcall(isPointWalkable, zone, x, z, y)
-			if ok and walkable == true then
+		do
+			if WarBattle.groundOk(zone, x, y) then
 				if i > 1 then
 					printf(string.format("WarBattle: %s site %s forms up at %d m (the %d m approach point is off the navmesh)\n",
 						tostring(regionId), tostring(siteIndex), d, WarBattle.APPROACH_DISTANCE_M))
@@ -1286,6 +1279,55 @@ end
 -- when the binding is missing. A body spawned at z=0 under a raised city
 -- (Theed's ground is 6 m up) has no line of sight to anything and never
 -- fires -- measured 2026-09-05.
+-- Spawn safety (owner, 2026-09-08: "derive a way to prevent war npcs from
+-- spawning inside of buildings"). The navmesh test says "walkable" for
+-- ground under a building whose footprint the mesh covers; the engine's own
+-- footprint test (StructureManager::isInStructureFootprint, what keeps a
+-- player house off a city building) does not. isInStructureFootprintAt is
+-- that test as a Lua binding; every picker below asks both.
+WarBattle.FOOTPRINT_MARGIN_M = 2
+
+--- Inside any structure's footprint (plus the margin)? nil-safe: without
+-- the binding (an old binary) the answer is false and only the navmesh
+-- decides, as before.
+function WarBattle.insideBuilding(zone, x, y)
+	if type(isInStructureFootprintAt) ~= "function" or zone == nil then
+		return false
+	end
+	local ok, inside = pcall(isInStructureFootprintAt, zone, x, y, WarBattle.FOOTPRINT_MARGIN_M)
+	return ok and inside == true
+end
+
+--- Ground a war body may stand on: on the navmesh and not in a building.
+function WarBattle.groundOk(zone, x, y)
+	if zone == nil then return false end
+	if type(isPointWalkable) == "function" and type(getWorldFloor) == "function" then
+		local okz, z = pcall(getWorldFloor, x, y, zone)
+		if not okz or type(z) ~= "number" then
+			return false
+		end
+		local ok, w = pcall(isPointWalkable, zone, x, z, y)
+		if not (ok and w == true) then
+			return false
+		end
+	end
+	return not WarBattle.insideBuilding(zone, x, y)
+end
+
+--- A point near (x, y) a body may stand on: the point itself, else four
+-- sidesteps of `step` metres, else four of twice that; nil when none.
+function WarBattle.nearbyGround(zone, x, y, step)
+	if WarBattle.groundOk(zone, x, y) then return x, y end
+	step = step or 8
+	for _, m in ipairs({ 1, 2 }) do
+		for _, dxy in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+			local cx, cy = x + dxy[1] * step * m, y + dxy[2] * step * m
+			if WarBattle.groundOk(zone, cx, cy) then return cx, cy end
+		end
+	end
+	return nil
+end
+
 function WarBattle.floorAt(zone, x, y)
 	if type(getWorldFloor) ~= "function" then
 		return 0
@@ -1309,8 +1351,7 @@ function WarBattle.walkableAlong(zone, originX, originY, ux, uy, candidates)
 		local d = candidates[i]
 		local x, y = originX + ux * d, originY + uy * d
 		local z = WarBattle.floorAt(zone, x, y)
-		local ok, walkable = pcall(isPointWalkable, zone, x, z, y)
-		if ok and walkable == true then
+		if WarBattle.groundOk(zone, x, y) then
 			return d, x, y, z
 		end
 	end
@@ -1320,6 +1361,15 @@ end
 local function spawnTroop(zone, faction, role, x, y, heading, salt, i)
 	local pool = WarBattle.ROLES[faction]
 	local template = (WarBattle.ROLES_ENABLED and pool ~= nil) and pool[role] or nil
+	-- never inside a building: sidestep, else no body at all
+	if WarBattle.insideBuilding(zone, x, y) then
+		local nx, ny = WarBattle.nearbyGround(zone, x, y, WarBattle.TROOPER_GAP_M * 2)
+		if nx == nil then
+			printf(string.format("WarBattle: no %s %s at %.0f %.0f: inside a building, no ground beside it\n", tostring(faction), tostring(role), x, y))
+			return nil
+		end
+		x, y = nx, ny
+	end
 	local z = WarBattle.floorAt(zone, x, y)
 	local p = template and spawnMobile(zone, template, 0, x, z, y, heading, 0) or nil
 	if p == nil then
@@ -1871,6 +1921,14 @@ local function spawnWalker(zone, regionId, siteIndex, faction, isAttacker, templ
 	else
 		x, y = originX - ux * WarBattle.WALKER_BACK_M, originY - uy * WarBattle.WALKER_BACK_M
 	end
+	if WarBattle.insideBuilding(zone, x, y) then
+		local nx, ny = WarBattle.nearbyGround(zone, x, y, 8)
+		if nx == nil then
+			printf(string.format("WarBattle: walker %s not spawned at %s site %s: inside a building\n", tostring(template), tostring(regionId), tostring(siteIndex)))
+			return nil
+		end
+		x, y = nx, ny
+	end
 	local p = spawnMobile(zone, template, 0, x, WarBattle.floorAt(zone, x, y), y, isAttacker and 180 or 0, 0)
 	if p == nil then
 		printf(string.format("WarBattle: walker %s did not spawn at %s site %s (template not loaded?)\n",
@@ -2077,12 +2135,7 @@ function WarBattle.streetOrigin(zone, coords, regionId)
 		return cx, cy
 	end
 	local function walkable(x, y)
-		local okz, z = pcall(getWorldFloor, x, y, zone)
-		if not okz or type(z) ~= "number" then
-			return false
-		end
-		local ok, w = pcall(isPointWalkable, zone, x, z, y)
-		return ok and w == true
+		return WarBattle.groundOk(zone, x, y)
 	end
 	if walkable(cx, cy) then
 		return cx, cy
@@ -2506,8 +2559,12 @@ local function spawnGarrison(zone, regionId, faction, originX, originY, slotTag)
 		if template ~= nil then
 			-- Spread along one line only; a garrison reads as a patrol
 			-- standing about, not as two ranks squaring up.
-			local gx = originX + (i - 1) * WarBattle.TROOPER_GAP_M
-			local pG = spawnMobile(zone, template, 0, gx, WarBattle.floorAt(zone, gx, originY), originY, 0, 0)
+			local gx, gy = originX + (i - 1) * WarBattle.TROOPER_GAP_M, originY
+			if WarBattle.insideBuilding(zone, gx, gy) then
+				local nx, ny = WarBattle.nearbyGround(zone, gx, gy, WarBattle.TROOPER_GAP_M * 2)
+				gx, gy = nx or originX, ny or originY
+			end
+			local pG = spawnMobile(zone, template, 0, gx, WarBattle.floorAt(zone, gx, gy), gy, 0, 0)
 
 			if pG ~= nil then
 				spawned = spawned + 1
@@ -2688,7 +2745,7 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 						ox, oy = WarBattle.siteOrigin(coords, regionId, s, wanted, isRecruiterAnchor)
 					end
 					if WarSquad ~= nil and WarSquad.attachSite ~= nil then
-						WarSquad.attachSite(zone, ox, oy)
+						WarSquad.attachSite(zone, ox, oy, regionId)
 					end
 					if isRecruiterAnchor then
 						writeStringData(WarBattle.REGION_KEY, regionId)
@@ -2720,7 +2777,7 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 				-- for troops to fall in. Spawned per site, alongside the site, so
 				-- there is no second source of truth about where a battle is.
 				if fielded > 0 and WarSquad ~= nil and WarSquad.attachSite ~= nil then
-					WarSquad.attachSite(zone, ox, oy)
+					WarSquad.attachSite(zone, ox, oy, regionId)
 				end
 
 				if fielded > 0 then

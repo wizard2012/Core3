@@ -969,6 +969,61 @@ function Tests:warSpaceCheck()
 	printf("WARSPACE: end\n")
 end
 
+--- test warSpawnSafetyCheck (2026-09-08): no war body inside a building.
+-- Every roster body's position and every staged site origin against the
+-- structure-footprint test; FAIL names the first body inside one.
+function Tests:warSpawnSafetyCheck()
+	printf("WARSPAWNSAFETY: begin\n")
+	local ok, err = pcall(function()
+		if type(isInStructureFootprintAt) ~= "function" then
+			printf("WARSPAWNSAFETY: FAIL the isInStructureFootprintAt binding is not registered (old binary?)\n")
+			return
+		end
+		local raw = (WarBattle ~= nil and WarBattle.ROSTER_KEY ~= nil) and readStringData(WarBattle.ROSTER_KEY) or nil
+		if raw == nil or raw == "" then
+			printf("WARSPAWNSAFETY: PASS no roster (nothing staged)\n")
+			return
+		end
+		local bodies, inside, sites, siteInside, first = 0, 0, {}, 0, nil
+		for rec in string.gmatch(raw, "([^;]+)") do
+			local oid, region, site, fac, ox, oy = string.match(rec, "^(%d+)|([%w_]+)|([%w_]+)|([%w_]+)|([%-%d%.]*)|([%-%d%.]*)")
+			local zone = (oid ~= nil and WarReport ~= nil) and WarReport.PLANET_OF[region] or nil
+			if zone ~= nil then
+				local key = region .. ":" .. site
+				if not sites[key] and tonumber(ox) ~= nil then
+					sites[key] = true
+					local okS, inS = pcall(isInStructureFootprintAt, zone, tonumber(ox), tonumber(oy), 0)
+					if okS and inS == true then
+						siteInside = siteInside + 1
+						printf(string.format("WARSPAWNSAFETY: FAIL site origin %s (%s, %s) is inside a building\n", key, ox, oy))
+					end
+				end
+				local p = getSceneObject(tonumber(oid))
+				if p ~= nil then
+					local okd, dead = pcall(function() return CreatureObject(p):isDead() end)
+					if not (okd and dead) then
+						bodies = bodies + 1
+						local x, y = SceneObject(p):getWorldPositionX(), SceneObject(p):getWorldPositionY()
+						local okB, inB, sid = pcall(isInStructureFootprintAt, zone, x, y, 0)
+						if okB and inB == true then
+							inside = inside + 1
+							if first == nil then first = string.format("%s %s at %.0f %.0f (structure %s)", key, tostring(fac), x, y, tostring(sid)) end
+						end
+					end
+				end
+			end
+		end
+		local n = 0
+		for _ in pairs(sites) do n = n + 1 end
+		printf(string.format("WARSPAWNSAFETY: %s %d live bodies, %d inside a building%s; %d site origins, %d inside\n",
+			(inside == 0 and siteInside == 0) and "PASS" or "FAIL", bodies, inside, first and (" (first: " .. first .. ")") or "", n, siteInside))
+	end)
+	if not ok then
+		printf("WARSPAWNSAFETY: FAIL error " .. tostring(err) .. "\n")
+	end
+	printf("WARSPAWNSAFETY: end\n")
+end
+
 --- test warGrantSkills (owner's tool): award the skills listed in
 -- log/war_grant.txt ("<firstname> <skill>" per line) with their whole
 -- prerequisite tree, then rename the file to war_grant.done. The player

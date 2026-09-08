@@ -118,6 +118,11 @@ WarMap = ScreenPlay:new {
 	-- Reserved specialTypeID for every waypoint this overlay places. See
 	-- this file's header for the collision search that justifies the value.
 	SPECIAL_TYPE_ID = 9001,
+	-- Formup pins (owner, 2026-09-08): every staged site on the planet as
+	-- "Formup: <town> N", one type per pin from this base (the engine keeps
+	-- one pin per non-zero type).
+	SITE_TYPE_BASE = 9101,
+	SITE_TYPE_MAX = 24,
 
 	-- Owner's explicit ask: "it would need to be updated after say 10 min".
 	REFRESH_INTERVAL_MS = 10 * 60 * 1000,
@@ -232,6 +237,27 @@ end
 -- refresh() can skip the client-visible update when nothing changed.
 -- Sorted region id order (WarReport.regionIds() is already sorted) keeps
 -- the signature stable across calls for identical data.
+--- The staged sites on `planetName`, from war_battle's roster: sorted
+-- { key = "region:site", region = ..., site = ..., x = ..., y = ... }.
+function WarMap:sitesOn(planetName)
+	local out = {}
+	local raw = (WarBattle ~= nil and WarBattle.ROSTER_KEY ~= nil) and readStringData(WarBattle.ROSTER_KEY) or nil
+	if raw == nil or raw == "" then return out end
+	local seen = {}
+	for rec in string.gmatch(raw, "([^;]+)") do
+		local oid, region, site, fac, ox, oy = string.match(rec, "^(%d+)|([%w_]+)|([%w_]+)|([%w_]+)|([%-%d%.]*)|([%-%d%.]*)")
+		if oid ~= nil and WarReport.PLANET_OF[region] == planetName and tonumber(ox) ~= nil and tonumber(oy) ~= nil then
+			local key = region .. ":" .. site
+			if not seen[key] then
+				seen[key] = true
+				out[#out + 1] = { key = key, region = region, site = site, x = tonumber(ox), y = tonumber(oy) }
+			end
+		end
+	end
+	table.sort(out, function(a, b) return a.key < b.key end)
+	return out
+end
+
 function WarMap:signatureFor(planetName)
 	local st = WarReport.state()
 	if st == nil then
@@ -239,6 +265,9 @@ function WarMap:signatureFor(planetName)
 	end
 
 	local parts = {}
+	for _, s in ipairs(WarMap:sitesOn(planetName)) do
+		parts[#parts + 1] = string.format("%s@%d,%d", s.key, math.floor(s.x), math.floor(s.y))
+	end
 	local ids = WarReport.regionIds()
 	for i = 1, #ids do
 		local id = ids[i]
@@ -315,6 +344,19 @@ function WarMap:doRefresh(pPlayer)
 	PlayerObject(pGhost):removeWaypointBySpecialType(WarMap.SPECIAL_TYPE_ID)
 	for i = 1, #ids do
 		PlayerObject(pGhost):removeWaypointBySpecialType(WarMap.SPECIAL_TYPE_ID + i)
+	end
+	for k = 1, WarMap.SITE_TYPE_MAX do
+		PlayerObject(pGhost):removeWaypointBySpecialType(WarMap.SITE_TYPE_BASE + k)
+	end
+
+	-- the formup pins: every staged site on this planet
+	local sites = WarMap:sitesOn(zoneName)
+	for k = 1, math.min(#sites, WarMap.SITE_TYPE_MAX) do
+		local s = sites[k]
+		local town = (WarReport.regionName ~= nil) and WarReport.regionName(s.region) or s.region
+		local what = (s.site == "9") and "streets" or ("site " .. tostring(s.site))
+		PlayerObject(pGhost):addWaypoint(zoneName, "Formup: " .. tostring(town) .. " " .. what, "",
+			s.x, 0, s.y, WAYPOINT_GREEN, true, true, WarMap.SITE_TYPE_BASE + k, 0)
 	end
 
 	for i = 1, #ids do

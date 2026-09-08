@@ -1075,7 +1075,8 @@ function WarOrders.raid(pPlayer, o)
 			return false
 		end
 		local ok, w = pcall(isPointWalkable, zone, x, z, y)
-		return ok and w == true
+		if not (ok and w == true) then return false end
+		return not (WarBattle.insideBuilding ~= nil and WarBattle.insideBuilding(zone, x, y))
 	end
 	local x, y = nil, nil
 	local first = math.random() * 2 * math.pi

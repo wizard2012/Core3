@@ -240,6 +240,7 @@ namespace server {
 		static int broadcastToGalaxy(lua_State* L);
 		static int getWorldFloor(lua_State* L);
 		static int isPointWalkable(lua_State* L); // B21 spawn-placement safety check
+		static int isInStructureFootprintAt(lua_State* L); // SWGWar: no war spawn inside a building
 		static int useCovertOvert(lua_State* L);
 		static int drawClientPath(lua_State* L);
 

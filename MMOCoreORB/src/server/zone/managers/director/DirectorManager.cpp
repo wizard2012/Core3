@@ -556,6 +556,7 @@ void DirectorManager::initializeLuaEngine(Lua* luaEngine) {
 	luaEngine->registerFunction("broadcastToGalaxy", broadcastToGalaxy);
 	luaEngine->registerFunction("getWorldFloor", getWorldFloor);
 	luaEngine->registerFunction("isPointWalkable", isPointWalkable); // B21 spawn-placement safety check
+	luaEngine->registerFunction("isInStructureFootprintAt", isInStructureFootprintAt); // SWGWar: no war spawn inside a building
 	luaEngine->registerFunction("useCovertOvert", useCovertOvert);
 	luaEngine->registerFunction("drawClientPath", drawClientPath);
 
@@ -5424,6 +5425,70 @@ int DirectorManager::getWorldFloor(lua_State* L) {
 }
 
 // B21 spawn-placement safety check.
+// isInStructureFootprintAt(zoneName, x, y, margin) -> inside [, structureOid]
+// SWGWar (2026-09-08): a war NPC must not spawn inside a building. The navmesh
+// test below can say "walkable" for ground under a building's footprint, so
+// this asks the same question StructureManager asks before a player house
+// is placed: is (x, y) inside any nearby structure's footprint (plus margin)?
+int DirectorManager::isInStructureFootprintAt(lua_State* L) {
+	if (checkArgumentCount(L, 4) == 1) {
+		String err = "incorrect number of arguments passed to DirectorManager::isInStructureFootprintAt";
+		printTraceError(L, err);
+		ERROR_CODE = INCORRECT_ARGUMENTS;
+		return 0;
+	}
+
+	if (!lua_isstring(L, -4) || !lua_isnumber(L, -3) || !lua_isnumber(L, -2) || !lua_isnumber(L, -1)) {
+		lua_pushboolean(L, 0);
+		return 1;
+	}
+
+	String zoneName = lua_tostring(L, -4);
+	float x = lua_tonumber(L, -3);
+	float y = lua_tonumber(L, -2);
+	int margin = lua_tointeger(L, -1);
+
+	ZoneServer* zoneServer = ServerCore::getZoneServer();
+
+	if (zoneServer == nullptr) {
+		lua_pushboolean(L, 0);
+		return 1;
+	}
+
+	Zone* zone = zoneServer->getZone(zoneName);
+
+	if (zone == nullptr) {
+		lua_pushboolean(L, 0);
+		return 1;
+	}
+
+	SortedVector<TreeEntry*> closeObjects;
+	zone->getInRangeObjects(x, 0, y, 128, &closeObjects, true, false);
+
+	for (int i = 0; i < closeObjects.size(); ++i) {
+		Reference<SceneObject*> obj = static_cast<SceneObject*>(closeObjects.get(i));
+
+		if (obj == nullptr || !obj->isStructureObject()) {
+			continue;
+		}
+
+		SharedObjectTemplate* objectTemplate = obj->getObjectTemplate();
+
+		if (objectTemplate == nullptr || !objectTemplate->isSharedStructureObjectTemplate()) {
+			continue;
+		}
+
+		if (StructureManager::instance()->isInStructureFootprint(cast<StructureObject*>(obj.get()), x, y, margin)) {
+			lua_pushboolean(L, 1);
+			lua_pushinteger(L, obj->getObjectID());
+			return 2;
+		}
+	}
+
+	lua_pushboolean(L, 0);
+	return 1;
+}
+
 // isPointWalkable(zoneName, x, z, y) -> isWalkable [, distanceToWalkable]
 // Argument order matches the {x, z, y} convention used by getSpawnPointInArea's
 // returned table (z is world height, y is the second world-horizontal axis).

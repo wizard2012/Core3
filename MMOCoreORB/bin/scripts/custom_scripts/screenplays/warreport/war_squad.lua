@@ -52,6 +52,15 @@ WarSquad.TICK_MS         = 10000   -- How often presence is re-evaluated into at
 -- closes a real leak -- attachSite() was called once per site per 4-minute
 -- cycle with its result discarded and nothing destroying it.
 WarSquad.AREAS_KEY = "warsquad:areas"
+-- The banner at each formup centre (owner, 2026-09-08: players need to see
+-- where the formup areas are): the holder's faction banner, a generic one
+-- when the region is unknown; spawned with the area, cleared with it.
+WarSquad.MARKERS_KEY = "warsquad:markers"
+WarSquad.BANNER = {
+	imperial = "object/static/structure/general/banner_imperial_style_01.iff",
+	rebel = "object/static/structure/general/banner_rebel_style_01.iff",
+	generic = "object/static/structure/general/all_banner_generic_s01.iff",
+}
 
 -- commanderOid -> { troops = { npcOid, ... }, expiresAt = <ms> }
 -- STATE IS SHARED, NOT A LUA TABLE (2026-09-06). Each thread has its own Lua
@@ -142,10 +151,43 @@ function WarSquad.isClaimed(oid)
 	return c ~= nil and c > 0
 end
 
-function WarSquad.attachSite(zoneName, x, y)
+--- The banner: the holder's side when the region is known.
+function WarSquad.placeMarker(zoneName, x, y, regionId)
+	if type(spawnSceneObject) ~= "function" then return nil end
+	local side = nil
+	pcall(function()
+		local st = (WarReport ~= nil and WarReport.state ~= nil) and WarReport.state() or nil
+		local r = (st ~= nil and regionId ~= nil and type(st.regions) == "table") and st.regions[regionId] or nil
+		if r ~= nil then side = r.faction end
+	end)
+	local template = WarSquad.BANNER[side or "generic"] or WarSquad.BANNER.generic
+	local z = 0
+	if type(getWorldFloor) == "function" then
+		local okz, fz = pcall(getWorldFloor, x, y, zoneName)
+		if okz and type(fz) == "number" then z = fz end
+	end
+	local pMarker = nil
+	pcall(function() pMarker = spawnSceneObject(zoneName, template, x, z, y, 0, 0) end)
+	if pMarker == nil then
+		printf("WarSquad: no banner at " .. tostring(x) .. " " .. tostring(y) .. " (" .. tostring(template) .. ")\n")
+		return nil
+	end
+	local oid = SceneObject(pMarker):getObjectID()
+	local raw = readStringData(WarSquad.MARKERS_KEY)
+	if raw == nil or raw == "" then
+		writeStringData(WarSquad.MARKERS_KEY, tostring(oid))
+	else
+		writeStringData(WarSquad.MARKERS_KEY, raw .. "," .. tostring(oid))
+	end
+	return pMarker
+end
+
+function WarSquad.attachSite(zoneName, x, y, regionId)
 	if zoneName == nil or x == nil or y == nil then
 		return nil
 	end
+
+	pcall(WarSquad.placeMarker, zoneName, x, y, regionId)
 
 	local pArea = nil
 	local ok = pcall(function()
@@ -307,6 +349,19 @@ function WarSquad.claimFor(pPlayer)
 end
 
 function WarSquad.clearAreas()
+	pcall(function()
+		local marks = readStringData(WarSquad.MARKERS_KEY)
+		if marks ~= nil and marks ~= "" then
+			for token in string.gmatch(marks, "([^,]+)") do
+				local oid = tonumber(token)
+				local pM = oid and getSceneObject(oid) or nil
+				if pM ~= nil then
+					pcall(function() SceneObject(pM):destroyObjectFromWorld(false) end)
+				end
+			end
+			writeStringData(WarSquad.MARKERS_KEY, "")
+		end
+	end)
 	pcall(function()
 		local raw = readStringData(WarSquad.AREAS_KEY)
 		if raw == nil or raw == "" then
