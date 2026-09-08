@@ -86,6 +86,9 @@ includeFile("../custom_scripts/screenplays/warreport/war_window.lua")
 -- war_convoy.lua: B55 -- convoys on the roads. After war_battle.lua (fronts,
 -- ROLES) and war_contrib.lua (the delivery and the loss are records).
 includeFile("../custom_scripts/screenplays/warreport/war_convoy.lua")
+-- war_space.lua: B61 S1 -- the sky battle over each war planet. After war_battle.lua
+-- (the same report rows and cadence) and war_contrib.lua (the records).
+includeFile("../custom_scripts/screenplays/warreport/war_space.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_template_probe.lua")
 -- Slice D: a player takes command of a line from its sergeant (radial).
 includeFile("../custom_scripts/screenplays/warreport/war_command.lua")

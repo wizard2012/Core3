@@ -52,6 +52,10 @@ WarReport.NAME_OVERRIDES = {
 	tat_mos_eisley  = "Mos Eisley",
 	tat_mos_espa    = "Mos Espa",
 	nab_kaadara     = "Kaadara",
+	-- B61: the sky over each war planet is a region (docs/DESIGN-SPACE.md)
+	cor_orbit       = "the sky over Corellia",
+	nab_orbit       = "the sky over Naboo",
+	tat_orbit       = "the sky over Tatooine",
 }
 
 -- Contest floor and battle staging both live at 1.0 now (see

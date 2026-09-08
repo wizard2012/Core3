@@ -884,6 +884,59 @@ function Tests:warRankTable()
 	printf("WARRANKTABLE: end\n")
 end
 
+--- test warSpaceCheck (B61 S1): the sky battle, read-only. Three orbits in
+-- the export, the module loaded, a cycle within two intervals, and per
+-- orbit the picket's side matching the holder with live hull counts.
+function Tests:warSpaceCheck()
+	printf("WARSPACE: begin\n")
+	local ok, err = pcall(function()
+		if WarSpace == nil or WarSpace.runCycle == nil then
+			printf("WARSPACE: FAIL the WarSpace module is not loaded\n")
+			return
+		end
+		local st = WarReport.state()
+		if st == nil or type(st.orbits) ~= "table" then
+			printf("WARSPACE: FAIL no orbits in the war state\n")
+			return
+		end
+		local n = 0
+		for _ in pairs(st.orbits) do n = n + 1 end
+		printf("WARSPACE: " .. ((n == 3) and "PASS" or "FAIL") .. " three orbits exported (" .. tostring(n) .. ")\n")
+		local last = readData(WarSpace.LAST_KEY) or 0
+		local age = (last > 0) and (getTimestampMilli() - last) or -1
+		printf("WARSPACE: " .. ((age >= 0 and age <= 2 * WarSpace.CYCLE_MS) and "PASS" or "FAIL")
+			.. " a cycle ran within two intervals (age " .. tostring(math.floor(age / 1000)) .. " s, cycle "
+			.. tostring(readData(WarSpace.CYCLE_KEY) or 0) .. ")\n")
+		for _, id in ipairs(WarSpace.orbitIds()) do
+			local o = st.orbits[id]
+			local cfg = WarSpace.ORBITS[id]
+			local pside, palive = WarSpace.sweep(WarSpace.PICKET_KEY .. id)
+			local aside, aalive = WarSpace.sweep(WarSpace.ATTACK_KEY .. id)
+			local holder = o ~= nil and o.faction or "?"
+			local declared = (holder == "imperial" or holder == "rebel")
+			local good = (not declared) or (pside == holder and #palive > 0)
+			printf(string.format("WARSPACE: %s %s -- holder %s, picket %s x%d, attack %s x%d, front %s, zone %s\n",
+				good and "PASS" or "FAIL", id, tostring(holder), tostring(pside), #palive, tostring(aside), #aalive,
+				(o ~= nil and type(o.front) == "table") and (tostring(o.front.attacker) .. " " .. tostring(o.front.intensity)) or "none",
+				isZoneEnabled(cfg.zone) and "enabled" or "DISABLED"))
+		end
+	end)
+	if not ok then
+		printf("WARSPACE: FAIL error " .. tostring(err) .. "\n")
+	end
+	printf("WARSPACE: end\n")
+end
+
+--- test warSpaceCycleNow (B61 S1): run one sky cycle at once (spawns and reports).
+function Tests:warSpaceCycleNow()
+	if WarSpace == nil or WarSpace.runCycle == nil then
+		printf("WARSPACE: FAIL the WarSpace module is not loaded\n")
+		return
+	end
+	local ok, err = pcall(function() WarSpace.runCycle() end)
+	printf("WARSPACE: cycle " .. (ok and "ran" or ("failed: " .. tostring(err))) .. "\n")
+end
+
 --- test warTravelCheck (B60): the server's holders file (WarTravel.h) agrees
 -- with the export, city by city, through the warHolderOf binding. Read-only.
 function Tests:warTravelCheck()
@@ -923,7 +976,7 @@ end
 -- summary, then the probe's own marker for its lines.
 function Tests:warAllCheck()
 	printf("WARALL: begin\n")
-	local probes = { "warReadoutsRender", "warStandingsCheck", "warOrdersCheck", "warDigestCheck", "warSquadProbe", "warSitesCheck", "warDeployCheck", "warWindowCheck", "warConvoyCheck", "warGatesCheck", "warAdvanceCheck", "warFinaleCheck", "warTravelCheck" }
+	local probes = { "warReadoutsRender", "warStandingsCheck", "warOrdersCheck", "warDigestCheck", "warSquadProbe", "warSitesCheck", "warDeployCheck", "warWindowCheck", "warConvoyCheck", "warGatesCheck", "warAdvanceCheck", "warFinaleCheck", "warTravelCheck", "warSpaceCheck" }
 	for _, name in ipairs(probes) do
 		local fn = Tests[name]
 		if type(fn) ~= "function" then

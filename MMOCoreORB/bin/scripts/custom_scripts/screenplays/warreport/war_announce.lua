@@ -76,6 +76,12 @@ function WarAnnounce:lineFor(flip)
 		return nil
 	end
 
+	-- B61: the sky changed hands (flip.kind is set by the exporter for an orbit).
+	if flip.kind == "orbit" and WarSpace ~= nil and WarSpace.planetName ~= nil then
+		local loser = WarReport ~= nil and WarReport.factionName(string.lower(tostring(flip.from or ""))) or "the other side"
+		return "The sky over " .. WarSpace.planetName(flip.region) .. " has fallen to " .. captor
+			.. "; the lanes " .. loser .. " runs through it carry a fraction now."
+	end
 	local line = name .. " has fallen to " .. captor .. "."
 	-- B60 (owner ruling 2026-09-08): the town's port and cloner follow the
 	-- holder; say so where the town has them.
@@ -376,7 +382,8 @@ function WarAnnounce:run()
 		-- flip changed only what WOULD spawn, and the town kept its old
 		-- garrison indefinitely.
 		local flipRegion = flips[i].region
-		if flipRegion ~= nil and WarBridge ~= nil and WarBridge.reskinRegion ~= nil then
+		local isOrbit = flips[i].kind == "orbit"  -- B61: no town to reskin, no post to respawn
+		if flipRegion ~= nil and not isOrbit and WarBridge ~= nil and WarBridge.reskinRegion ~= nil then
 			local okReskin, errReskin = pcall(function()
 				WarBridge.reskinRegion(flipRegion)
 			end)
@@ -388,7 +395,7 @@ function WarAnnounce:run()
 		-- Officers are spawned mobiles too, and equally do not re-evaluate
 		-- their own faction. Respawn them so a captured capital is briefed by
 		-- the captor, not by the side that just lost it.
-		if WarOfficer ~= nil and WarOfficer.respawnForRegion ~= nil then
+		if not isOrbit and WarOfficer ~= nil and WarOfficer.respawnForRegion ~= nil then
 			pcall(function() WarOfficer:respawnForRegion(flipRegion) end)
 		end
 

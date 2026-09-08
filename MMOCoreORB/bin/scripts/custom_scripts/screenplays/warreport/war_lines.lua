@@ -451,6 +451,33 @@ function WarLines.legacyTownLine(r, name)
 end
 
 --- Every town on one planet, sorted by id, as town lines.
+--- B61: the sky over a planet, from the export's `orbits` block, in the
+-- town line's shape: "The sky -- Imperial-held, 68 crates, quiet." or
+-- "... Alliance attacking (intensity 0.7)." nil when the export has no sky.
+WarLines.ORBIT_OF_PLANET = { corellia = "cor_orbit", naboo = "nab_orbit", tatooine = "tat_orbit" }
+
+function WarLines.skyLine(st, planet)
+	if st == nil or type(st.orbits) ~= "table" or planet == nil then
+		return nil
+	end
+	local id = WarLines.ORBIT_OF_PLANET[planet]
+	local o = id ~= nil and st.orbits[id] or nil
+	if o == nil then
+		return nil
+	end
+	local parts = {}
+	parts[#parts + 1] = "The sky -- " .. (WarLines.HELD[o.faction] or "unheld")
+	parts[#parts + 1] = tostring(math.floor((tonumber(o.crates) or 0) + 0.5)) .. " crates"
+	local f = o.front
+	if type(f) == "table" and f.attacker ~= nil and f.attacker ~= o.faction then
+		parts[#parts + 1] = WarLines.side(f.attacker) .. (f.offensive and " offensive" or " attacking")
+			.. string.format(" (intensity %.1f)", tonumber(f.intensity) or 0)
+	else
+		parts[#parts + 1] = "quiet"
+	end
+	return table.concat(parts, ", ") .. "."
+end
+
 function WarLines.planetLines(st, planet)
 	local out = {}
 	if st == nil or type(st.regions) ~= "table" or planet == nil then
@@ -609,6 +636,11 @@ function WarLines.report(st, planet, allPlanets)
 			lines[#lines + 1] = "On " .. WarLines.planetName(p) .. ":"
 			for _, t in ipairs(towns) do
 				lines[#lines + 1] = "  " .. t
+			end
+			-- B61: the sky, last, in the same shape as a town
+			local sky = WarLines.skyLine(st, p)
+			if sky ~= nil then
+				lines[#lines + 1] = "  " .. sky
 			end
 		end
 	end
