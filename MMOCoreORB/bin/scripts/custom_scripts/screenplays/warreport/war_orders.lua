@@ -610,11 +610,13 @@ function WarOrders.restoreFromDisk()
 	if (readData(WarOrders.RESTORED_KEY) or 0) > 0 then
 		return 0
 	end
-	writeData(WarOrders.RESTORED_KEY, getTimestampMilli())
 	local fh = io.open(WarOrders.STATE_FILE, "r")
 	if fh == nil then
+		-- No mirror (a fresh install) or a transient open failure: leave the
+		-- gate open so the next include tries again (verifier, 2026-09-07).
 		return 0
 	end
+	writeData(WarOrders.RESTORED_KEY, getTimestampMilli())
 	local restored, now = 0, getTimestampMilli()
 	for line in fh:lines() do
 		local id, rec, wp, last = string.match(line, "^(%d+)\t([^\t]*)\t([^\t]*)\t([^\t]*)$")

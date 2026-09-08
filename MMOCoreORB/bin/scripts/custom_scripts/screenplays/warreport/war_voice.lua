@@ -211,6 +211,10 @@ WarVoice.BATTLE = {
 	-- B43: the fight moves into town.
 	streets      = { imperial = "The line outside broke -- into the town! Take the streets!", rebel = "They broke outside -- into the town, take the streets!" },
 	streets_hold = { imperial = "They are in the streets -- hold every corner!",               rebel = "They are inside -- every doorway, every corner, hold!" },
+	-- B53: the gates of a besieged capital.
+	gate_down  = { imperial = "Gate turret down -- keep pushing!",                 rebel = "One turret down -- keep it up!" },
+	gates_open = { imperial = "The gates are open -- into the capital!",           rebel = "The gates are down -- into the city!" },
+	gate_lost  = { imperial = "We lost a gate -- fall back to the next one!",      rebel = "A gate is gone -- hold the next!" },
 	-- B44: garrison duty -- the raid on a held town.
 	raid         = { imperial = "Raiding party -- hit the garrison and get out!",               rebel = "Raid! Hit them hard and pull back!" },
 	wave     = { imperial = "Reinforcements on the line! Close it up!",        rebel = "Fresh squad coming in -- form on me!" },

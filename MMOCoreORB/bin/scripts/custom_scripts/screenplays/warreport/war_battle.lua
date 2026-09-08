@@ -296,6 +296,15 @@ WarBattle.STREET_SITE = 9
 WarBattle.STREET_LINE_SIZE = 8         -- bodies per side in the streets: cramped ground
 WarBattle.STREET_RING_M = { 40, 80 }   -- fallbacks around the centre when it is off the navmesh
 WarBattle.STREETS_BROADCAST_MS = 2 * 60 * 60 * 1000  -- galaxy-wide news of a street fight: once per town per two hours
+-- B53 (owner ruling 2026-09-07, evening: "sieges you can see"): a besieged
+-- capital gets gate turrets of the holder's faction between each outside
+-- site and the town centre; the street fight cannot stage while one stands
+-- (the attackers must clear the gates first), and they are struck when the
+-- siege lifts. Installations, not NPCs: outside the NPC budget.
+WarBattle.GATE_TEMPLATE = "object/installation/faction_perk/turret/block_sm.iff"
+WarBattle.GATE_FRACTION = 0.55           -- along the line from the centre to the site origin
+WarBattle.GATES_KEY_PREFIX = "warbattle:gates:"   -- <region> -> comma-separated turret oids
+WarBattle.GATE_FACTION_HASH = { imperial = FACTIONIMPERIAL, rebel = FACTIONREBEL }
 
 -- SPREAD LAYER (2026-09-04, owner ruling). The simulation runs only 3 active
 -- fronts, so on any given tick TEN of the thirteen war regions have nothing
@@ -2105,6 +2114,13 @@ function WarBattle.stageStreetFight(regionId, attacker, heldSites, cycleNo)
 	if zone == nil or coords == nil or not isZoneEnabled(zone) then
 		return 0
 	end
+	-- B53: a besieged capital's gates hold the streets until they fall.
+	local standing = WarBattle.gatesStanding(regionId)
+	if standing > 0 then
+		printf(string.format("WarBattle: %s -- the fight would move into town but %d gate turret(s) still stand\n",
+			tostring(regionId), standing))
+		return 0
+	end
 	local alive = WarBattle.aliveCombatants()
 	local cost = WarBattle.STREET_LINE_SIZE * 2
 	if alive + cost > WarBattle.TOTAL_NPC_BUDGET then
@@ -2148,6 +2164,132 @@ function WarBattle.stageStreetFight(regionId, attacker, heldSites, cycleNo)
 	printf(string.format("WarBattle: the fight moves into %s: %s in the streets against the %s garrison, %d bodies at (%.0f, %.0f)\n",
 		tostring(regionId), tostring(attacker), tostring(front.faction), n, ox, oy))
 	return n
+end
+
+--- B53: where a capital's gate turrets stand: GATE_FRACTION of the way from
+-- the town centre to each site origin (between the outside fight and the
+-- streets). Pure.
+function WarBattle.gatePoints(coords, regionId, wanted)
+	local out = {}
+	for s = 1, math.max(1, wanted or 1) do
+		local ox, oy = WarBattle.siteOrigin(coords, regionId, s, wanted or 1, s == 1)
+		out[#out + 1] = { x = coords[1] + (ox - coords[1]) * WarBattle.GATE_FRACTION,
+			y = coords[2] + (oy - coords[2]) * WarBattle.GATE_FRACTION }
+	end
+	return out
+end
+
+local function gateOids(regionId)
+	local raw = readStringData(WarBattle.GATES_KEY_PREFIX .. tostring(regionId))
+	local out = {}
+	if raw ~= nil and raw ~= "" then
+		for id in string.gmatch(raw, "[^,]+") do
+			local n = tonumber(id)
+			if n ~= nil then out[#out + 1] = n end
+		end
+	end
+	return out
+end
+
+--- Turrets of a town still in the world.
+function WarBattle.gatesStanding(regionId)
+	local n = 0
+	for _, oid in ipairs(gateOids(regionId)) do
+		if getSceneObject(oid) ~= nil then
+			n = n + 1
+		end
+	end
+	return n
+end
+
+--- Strike a town's gates (the siege lifted, the town fell, or a restage).
+function WarBattle.clearGates(regionId)
+	local removed = 0
+	for _, oid in ipairs(gateOids(regionId)) do
+		local p = getSceneObject(oid)
+		if p ~= nil then
+			pcall(function() SceneObject(p):destroyObjectFromWorld(false) end)
+			removed = removed + 1
+		end
+	end
+	writeStringData(WarBattle.GATES_KEY_PREFIX .. tostring(regionId), "")
+	if removed > 0 then
+		printf("WarBattle: " .. tostring(regionId) .. " -- " .. tostring(removed) .. " gate turret(s) struck\n")
+	end
+	return removed
+end
+
+--- Keep a besieged capital's gates up (one turret per site bearing, the
+-- holder's faction, attackable), or strike them when the siege is over.
+-- Called once per region per staging cycle. Returns the turrets standing.
+function WarBattle.tendGates(zone, regionId, holder, coords, besieged, wanted)
+	if not besieged then
+		if #gateOids(regionId) > 0 then
+			WarBattle.clearGates(regionId)
+		end
+		return 0
+	end
+	if zone == nil or coords == nil or holder == nil or WarBattle.GATE_FACTION_HASH[holder] == nil then
+		return WarBattle.gatesStanding(regionId)
+	end
+	local points = WarBattle.gatePoints(coords, regionId, wanted)
+	local existing = gateOids(regionId)
+	local keep = {}
+	for _, oid in ipairs(existing) do
+		if getSceneObject(oid) ~= nil then keep[#keep + 1] = oid end
+	end
+	local spawned = 0
+	for i = #keep + 1, #points do
+		local pt = points[i]
+		local z = WarBattle.floorAt(zone, pt.x, pt.y)
+		local pTurret = nil
+		pcall(function()
+			pTurret = spawnSceneObject(zone, WarBattle.GATE_TEMPLATE, pt.x, z, pt.y, 0, 0)
+		end)
+		if pTurret ~= nil then
+			pcall(function()
+				local t = TangibleObject(pTurret)
+				t:setFaction(WarBattle.GATE_FACTION_HASH[holder])
+				t:setPvpStatusBitmask(1)
+			end)
+			pcall(function() createObserver(OBJECTDESTRUCTION, "WarBattle", "gateDestroyed", pTurret) end)
+			writeStringData(SceneObject(pTurret):getObjectID() .. ":war:gate", tostring(regionId))
+			keep[#keep + 1] = SceneObject(pTurret):getObjectID()
+			spawned = spawned + 1
+		end
+	end
+	local parts = {}
+	for _, oid in ipairs(keep) do parts[#parts + 1] = tostring(oid) end
+	writeStringData(WarBattle.GATES_KEY_PREFIX .. tostring(regionId), table.concat(parts, ","))
+	if spawned > 0 then
+		printf(string.format("WarBattle: %s under siege -- %d gate turret(s) raised for the %s (%d standing)\n",
+			tostring(regionId), spawned, tostring(holder), #keep))
+	end
+	return #keep
+end
+
+--- A gate turret fell: the attackers hear it, and the streets are one
+-- turret closer.
+function WarBattle:gateDestroyed(pTurret, pKiller)
+	pcall(function()
+		local regionId = readStringData(SceneObject(pTurret):getObjectID() .. ":war:gate")
+		local left = math.max(0, WarBattle.gatesStanding(regionId) - 1)
+		printf(string.format("WarBattle: a gate turret at %s is down (%d left)\n", tostring(regionId), left))
+		local rr = WarReport.state() and WarReport.state().regions[regionId] or nil
+		local holder = rr and rr.faction or nil
+		for _, f in ipairs(WarBattle.fronts()) do
+			if f.id == regionId then
+				local pA = getSceneObject(readData("warbattle:sgt:" .. regionId .. ":1:" .. f.attacker) or 0)
+				shout(pA, (left == 0) and "gates_open" or "gate_down", f.attacker, nil)
+				if holder ~= nil then
+					local pD = getSceneObject(readData("warbattle:sgt:" .. regionId .. ":1:" .. holder) or 0)
+					shout(pD, "gate_lost", holder, officerAt(regionId))
+				end
+			end
+		end
+		pcall(function() SceneObject(pTurret):destroyObjectFromWorld(false) end)
+	end)
+	return 1
 end
 
 --- Scheduled STALL_CHECK_MS after a site is staged. If most of the attacking
@@ -2492,6 +2634,8 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 				"WarBattle: %s (%s) contest=%.2f holder=%s -- %d/%d site(s) staged, budget left=%d (alive before this cycle %d)\n",
 				tostring(regionId), tostring(zone), front[r].contest or 0, tostring(holder),
 				regionSitesStaged, wanted, npcBudgetLeft, alreadyAlive))
+			-- B53: the gates of a besieged capital.
+			pcall(function() WarBattle.tendGates(zone, regionId, holder, coords, besieged, wanted) end)
 		end
 
 		if npcBudgetLeft < perSiteCost then
@@ -2631,6 +2775,45 @@ end
 -- age clock, so running it any number of times never ages the front; only
 -- the periodic cycle does, and that retires at most MAX_AGEOUTS_PER_CYCLE
 -- slots per pass.
+--- test warGatesCheck (B53): the gate points for every capital, the turrets
+-- standing at the besieged ones, none at the rest.
+function Tests:warGatesCheck()
+	printf("WARGATES: begin\n")
+	local ok, err = pcall(function()
+		local st = WarReport.state()
+		if st == nil then
+			printf("WARGATES: no war state\n")
+			return
+		end
+		local wrong = 0
+		for id, r in pairs(st.regions) do
+			if r.is_capital == true then
+				local besieged = type(r.siege) == "table" and r.siege.active == true
+				local coords = WarReport.COORDS[id]
+				local pts = coords and WarBattle.gatePoints(coords, id, 3) or {}
+				local standing = WarBattle.gatesStanding(id)
+				printf(string.format("WARGATES: %s holder=%s besieged=%s gates standing=%d points=%d first=(%.0f, %.0f)\n",
+					tostring(id), tostring(r.faction), tostring(besieged), standing, #pts,
+					pts[1] and pts[1].x or 0, pts[1] and pts[1].y or 0))
+				if (not besieged) and standing > 0 then wrong = wrong + 1 end
+			end
+		end
+		printf("WARGATES: " .. ((wrong == 0) and "PASS" or "FAIL") .. " no gates at an unbesieged capital\n")
+		local pts = WarBattle.gatePoints({ 0, 0 }, "nab_theed", 3)
+		local d = math.sqrt(pts[1].x * pts[1].x + pts[1].y * pts[1].y)
+		local ox, oy = WarBattle.siteOrigin({ 0, 0 }, "nab_theed", 1, 3, true)
+		local site = math.sqrt(ox * ox + oy * oy)
+		printf("WARGATES: " .. ((math.abs(d - site * WarBattle.GATE_FRACTION) < 2) and "PASS" or "FAIL")
+			.. string.format(" a gate sits %.0f m out on a site %.0f m out (%.2f)\n", d, site, WarBattle.GATE_FRACTION))
+		printf("WARGATES: " .. ((WarBattle.gatesStanding("__none__") == 0) and "PASS" or "FAIL") .. " no gates for an unknown town\n")
+		printf("WARGATES: " .. ((WarBattle.GATE_FACTION_HASH.imperial ~= nil and WarBattle.GATE_FACTION_HASH.rebel ~= nil) and "PASS" or "FAIL") .. " faction hashes on this thread\n")
+	end)
+	if not ok then
+		printf("WARGATES: failed: " .. tostring(err) .. "\n")
+	end
+	printf("WARGATES: end\n")
+end
+
 function Tests:warReconcileNow()
 	printf("WARRECONCILE: begin\n")
 
