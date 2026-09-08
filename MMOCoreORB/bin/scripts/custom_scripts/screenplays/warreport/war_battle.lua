@@ -2293,11 +2293,21 @@ function WarBattle.sweepGates(frontIds)
 	end
 	local struck = 0
 	for id, r in pairs(st.regions) do
+		local isFront = frontIds ~= nil and frontIds[id] == true
 		if r.is_capital == true then
 			local besieged = type(r.siege) == "table" and r.siege.active == true
-			local isFront = frontIds ~= nil and frontIds[id] == true
 			if (not besieged or not isFront) and #gateOids(id) > 0 then
 				struck = struck + WarBattle.clearGates(id)
+			end
+		end
+		-- B56: a region that left the front list is no offensive; its
+		-- commander keys go too, or a stale commander_lost would mute the
+		-- next offensive there for the rest of the process (verifier,
+		-- 2026-09-07). tendCommander only sees regions in the loop.
+		if not isFront and WarBattle.COMMANDER_KEY_PREFIX ~= nil then
+			if (readData(WarBattle.COMMANDER_KEY_PREFIX .. id) or 0) > 0 or (readData(WarBattle.COMMANDER_LOST_PREFIX .. id) or 0) > 0 then
+				writeData(WarBattle.COMMANDER_KEY_PREFIX .. id, 0)
+				writeData(WarBattle.COMMANDER_LOST_PREFIX .. id, 0)
 			end
 		end
 	end
