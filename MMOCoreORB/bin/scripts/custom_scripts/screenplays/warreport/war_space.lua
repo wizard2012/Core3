@@ -305,7 +305,7 @@ end
 
 --- Sweep the convoy: file its bodies, retire it when delivered, timed out or
 -- lost, else keep it. Returns the record kept (or nil).
-function WarSpace.sweepConvoy(orbitId, casualties, lost)
+function WarSpace.sweepConvoy(orbitId, casualties, convoysLost)
 	local rec = WarSpace.convoyRecord(orbitId)
 	if rec == nil then return nil end
 	local alive, dead, freighterAlive = {}, 0, false
@@ -321,7 +321,7 @@ function WarSpace.sweepConvoy(orbitId, casualties, lost)
 			end
 		end
 		if gone then
-			dead = dead + 1
+			if i ~= 1 then dead = dead + 1 end  -- escorts are casualties; the freighter is the convoy
 		else
 			alive[#alive + 1] = oid
 			if i == 1 then freighterAlive = true end
@@ -331,7 +331,7 @@ function WarSpace.sweepConvoy(orbitId, casualties, lost)
 	local delivered = (readData(WarSpace.CONVOY_KEY .. orbitId .. ":in") or 0) == 1
 	local aged = (getTimestampMilli() - rec.spawned) >= WarSpace.CONVOY_TTL_MS
 	if not freighterAlive then
-		bump(lost, orbitId, rec.side, 1)
+		bump(convoysLost, orbitId, rec.side, 1)
 		printf(string.format("WarSpace: the %s convoy over %s was lost\n", rec.side, WarSpace.planetName(orbitId)))
 	end
 	if not freighterAlive or delivered or aged then
@@ -391,7 +391,7 @@ function WarSpace.flyConvoy(orbitId, cfg, side, tick)
 	if #oids == 0 then return nil end
 	local rec = { side = side, oids = oids, spawned = getTimestampMilli(), tick = tick }
 	WarSpace.saveConvoy(orbitId, rec)
-	printf(string.format("WarSpace: %s convoy launched over %s (%d hulls) for the %s\n", side, WarSpace.planetName(orbitId), #oids, cfg.dock))
+	printf(string.format("WarSpace: %s convoy launched over %s (%d hulls), bound for %s\n", side, WarSpace.planetName(orbitId), #oids, cfg.dock))
 	return rec
 end
 
@@ -411,7 +411,7 @@ end
 
 --- One orbit: sweep both rosters, file the bodies, then restage the picket
 -- for the holder and the attack wings for the exported front.
-function WarSpace.reconcileOrbit(orbitId, o, cfg, seasonOver, casualties, lost)
+function WarSpace.reconcileOrbit(orbitId, o, cfg, seasonOver, casualties, lost, convoysLost)
 	local holder = (o.faction == "imperial" or o.faction == "rebel") and o.faction or nil
 
 	local pside, palive, pdead = WarSpace.sweep(WarSpace.PICKET_KEY .. orbitId)
@@ -452,6 +452,12 @@ function WarSpace.reconcileOrbit(orbitId, o, cfg, seasonOver, casualties, lost)
 		local want = wings * WarSpace.WING_SIZE
 		local room = WarSpace.MAX_SHIPS - #palive
 		if want > room then want = room end
+		if #aalive > want then
+			-- the front cooled (or the picket grew): trim from the tail, the leader is slot 0
+			local surplus = {}
+			while #aalive > want do surplus[#surplus + 1] = table.remove(aalive) end
+			WarSpace.despawnAll(surplus)
+		end
 		if #aalive < want then
 			local spawned = WarSpace.spawnWing(orbitId, cfg, attacker, cfg.attack, want - #aalive, "attack", #aalive)
 			for i = 1, #spawned do aalive[#aalive + 1] = spawned[i] end
@@ -462,7 +468,7 @@ function WarSpace.reconcileOrbit(orbitId, o, cfg, seasonOver, casualties, lost)
 	WarSpace.save(WarSpace.ATTACK_KEY .. orbitId, aside, aalive)
 
 	-- S2: the convoys follow the export's traffic through this sky
-	local convoy = WarSpace.sweepConvoy(orbitId, casualties, lost)
+	local convoy = WarSpace.sweepConvoy(orbitId, casualties, convoysLost)
 	if convoy == nil and not seasonOver and type(o.traffic) == "table" then
 		local tick = tonumber(o.tick) or 0
 		for _, side in ipairs({ "imperial", "rebel" }) do
@@ -487,14 +493,14 @@ function WarSpace.runCycle()
 	end
 	local seasonOver = type(st.season) == "table" and st.season.winner ~= nil and st.season.winner ~= ""
 	writeData(WarSpace.CYCLE_KEY, (readData(WarSpace.CYCLE_KEY) or 0) + 1)
-	local casualties, lost = {}, {}
+	local casualties, lost, convoysLost = {}, {}, {}
 	local tick = tonumber(st.generated_at_tick) or 0
 	for _, id in ipairs(WarSpace.orbitIds()) do
 		local o = st.orbits[id]
 		local cfg = WarSpace.ORBITS[id]
 		if o ~= nil then o.tick = tick end
 		if o ~= nil and cfg ~= nil and isZoneEnabled(cfg.zone) then
-			local ok, err = pcall(function() WarSpace.reconcileOrbit(id, o, cfg, seasonOver, casualties, lost) end)
+			local ok, err = pcall(function() WarSpace.reconcileOrbit(id, o, cfg, seasonOver, casualties, lost, convoysLost) end)
 			if not ok then
 				printf("WarSpace: " .. id .. " failed: " .. tostring(err) .. "\n")
 			end
@@ -502,6 +508,7 @@ function WarSpace.runCycle()
 	end
 	WarSpace.report(casualties, "casualty")
 	WarSpace.report(lost, "site_lost")
+	WarSpace.report(convoysLost, "convoy_lost")
 	writeData(WarSpace.LAST_KEY, getTimestampMilli())
 end
 
