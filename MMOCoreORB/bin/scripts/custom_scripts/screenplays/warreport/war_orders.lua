@@ -1078,9 +1078,20 @@ function WarOrders.reportLine(pPlayer, st)
 	local now = getTimestampMilli()
 	if now >= (o.expiresAt or 0) then
 		WarOrders.clear(oid, pPlayer)
-		return nil
+		-- B49 polish: say so once, instead of the order vanishing silently.
+		return WarOrders.lapsedLine(o)
 	end
 	return WarOrders.statusLine(o, st, now)
+end
+
+--- The line for an order that lapsed unseen (two hours passed while the
+-- player was away). Pure.
+function WarOrders.lapsedLine(o)
+	if o == nil then
+		return nil
+	end
+	local what = (o.type == "hunt") and "hunt" or (tostring(o.type) .. " orders at " .. name(o.region))
+	return "Your " .. what .. " lapsed while you were away. See an officer for new orders."
 end
 
 -- The wrapper on WarContrib.record (see the header for why it re-installs).
