@@ -56,6 +56,11 @@ WarStandings.CREDITS_PER_POINT = 500    -- 30 crates' worth of a season: 15,000 
 WarStandings.STANDING_PER_POINT = 20    -- ...and 600 faction standing
 WarStandings.WIN_BONUS_CREDITS = 5000   -- on top, for a character counted on the winning side
 WarStandings.WIN_BONUS_STANDING = 500
+-- B58 (autonomous, 2026-09-07): the season's top three on each side get a
+-- trophy -- a painting into the inventory at the first login after the
+-- season -- and the galaxy hears who. TROPHY_RANKS caps it.
+WarStandings.TROPHY_RANKS = 3
+WarStandings.TROPHY_TEMPLATE = "object/tangible/painting/painting_armor_blueprint.iff"
 WarStandings.MAX_CREDITS = 250000
 WarStandings.MAX_STANDING = 5000
 WarStandings.PAID_KEY = "war_season_paid" -- screenplay state: one bit per season paid (see the header)
@@ -164,8 +169,49 @@ function WarStandings.settle(pPlayer, st)
 			.. tostring(pay.credits) .. " credits, " .. tostring(pay.standing) .. " " .. tostring(pay.faction)
 			.. " standing" .. (pay.won and " (winner)" or "")
 			.. (ok and "\n" or (" -- FAILED: " .. tostring(err) .. "\n")))
+		-- B58: the trophy for the season's top three on their side.
+		pcall(function() WarStandings.trophy(pPlayer, st, index, oid, pay) end)
 	end
 	return true
+end
+
+--- B58: the season's place of this character on their side, from the
+-- last_season block: 1..n or nil. Pure.
+function WarStandings.seasonPlace(st, oid)
+	if WarLines == nil or WarLines.standingOf == nil then
+		return nil
+	end
+	local pos = WarLines.standingOf(st and st.last_season, oid)
+	return pos
+end
+
+--- B58: a painting into the inventory and a galaxy line for a top-three
+-- finish. Once per season per character (settle() runs once). Returns true
+-- when a trophy was given.
+function WarStandings.trophy(pPlayer, st, index, oid, pay)
+	local place = WarStandings.seasonPlace(st, oid)
+	if place == nil or place > WarStandings.TROPHY_RANKS then
+		return false
+	end
+	local pInventory = SceneObject(pPlayer):getSlottedObject("inventory")
+	if pInventory == nil then
+		return false
+	end
+	local pItem = giveItem(pInventory, WarStandings.TROPHY_TEMPLATE, -1)
+	local creature = CreatureObject(pPlayer)
+	local ord = (WarLines ~= nil and WarLines.ordinal ~= nil) and WarLines.ordinal(place) or tostring(place)
+	creature:sendSystemMessage("Season " .. tostring(index) .. ": you finished " .. ord .. " in the "
+		.. ((WarLines ~= nil and WarLines.side ~= nil) and WarLines.side(pay and pay.faction) or "war")
+		.. ". A trophy of the season is in your inventory.")
+	if warBroadcast ~= nil then
+		local who = creature:getFirstName()
+		pcall(function() warBroadcast(tostring(who) .. " finished " .. ord .. " in the "
+			.. ((WarLines ~= nil and WarLines.side ~= nil) and WarLines.side(pay and pay.faction) or "war")
+			.. " in season " .. tostring(index) .. " and takes the trophy.") end)
+	end
+	printf("WarStandings: season " .. tostring(index) .. " trophy for " .. tostring(oid) .. " (" .. ord .. ")"
+		.. ((pItem ~= nil) and "\n" or " -- giveItem returned nil\n"))
+	return pItem ~= nil
 end
 
 --- The login report's personal lines, after the section 4.3 report.

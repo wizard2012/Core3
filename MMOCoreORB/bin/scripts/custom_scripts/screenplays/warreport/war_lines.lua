@@ -396,7 +396,26 @@ function WarLines.townLine(st, regionId)
 		end
 		parts[#parts + 1] = WarLines.statusText(r, st)
 	end
+	-- B57: the season's dead here, when the export knows them.
+	local dead = WarLines.deadText(r)
+	if dead ~= nil then
+		parts[#parts + 1] = dead
+	end
 	return table.concat(parts, ", ") .. "."
+end
+
+--- B57: "43 Imperial and 61 Rebel dead this season" from the region's
+-- casualties block; nil when absent or nobody has died there. Pure.
+function WarLines.deadText(r)
+	local c = (type(r) == "table") and r.casualties or nil
+	if type(c) ~= "table" then
+		return nil
+	end
+	local i, b = math.floor(num(c.imperial) or 0), math.floor(num(c.rebel) or 0)
+	if i <= 0 and b <= 0 then
+		return nil
+	end
+	return tostring(i) .. " Imperial and " .. tostring(b) .. " Rebel dead this season"
 end
 
 function WarLines.legacyTownLine(r, name)
