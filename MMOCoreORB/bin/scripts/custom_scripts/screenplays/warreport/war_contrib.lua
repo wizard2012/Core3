@@ -144,6 +144,10 @@ local VALID_SOURCES = {
 	-- stageStreetFight; points = stagings). The sim turns it into a
 	-- street_fight event for the login digest.
 	street_fight            = true,
+	-- B54: a war officer killed at the post (war_officer_report.lua's rescan);
+	-- faction = the officer's own side, points = 1. The sim puts the posted
+	-- officer out of action for days (officers.process_killed).
+	officer_killed          = true,
 }
 WarContrib.VALID_SOURCES = VALID_SOURCES
 

@@ -117,6 +117,17 @@ function WarOfficerReportMenu:attachAll(pObject, args)
 				if (pNpc == nil or (okDead and dead == true)) and WarOfficer.respawnForRegion ~= nil then
 					printf("WarOfficerReportMenu: the officer at " .. tostring(region) .. " is "
 						.. ((pNpc == nil) and "gone" or "dead") .. "; respawning\n")
+					-- B54: the sim hears it -- the officer's own side, at the
+					-- post's town. The rescan replaces the body within five
+					-- minutes; the sim keeps its officer out for days.
+					pcall(function()
+						local side = WarOfficer.factionFor ~= nil and WarOfficer:factionFor(region) or nil
+						if side ~= nil and WarContrib ~= nil and WarContrib.record ~= nil then
+							local recorded, why = WarContrib.record(side, region, "officer_killed", 1, nil)
+							printf("WarOfficerReportMenu: officer_killed at " .. tostring(region) .. " for the " .. tostring(side)
+								.. (recorded and " -- recorded" or (" NOT recorded: " .. tostring(why))) .. "\n")
+						end
+					end)
 					local okR = pcall(function() WarOfficer:respawnForRegion(region) end)
 					if okR then
 						local nid = readSharedMemory("warofficer:npc:" .. region)
