@@ -72,6 +72,11 @@ function WarDeploy.destination(fronts, faction, orderRegion)
 			end
 		end
 	end
+	-- B49 (owner, evening sweep): an open order at a town that is no front
+	-- still wins -- the transport goes where the orders are.
+	if orderRegion ~= nil then
+		return { front = orderRegion, region = orderRegion, role = "orders", intensity = 0 }
+	end
 	return best
 end
 
@@ -95,6 +100,8 @@ function WarDeploy.text(d)
 	end
 	if d.role == "assault" then
 		return "Transport to " .. whereText(d) .. ": the assault on " .. name(d.front) .. " stages there."
+	elseif d.role == "orders" then
+		return "Transport to " .. whereText(d) .. ": your orders are there."
 	end
 	return "Transport to " .. whereText(d) .. ": it is under assault and the garrison needs you."
 end
@@ -106,6 +113,8 @@ function WarDeploy.hereText(d)
 	end
 	if d.role == "assault" then
 		return "the assault on " .. name(d.front) .. " forms up here."
+	elseif d.role == "orders" then
+		return "your orders are here."
 	end
 	return "hold it."
 end
@@ -163,23 +172,24 @@ function WarDeploy.onRadial(pPlayer, pOfficer)
 		return
 	end
 	local fronts = (WarBattle ~= nil and WarBattle.fronts ~= nil) and WarBattle.fronts() or {}
-	if #fronts == 0 then
+	local oid = SceneObject(pPlayer):getObjectID()
+	local now = getTimestampMilli()
+	local orderRegion = nil
+	if WarOrders ~= nil and WarOrders.active ~= nil then
+		local o = WarOrders.active(oid)
+		if o ~= nil and now < (o.expiresAt or 0) and o.type ~= "hunt" then
+			orderRegion = o.region
+		end
+	end
+	-- B49: no front and no orders is the only "nowhere to go".
+	if #fronts == 0 and orderRegion == nil then
 		creature:sendSystemMessage("No transport: there is no front to deploy to.")
 		return
 	end
-	local oid = SceneObject(pPlayer):getObjectID()
-	local now = getTimestampMilli()
 	local last = readData(lastKey(oid))
 	if last ~= nil and last > 0 and (now - last) < WarDeploy.COOLDOWN_MS then
 		creature:sendSystemMessage(WarDeploy.waitText(WarDeploy.COOLDOWN_MS - (now - last)))
 		return
-	end
-	local orderRegion = nil
-	if WarOrders ~= nil and WarOrders.active ~= nil then
-		local o = WarOrders.active(oid)
-		if o ~= nil and now < (o.expiresAt or 0) then
-			orderRegion = o.region
-		end
 	end
 	local d = WarDeploy.destination(fronts, faction, orderRegion)
 	if d == nil then

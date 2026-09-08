@@ -1108,7 +1108,27 @@ end
 
 --- The events after `sinceTick`, oldest first, the newest `maxLines` kept,
 -- each with how long ago: "Moenia fell to the Alliance. (under an hour ago)".
-function WarLines.sinceLines(st, sinceTick, maxLines)
+--- B50: how much an event is this player's news: their planet (2), their
+-- side in it (1). Pure.
+function WarLines.eventRelevance(e, prefer)
+	if type(prefer) ~= "table" then
+		return 0
+	end
+	local score = 0
+	if prefer.planet ~= nil and e.region ~= nil and WarLines.planetOf(e.region) == prefer.planet then
+		score = score + 2
+	end
+	if prefer.side ~= nil and (e.faction == prefer.side or e.old_owner == prefer.side) then
+		score = score + 1
+	end
+	return score
+end
+
+--- `prefer` (B50, optional): { planet = zoneName, side = faction }. When more
+-- events fit the window than `maxLines`, the ones about the player's planet
+-- and side are kept first (newest within a tie); the lines still read in
+-- time order.
+function WarLines.sinceLines(st, sinceTick, maxLines, prefer)
 	local out = {}
 	if st == nil or type(st.events) ~= "table" then
 		return out
@@ -1122,15 +1142,28 @@ function WarLines.sinceLines(st, sinceTick, maxLines)
 			picked[#picked + 1] = e
 		end
 	end
-	table.sort(picked, function(a, b)
+	local byTime = function(a, b)
 		local ta, tb = num(a.tick) or 0, num(b.tick) or 0
 		if ta ~= tb then return ta < tb end
 		return tostring(a.kind) < tostring(b.kind)
-	end)
+	end
 	local cap = maxLines or 12
-	local first = math.max(1, #picked - cap + 1)
-	for i = first, #picked do
-		local e = picked[i]
+	local kept = picked
+	if #picked > cap and type(prefer) == "table" then
+		local ranked = {}
+		for i = 1, #picked do ranked[i] = picked[i] end
+		table.sort(ranked, function(a, b)
+			local ra, rb = WarLines.eventRelevance(a, prefer), WarLines.eventRelevance(b, prefer)
+			if ra ~= rb then return ra > rb end
+			return byTime(b, a)
+		end)
+		kept = {}
+		for i = 1, cap do kept[i] = ranked[i] end
+	end
+	table.sort(kept, byTime)
+	local first = math.max(1, #kept - cap + 1)
+	for i = first, #kept do
+		local e = kept[i]
 		out[#out + 1] = WarLines.eventLine(e, st) .. " (" .. WarLines.agoText(now - (num(e.tick) or 0), st) .. ")"
 	end
 	return out
@@ -1165,4 +1198,38 @@ function WarLines.progressLine(wholeCrates)
 		return "War record: 1 crate's worth to your name."
 	end
 	return "War record: " .. tostring(n) .. " crates' worth to your name."
+end
+
+--- B51 the bounty board: the enemy side's most decorated this season, by
+-- name, for the hunt. nil when nobody on that side is counted. Pure.
+function WarLines.wantedLine(st, faction, limit)
+	local enemy = (faction == "imperial") and "rebel" or ((faction == "rebel") and "imperial" or nil)
+	if enemy == nil then
+		return nil
+	end
+	local list = WarLines.standingsOf(st and st.standings, enemy)
+	if #list == 0 then
+		return nil
+	end
+	local parts = {}
+	for i = 1, math.min(#list, limit or 3) do
+		parts[#parts + 1] = nameOf(list[i]) .. " (" .. pointsNum(list[i].points) .. " crates' worth)"
+	end
+	return "Wanted by the " .. WarLines.side(faction) .. ": " .. table.concat(parts, ", ") .. "."
+end
+
+--- B51 the crafter board: what the line wants this watch and what it pays.
+-- Reads WarOrders when it is loaded (the category rotation lives there);
+-- nil without it. Pure given WarOrders.
+function WarLines.craftLine(st)
+	if WarOrders == nil or WarOrders.supplyCategory == nil then
+		return nil
+	end
+	local category = WarOrders.supplyCategory(st)
+	if category == nil then
+		return nil
+	end
+	local pays = tonumber(WarOrders.SUPPLY_POINTS) or 6
+	return "The line wants " .. tostring(category) .. " this watch: " .. string.format("%.1f", pays)
+		.. " crates' worth of it at a recruiter pays a supply order."
 end

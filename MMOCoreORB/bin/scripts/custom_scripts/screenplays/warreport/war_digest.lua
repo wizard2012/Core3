@@ -59,7 +59,10 @@ function WarDigest.onLogin(pPlayer, st)
 	end
 	local last = WarDigest.lastSeen(creature)
 	local since = (last > 0) and last or math.max(0, tick - WarDigest.FIRST_LOGIN_TICKS)
-	local lines = WarLines.sinceLines(st, since, WarDigest.MAX_LINES)
+	-- B50: this player's planet and side first when the window is full.
+	local prefer = { planet = SceneObject(pPlayer):getZoneName(),
+		side = (WarStandings ~= nil and WarStandings.factionOf ~= nil) and WarStandings.factionOf(pPlayer) or nil }
+	local lines = WarLines.sinceLines(st, since, WarDigest.MAX_LINES, prefer)
 	if #lines > 0 then
 		creature:sendSystemMessage((last > 0) and "While you were away:" or "Lately:")
 		for _, line in ipairs(lines) do
