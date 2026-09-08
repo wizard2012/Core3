@@ -1041,6 +1041,40 @@ function Tests:warGrantSkills()
 		for line in f:lines() do lines[#lines + 1] = line end
 		f:close()
 		for _, line in ipairs(lines) do
+			local sname, template = string.match(line, "^%s*(%S+)%s+schematic%s+(%S+)%s*$")
+			if sname ~= nil and template ~= nil then
+				-- a draft schematic: rewarded (type 2), unlimited uses
+				local pPlayer = getPlayerByName(sname)
+				local pGhost = pPlayer and CreatureObject(pPlayer):getPlayerObject() or nil
+				if pGhost == nil then
+					printf("WARGRANT: FAIL " .. sname .. ": no such player\n")
+				else
+					local had = PlayerObject(pGhost):hasSchematic(template)
+					pcall(function() PlayerObject(pGhost):addRewardedSchematic(template, 2, -1, true) end)
+					local has = PlayerObject(pGhost):hasSchematic(template)
+					printf("WARGRANT: " .. (has and "PASS" or "FAIL") .. " " .. sname .. " schematic " .. template
+						.. (had and " (already had it)" or (has and " (rewarded)" or " (refused: unknown schematic?)")) .. "\n")
+				end
+				goto nextline
+			end
+			local iname, itemTemplate = string.match(line, "^%s*(%S+)%s+item%s+(%S+)%s*$")
+			if iname ~= nil and itemTemplate ~= nil then
+				-- an item into the inventory (giveItem, the officer radials' own call)
+				local pPlayer = getPlayerByName(iname)
+				local pInv = pPlayer and SceneObject(pPlayer):getSlottedObject("inventory") or nil
+				if pInv == nil then
+					printf("WARGRANT: FAIL " .. iname .. ": no such player (or no inventory)\n")
+				else
+					local pItem = nil
+					pcall(function() pItem = giveItem(pInv, itemTemplate, -1) end)
+					printf("WARGRANT: " .. (pItem and "PASS" or "FAIL") .. " " .. iname .. " item " .. itemTemplate
+						.. (pItem and " (in the inventory)" or " (giveItem returned nothing: template not loaded, or the inventory is full)") .. "\n")
+					if pItem ~= nil then
+						pcall(function() CreatureObject(pPlayer):sendSystemMessage("[War] The quartermaster put something in your inventory.") end)
+					end
+				end
+				goto nextline
+			end
 			local name, skill = string.match(line, "^%s*(%S+)%s+(%S+)%s*$")
 			if name ~= nil and skill ~= nil then
 				local pPlayer = getPlayerByName(name)
@@ -1059,6 +1093,7 @@ function Tests:warGrantSkills()
 			elseif line ~= "" then
 				printf("WARGRANT: skipped line: " .. line .. "\n")
 			end
+			::nextline::
 		end
 		os.rename(path, "log/war_grant.done")
 	end)
