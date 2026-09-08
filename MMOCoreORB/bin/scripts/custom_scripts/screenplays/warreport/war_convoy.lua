@@ -38,6 +38,7 @@ WarConvoy.START_FALLBACK_M = { 120, 80 }
 WarConvoy.LEG_M = 22
 WarConvoy.ARRIVE_M = 14
 WarConvoy.ESCORT_M = 30
+WarConvoy.WATCHED_M = 300      -- a player this close makes the convoy walk; unseen, it jumps its legs
 WarConvoy.TIMEOUT_MS = 8 * 60 * 1000
 WarConvoy.CRATES = 5.0
 WarConvoy.ESCORT_POINTS = 2.0
@@ -346,6 +347,14 @@ function WarConvoy.stepOnce()
 				return
 			end
 			local z = getWorldFloor(nx, ny, zone)
+			-- Core3 moves no agent with no player in range (the AI's
+			-- numberOfPlayersInRange gate; measured 2026-09-07: three legs,
+			-- not a metre). Unseen, the convoy jumps its legs -- the crates
+			-- still flow, and nobody there means nobody to deny them; watched,
+			-- it walks with the stock recipe.
+			local watchers = {}
+			pcall(function() watchers = SceneObject(pQm):getPlayersInRange(WarConvoy.WATCHED_M) end)
+			local watched = type(watchers) == "table" and #watchers > 0
 			for i, oid in ipairs(rec.oids) do
 				local p = getSceneObject(oid)
 				if p ~= nil then
@@ -357,9 +366,13 @@ function WarConvoy.stepOnce()
 					end
 					pcall(function()
 						local a = AiAgent(p)
-						a:stopWaiting()
-						a:setNextPosition(nx + ox, z, ny + oy, 0)
-						a:executeBehavior()
+						if watched then
+							a:stopWaiting()
+							a:setNextPosition(nx + ox, z, ny + oy, 0)
+							a:executeBehavior()
+						else
+							SceneObject(p):teleport(nx + ox, z, ny + oy, 0)
+						end
 					end)
 				end
 			end
