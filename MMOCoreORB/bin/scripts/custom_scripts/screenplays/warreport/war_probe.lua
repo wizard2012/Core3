@@ -613,6 +613,14 @@ function Tests:warSiteDistanceCheck()
 					if okc and c then fs.combat = fs.combat + 1 end
 					local okf, fo = pcall(function() return AiAgent(p):getFollowObject() end)
 					if okf and fo ~= nil then fs.following = fs.following + 1 end
+					-- inside a building: the body's parent is a cell
+					local okp, par = pcall(function() return so:getParent() end)
+					if okp and par ~= nil then
+						fs.incell = (fs.incell or 0) + 1
+						if fs.cellNote == nil then
+							fs.cellNote = string.format("cell %s at %.0f %.0f", tostring(SceneObject(par):getObjectID()), so:getWorldPositionX(), so:getWorldPositionY())
+						end
+					end
 				end
 			end
 		end
@@ -628,8 +636,9 @@ function Tests:warSiteDistanceCheck()
 		for _, f in ipairs(facs) do
 			local fs = s.f[f]
 			if fs.n > 0 then
-				printf(string.format("WARSITEDIST: %-20s %-8s alive=%d dist min=%.0f avg=%.0f max=%.0f inCombat=%d following=%d\n",
-					k, f, fs.n, fs.min, fs.sum / fs.n, fs.max, fs.combat, fs.following))
+				printf(string.format("WARSITEDIST: %-20s %-8s alive=%d dist min=%.0f avg=%.0f max=%.0f inCombat=%d following=%d inBuilding=%d%s\n",
+					k, f, fs.n, fs.min, fs.sum / fs.n, fs.max, fs.combat, fs.following, fs.incell or 0,
+					fs.cellNote and (" (" .. fs.cellNote .. ")") or ""))
 			end
 		end
 	end

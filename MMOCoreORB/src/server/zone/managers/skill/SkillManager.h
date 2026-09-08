@@ -130,6 +130,22 @@ public:
 	bool canLearnSkill(const String& skillName, CreatureObject* creature, bool noXpRequired);
 
 	/**
+	 * SWGWar: the skill points a box costs on THIS server. Squad Leader boxes
+	 * cost none (owner ruling 2026-09-08); everything else costs what the
+	 * datatable says. Every skill-point site in SkillManager.cpp reads this,
+	 * so award, surrender and the mismatch recount agree.
+	 */
+	static int pointCost(const Skill* skill) {
+		if (skill == nullptr) {
+			return 0;
+		}
+		if (skill->getSkillName().beginsWith("combat_squadleader_")) {
+			return 0;
+		}
+		return skill->getSkillPointsRequired();
+	}
+
+	/**
 	 * Checks if the player fulfills the skill prerequisites and has enough XP for the skill.
 	 * @param skillName the name of the skill to check.
 	 * @param creature the player creature.

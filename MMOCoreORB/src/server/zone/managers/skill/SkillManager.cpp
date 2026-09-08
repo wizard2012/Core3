@@ -465,7 +465,7 @@ bool SkillManager::grantSkillEffects(Skill* skill, CreatureObject* creature, boo
 
 	if (ghost != nullptr) {
 		//Withdraw skill points.
-		ghost->addSkillPoints(-skill->getSkillPointsRequired());
+		ghost->addSkillPoints(-pointCost(skill));
 
 		//Witdraw experience.
 		if (!noXpRequired) {
@@ -533,7 +533,7 @@ bool SkillManager::grantSkillEffects(Skill* skill, CreatureObject* creature, boo
 		for (int i = 0; i < list->size(); ++i) {
 			Skill* skill = list->get(i);
 
-			totalSkillPointsWasted -= skill->getSkillPointsRequired();
+			totalSkillPointsWasted -= pointCost(skill);
 		}
 
 		if (ghost->getSkillPoints() != totalSkillPointsWasted) {
@@ -688,7 +688,7 @@ bool SkillManager::surrenderSkill(const String& skillName, CreatureObject* creat
 	}
 
 	//Give the player the used skill points back.
-	ghost->addSkillPoints(skill->getSkillPointsRequired());
+	ghost->addSkillPoints(pointCost(skill));
 
 	//Remove abilities but only if the creature doesn't still have a skill that grants the
 	//ability.  Some abilities are granted by multiple skills. For example Dazzle for dancers
@@ -739,7 +739,7 @@ bool SkillManager::surrenderSkill(const String& skillName, CreatureObject* creat
 		for (int i = 0; i < list->size(); ++i) {
 			Skill* skill = list->get(i);
 
-			totalSkillPointsWasted -= skill->getSkillPointsRequired();
+			totalSkillPointsWasted -= pointCost(skill);
 		}
 
 		if (ghost->getSkillPoints() != totalSkillPointsWasted) {
@@ -832,7 +832,7 @@ void SkillManager::surrenderAllSkills(CreatureObject* creature, bool notifyClien
 
 			if (ghost != nullptr) {
 				//Give the player the used skill points back.
-				ghost->addSkillPoints(skill->getSkillPointsRequired());
+				ghost->addSkillPoints(pointCost(skill));
 
 				//Remove abilities
 				auto abilityNames = skill->getAbilities();
@@ -965,7 +965,7 @@ bool SkillManager::canLearnSkill(const String& skillName, CreatureObject* creatu
 		}
 
 		//Check if player has enough skill points to learn the skill.
-		if (ghost->getSkillPoints() < skill->getSkillPointsRequired()) {
+		if (ghost->getSkillPoints() < pointCost(skill)) {
 			return false;
 		}
 	} else {

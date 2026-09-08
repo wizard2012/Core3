@@ -176,14 +176,18 @@ function WarSquad.attachSite(zoneName, x, y)
 end
 
 --- A creature entered a site's radius. Record presence only; attachment is
--- decided on the tick, because a player who walks in and only THEN draws a
--- weapon must still get their squad.
+-- decided on the tick (no combat needed since 2026-09-08; the tick is also
+-- what re-fills a squad that lost troops).
 function WarSquad:onEnteredArea(pArea, pCreature)
 	pcall(function()
 		if pCreature == nil or not SceneObject(pCreature):isPlayerCreature() then
 			return
 		end
 		listAdd(WarSquad.PRESENT_KEY, SceneObject(pCreature):getObjectID())
+		-- the sergeant you could take command of, pinned (war_command.lua)
+		if WarCommand ~= nil and WarCommand.markSergeant ~= nil then
+			pcall(WarCommand.markSergeant, pCreature)
+		end
 	end)
 	return 0
 end
@@ -196,6 +200,9 @@ function WarSquad:onExitedArea(pArea, pCreature)
 		local oid = SceneObject(pCreature):getObjectID()
 		listDrop(WarSquad.PRESENT_KEY, oid)
 		WarSquad.release(oid)
+		if WarCommand ~= nil and WarCommand.unmarkSergeant ~= nil then
+			pcall(WarCommand.unmarkSergeant, pCreature)
+		end
 	end)
 	return 0
 end
@@ -223,12 +230,10 @@ local function qualifies(pPlayer)
 		return false
 	end
 
-	-- D23: proximity ALONE was rejected. Requiring combat is what stops a
-	-- player merely travelling past a front from collecting a squad.
-	if not creo:isInCombat() then
-		return false
-	end
-
+	-- D23 required combat too ("proximity ALONE was rejected"); the owner
+	-- lifted that on 2026-09-08: standing overt at the site is enough, and a
+	-- player merely passing through gives the squad back on leaving the
+	-- site's radius (onExitedArea -> release).
 	return true
 end
 

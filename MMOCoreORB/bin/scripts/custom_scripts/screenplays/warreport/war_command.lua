@@ -65,6 +65,15 @@
 WarCommand = WarCommand or { screenplayName = "WarCommand" }
 
 WarCommand.RADIAL = { TAKE = 20, ATTACK = 21, HOLD = 22, FALLBACK = 23, DISMISS = 24, ADVANCE = 25 }
+-- The sergeant pin (owner report 2026-09-08: whom to talk to is hard to see;
+-- a radar blip cannot be recoloured from the server, a datapad waypoint is
+-- its own marker on the minimap). One per player: a non-zero specialTypeID
+-- makes the engine replace the previous pin of that type (1101 orders,
+-- 1102 presence, 1103 recruiter).
+WarCommand.WAYPOINT_TYPE = 1104
+WarCommand.PIN_RANGE_M = 150          -- CLAIM range: the site itself
+WarCommand.PIN_NOTE_MS = 2 * 60 * 1000 -- the line about the pin, at most this often per player
+WarCommand.PIN_NOTE_KEY = "warcommand:pinnote:"
 WarCommand.ADVANCE_MAX_M = 400          -- B52: an advance further than this is refused (the pin is on another map)
 
 --- B52: where an advance goes -- the commander's order pin, else their
@@ -295,6 +304,77 @@ end
 
 -- --------------------------------------------------------------- orders --
 
+--- The nearest sergeant `pPlayer` could take command of (same faction,
+-- not commanded, alive, within PIN_RANGE_M), or nil.
+function WarCommand.nearestFreeSergeant(pPlayer)
+	if pPlayer == nil or WarBattle == nil or WarBattle.OIDS_KEY == nil then return nil end
+	local faction = factionName(CreatureObject(pPlayer):getFaction())
+	if faction == nil then return nil end
+	local zone = SceneObject(pPlayer):getZoneName()
+	local px, py = SceneObject(pPlayer):getWorldPositionX(), SceneObject(pPlayer):getWorldPositionY()
+	local raw = readStringData(WarBattle.OIDS_KEY)
+	if raw == nil or raw == "" then return nil end
+	local best, bestD2 = nil, WarCommand.PIN_RANGE_M * WarCommand.PIN_RANGE_M
+	for token in string.gmatch(raw, "([^,]+)") do
+		local oid = tonumber(token)
+		local rec = oid and recordOf(oid) or nil
+		if rec ~= nil and rec.faction == faction and isSergeant(oid, rec) and not WarCommand.isCommanded(oid) then
+			local p = getSceneObject(oid)
+			if p ~= nil and SceneObject(p):getZoneName() == zone then
+				local okd, dead = pcall(function() return CreatureObject(p):isDead() end)
+				if not (okd and dead) then
+					local dx = SceneObject(p):getWorldPositionX() - px
+					local dy = SceneObject(p):getWorldPositionY() - py
+					local d2 = dx * dx + dy * dy
+					if d2 <= bestD2 then best, bestD2 = p, d2 end
+				end
+			end
+		end
+	end
+	return best
+end
+
+--- Pin the nearest free sergeant for an overt player of a war faction.
+-- Returns true when a pin was placed.
+function WarCommand.markSergeant(pPlayer)
+	if pPlayer == nil or not SceneObject(pPlayer):isPlayerCreature() then return false end
+	local creo = CreatureObject(pPlayer)
+	if not creo:isOvert() then return false end
+	if factionName(creo:getFaction()) == nil then return false end
+	local pSgt = WarCommand.nearestFreeSergeant(pPlayer)
+	local pGhost = creo:getPlayerObject()
+	if pGhost == nil then return false end
+	if pSgt == nil then
+		pcall(function() PlayerObject(pGhost):removeWaypointBySpecialType(WarCommand.WAYPOINT_TYPE) end)
+		return false
+	end
+	local rec = recordOf(SceneObject(pSgt):getObjectID())
+	local where = (rec ~= nil and WarReport ~= nil and WarReport.regionName ~= nil) and WarReport.regionName(rec.region) or "the front"
+	local placed = pcall(function()
+		PlayerObject(pGhost):addWaypoint(SceneObject(pPlayer):getZoneName(), "Take command: the sergeant at " .. tostring(where), "",
+			SceneObject(pSgt):getWorldPositionX(), 0, SceneObject(pSgt):getWorldPositionY(), WAYPOINT_GREEN, true, true, WarCommand.WAYPOINT_TYPE, 0)
+	end)
+	if placed then
+		local oid = SceneObject(pPlayer):getObjectID()
+		local last = readData(WarCommand.PIN_NOTE_KEY .. tostring(oid)) or 0
+		local now = getTimestampMilli()
+		if now - last >= WarCommand.PIN_NOTE_MS then
+			writeData(WarCommand.PIN_NOTE_KEY .. tostring(oid), now)
+			tell(pPlayer, "A line you can command is here: its sergeant is the green pin on your map. Right-click him: Take command.")
+		end
+	end
+	return placed
+end
+
+--- The pin goes (the player left the site, or took the squad).
+function WarCommand.unmarkSergeant(pPlayer)
+	if pPlayer == nil then return end
+	pcall(function()
+		local pGhost = CreatureObject(pPlayer):getPlayerObject()
+		if pGhost ~= nil then PlayerObject(pGhost):removeWaypointBySpecialType(WarCommand.WAYPOINT_TYPE) end
+	end)
+end
+
 --- Take command of the line `pSgt` leads. Returns troops taken, or 0 and
 -- a reason.
 function WarCommand.take(pPlayer, pSgt)
@@ -352,6 +432,7 @@ function WarCommand.take(pPlayer, pSgt)
 	writeSquad(commanderOid, rec.slot, rec.faction, taken)
 	addCommander(commanderOid)
 	say(pSgt, "command_taken", rec.faction, nameOf(pPlayer))
+	WarCommand.unmarkSergeant(pPlayer)
 	tell(pPlayer, string.format("You take command of %d troops at %s. Right-click any of them for orders.", #taken, tostring(rec.region)))
 	printf(string.format("WarCommand: %s took command of %d %s troop(s) at %s\n",
 		nameOf(pPlayer), #taken, tostring(rec.faction), rec.slot))
