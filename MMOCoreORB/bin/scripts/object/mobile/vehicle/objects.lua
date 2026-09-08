@@ -788,6 +788,21 @@ object_mobile_vehicle_shared_speederbike_flash = SharedCreatureObjectTemplate:ne
 
 ObjectTemplates:addClientTemplate(object_mobile_vehicle_shared_speederbike_flash, "object/mobile/vehicle/shared_speederbike_flash.iff")
 
+-- E1 (SWGWar B61, docs/DESIGN-SPACE.md section 6): the hover fighters. The
+-- client IFFs live in swgwar_e1.tre (a copy of shared_speederbike_swoop.iff
+-- with appearanceFilename set to the ship's .apt); the server reads the
+-- same TRE (TreFiles in conf/config-local.lua). An experiment: a swoop's
+-- flight model in a fighter's hull.
+object_mobile_vehicle_shared_war_xwing = SharedCreatureObjectTemplate:new {
+	clientTemplateFileName = "object/mobile/vehicle/shared_war_xwing.iff"
+}
+ObjectTemplates:addClientTemplate(object_mobile_vehicle_shared_war_xwing, "object/mobile/vehicle/shared_war_xwing.iff")
+
+object_mobile_vehicle_shared_war_tie = SharedCreatureObjectTemplate:new {
+	clientTemplateFileName = "object/mobile/vehicle/shared_war_tie.iff"
+}
+ObjectTemplates:addClientTemplate(object_mobile_vehicle_shared_war_tie, "object/mobile/vehicle/shared_war_tie.iff")
+
 object_mobile_vehicle_shared_speederbike_swoop = SharedCreatureObjectTemplate:new {
 	clientTemplateFileName = "object/mobile/vehicle/shared_speederbike_swoop.iff"
 	--Data below here is deprecated and loaded from the tres, keeping for easy lookups

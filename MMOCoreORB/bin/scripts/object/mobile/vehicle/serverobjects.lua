@@ -55,4 +55,7 @@ includeFile("mobile/vehicle/speederbike.lua")
 includeFile("mobile/vehicle/speederbike_base.lua")
 includeFile("mobile/vehicle/speederbike_flash.lua")
 includeFile("mobile/vehicle/speederbike_swoop.lua")
+-- E1 (SWGWar B61): the hover fighters
+includeFile("mobile/vehicle/war_xwing.lua")
+includeFile("mobile/vehicle/war_tie.lua")
 includeFile("mobile/vehicle/vehicle_base.lua")

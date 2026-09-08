@@ -67,6 +67,9 @@ WarSpace.CONVOY_TICK   = "warspace:convoytick:"  -- .. "<orbit>:<side>" -> last 
 WarSpace.CONVOY_TTL_MS = 12 * 60 * 1000
 WarSpace.CONVOY_SIZE   = 3
 WarSpace.SIGNUP_RADIAL_ID = 27
+WarSpace.HOVER_RADIAL_ID = 28   -- E1: the trial hover fighter deed
+WarSpace.HOVER_DEED = { imperial = "object/tangible/deed/vehicle_deed/war_tie_deed.iff", rebel = "object/tangible/deed/vehicle_deed/war_xwing_deed.iff" }
+WarSpace.HOVER_NAME = { imperial = "a TIE fighter hull on a swoop's legs", rebel = "an X-wing hull on a swoop's legs" }
 WarSpace.SCHEDULED_KEY = "warspace:scheduled"
 WarSpace.LAST_KEY      = "warspace:last_ms"
 WarSpace.CYCLE_KEY     = "warspace:cycle"
@@ -601,6 +604,32 @@ function WarSpace.onSignupRadial(pPlayer, pOfficer)
 		.. (hasShip and "Your ship" or (WarSpace.STARTER[side] or "A fighter") .. " is in your datapad") .. ": launch it over any war planet and find the picket."
 		.. " Every hull you bring down over a war planet counts for your side.")
 	printf(string.format("WarSpace: %s signed up as a %s pilot\n", tostring(player:getFirstName()), side))
+end
+
+--- E1: the officer hands a declared character the trial deed of its side.
+-- The deed generates a swoop whose appearance is the fighter (swgwar_e1.tre
+-- on the client and in the server's TreFiles); the datapad shows a swoop
+-- control device. Nothing here changes the war.
+function WarSpace.onHoverRadial(pPlayer, pOfficer)
+	if pPlayer == nil then return end
+	local player = CreatureObject(pPlayer)
+	local side = (WarStandings ~= nil and WarStandings.factionOf ~= nil) and WarStandings.factionOf(pPlayer) or nil
+	if side ~= "imperial" and side ~= "rebel" then
+		player:sendSystemMessage("[War] Declare for a side first; the hulls are the Empire's and the Alliance's.")
+		return
+	end
+	local pInventory = SceneObject(pPlayer):getSlottedObject("inventory")
+	if pInventory == nil then
+		player:sendSystemMessage("[War] No inventory to put a deed in.")
+		return
+	end
+	local pDeed = giveItem(pInventory, WarSpace.HOVER_DEED[side], -1)
+	if pDeed == nil then
+		player:sendSystemMessage("[War] The hangar has nothing for you right now (the deed template did not load; is swgwar_e1.tre in the server's TreFiles?).")
+		return
+	end
+	player:sendSystemMessage("[War] Trial hull: " .. (WarSpace.HOVER_NAME[side] or "a fighter") .. ". Use the deed, then call it from your datapad. Tell the officer how it flies.")
+	printf(string.format("WarSpace: %s took the %s hover trial deed\n", tostring(player:getFirstName()), side))
 end
 
 -- Include time: schedule only (gated), never spawn.
