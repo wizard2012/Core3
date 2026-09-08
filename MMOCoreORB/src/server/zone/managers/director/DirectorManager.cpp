@@ -3649,6 +3649,11 @@ int DirectorManager::warHolderOf(lua_State* L) {
 		return 0;
 	}
 
+	if (!lua_isstring(L, -2) || !lua_isstring(L, -1)) {
+		lua_pushstring(L, "");
+		return 1;
+	}
+
 	String zone = lua_tostring(L, -2);
 	String city = lua_tostring(L, -1);
 	String holder = WarTravel::instance()->holderOf(zone, city);

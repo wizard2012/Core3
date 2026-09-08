@@ -6,7 +6,8 @@
  * The war lives in Lua and MySQL; this is its one C++ reader. The exporter
  * writes scripts/custom_scripts/war/war_holders.txt beside war_state.lua
  * every tick, one line per town with a city:
- *     zone <TAB> city-token <TAB> holder      e.g.  corellia  coronet  imperial
+ *     zone <TAB> city-token <TAB> holder <TAB> capital     e.g.  corellia  coronet  imperial  1
+ * (capital = 1 when the town is its holder's own capital, from the sim's map)
  * where city-token is the last segment of the Core3 city-region name
  * ("@corellia_region_names:coronet" -> "coronet"). This singleton re-reads
  * the file when its mtime changes (checked at most every five seconds) and
@@ -40,12 +41,14 @@
 class WarTravel : public Logger {
 	Mutex mutex;
 	VectorMap<String, String> holders; // "zone|city" -> "imperial" / "rebel"
+	VectorMap<String, String> capitals; // "zone|city" -> "1" when the city is its holder's capital
 	time_t loadedMtime;
 	time_t lastCheck;
 	String path;
 
 	WarTravel() : Logger("WarTravel"), loadedMtime(0), lastCheck(0), path("scripts/custom_scripts/war/war_holders.txt") {
 		holders.setNoDuplicateInsertPlan();
+		capitals.setNoDuplicateInsertPlan();
 	}
 
 	// Caller holds the mutex.
@@ -72,6 +75,8 @@ class WarTravel : public Logger {
 
 		VectorMap<String, String> fresh;
 		fresh.setNoDuplicateInsertPlan();
+		VectorMap<String, String> freshCapitals;
+		freshCapitals.setNoDuplicateInsertPlan();
 
 		std::string line;
 
@@ -89,9 +94,18 @@ class WarTravel : public Logger {
 			if (b == std::string::npos)
 				continue;
 
+			std::string rest = line.substr(b + 1);
+			std::string capital;
+			size_t c = rest.find('\t');
+
+			if (c != std::string::npos) {
+				capital = rest.substr(c + 1);
+				rest = rest.substr(0, c);
+			}
+
 			String zone(line.substr(0, a).c_str());
 			String city(line.substr(a + 1, b - a - 1).c_str());
-			String holder(line.substr(b + 1).c_str());
+			String holder(rest.c_str());
 
 			holder = holder.replaceAll("\r", "");
 
@@ -99,9 +113,13 @@ class WarTravel : public Logger {
 				continue;
 
 			fresh.put(zone + "|" + city, holder);
+
+			if (!capital.empty() && capital[0] == '1')
+				freshCapitals.put(zone + "|" + city, "1");
 		}
 
 		holders = fresh;
+		capitals = freshCapitals;
 		loadedMtime = st.st_mtime;
 
 		info("loaded " + String::valueOf(holders.size()) + " cities from " + path, true);
@@ -166,6 +184,15 @@ public:
 		return holders.get(key);
 	}
 
+	// The city is its holder's own capital (the sim's map, through the file).
+	bool isCapitalCity(const String& zone, const String& city) {
+		Locker locker(&mutex);
+
+		reloadIfChanged();
+
+		return capitals.contains(zone + "|" + city);
+	}
+
 	String holderOfCity(CityRegion* city) {
 		if (city == nullptr)
 			return "";
@@ -215,8 +242,13 @@ public:
 
 	// "The Empire holds Coronet; its port and cloner serve the Empire now."
 	String closedText(CityRegion* city) {
-		String holder = sideName(holderOfCity(city));
 		String name = (city != nullptr) ? city->getRegionDisplayedName() : String("this town");
+		String side = holderOfCity(city);
+
+		if (side.isEmpty())
+			return name + " is closed to you for now.";
+
+		String holder = sideName(side);
 		String cap = holder;
 
 		if (!cap.isEmpty())
@@ -237,9 +269,10 @@ public:
 		return cloner->getDisplayedName();
 	}
 
-	// The nearest friendly cloner on any planet (owner ruling: no new
-	// buildings): the side's own capitals first, then any open standard
-	// cloner, zones in server order. nullptr only when nothing is open anywhere.
+	// A friendly cloner on another planet (owner ruling: no new buildings).
+	// "Nearest" between planets means: the side's own capitals first (the
+	// holders file flags them), then the first open standard cloner in the
+	// server's zone order. nullptr only when nothing is open anywhere.
 	ManagedReference<SceneObject*> fallbackCloner(CreatureObject* player, ZoneServer* server) {
 		if (player == nullptr || server == nullptr)
 			return nullptr;
@@ -281,11 +314,7 @@ public:
 						continue;
 
 					if (pass == 0) {
-						String token = cityToken(city.get());
-						bool capital = (side == "imperial" && (token == "coronet" || token == "theed"))
-								|| (side == "rebel" && token == "anchorhead");
-
-						if (!capital)
+						if (city == nullptr || !isCapitalCity(zone->getZoneName(), cityToken(city.get())))
 							continue;
 					}
 

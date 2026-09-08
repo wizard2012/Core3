@@ -1709,6 +1709,10 @@ void PlayerManagerImplementation::sendActivateCloneRequest(CreatureObject* playe
 		if (cbot == nullptr)
 			continue;
 
+		// B60 (SWGWar): a shrine or enclave inside an enemy-held town is closed too.
+		if (WarTravel::instance()->isCityClosedTo(player, loc->getCityRegion().get().get()))
+			continue;
+
 		if (cbot->getFacilityType() == CloningBuildingObjectTemplate::JEDI_ONLY && player->hasSkill("force_title_jedi_rank_01")) {
 			String name = "Force Shrine (" + String::valueOf((int)loc->getWorldPositionX()) + ", " + String::valueOf((int)loc->getWorldPositionY()) + ")";
 			cloneMenu->addMenuItem(name, loc->getObjectID());

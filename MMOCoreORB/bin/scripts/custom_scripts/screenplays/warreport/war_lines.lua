@@ -668,7 +668,7 @@ function WarLines.arrival(st, regionId)
 		end
 		-- B60: the port and the cloner follow the holder (last, so the lines the
 		-- tests and the players read first keep their places).
-		if WarLines.CITY_OF ~= nil and WarLines.CITY_OF[regionId] ~= nil then
+		if WarLines.CITY_OF ~= nil and WarLines.CITY_OF[regionId] ~= nil and (r.faction == "imperial" or r.faction == "rebel") then
 			out[#out + 1] = "Its port and cloner serve the " .. WarLines.side(r.faction) .. "; the other side can neither land nor clone here."
 		end
 		return out
@@ -720,7 +720,7 @@ function WarLines.arrival(st, regionId)
 	end
 	-- B60: the port and the cloner follow the holder (last, so the lines the
 	-- tests and the players read first keep their places).
-	if WarLines.CITY_OF ~= nil and WarLines.CITY_OF[regionId] ~= nil then
+	if WarLines.CITY_OF ~= nil and WarLines.CITY_OF[regionId] ~= nil and (r.faction == "imperial" or r.faction == "rebel") then
 		out[#out + 1] = "Its port and cloner serve the " .. WarLines.side(r.faction) .. "; the other side can neither land nor clone here."
 	end
 	return out

@@ -26,6 +26,23 @@ WarWindow.MAX_ROWS = 60
 
 --- The window's rows: { text, value } each; value "" for a line, an action
 -- name for an action row. The prompt is the report's first line.
+--- B60: the transport rows for a side: { text, value } each, one per planet
+-- the side can land on. Pure (labels only; no spawn point is looked up).
+function WarWindow.transportRows(side)
+	local out = {}
+	if side == nil or WarDeploy == nil or WarDeploy.transportLabel == nil then
+		return out
+	end
+	for _, planet in ipairs(WarDeploy.PLANETS or {}) do
+		local label = WarDeploy.transportLabel(side, planet)
+		if label ~= nil then
+			local pn = (WarReport ~= nil and WarReport.PLANET_NAME and WarReport.PLANET_NAME[planet]) or planet
+			out[#out + 1] = { text = "Transport to " .. pn .. ": " .. label, value = "transport:" .. planet }
+		end
+	end
+	return out
+end
+
 function WarWindow.rows(st, zoneName, pPlayer, pOfficer)
 	local rows = {}
 	local function add(text, value)
@@ -94,14 +111,10 @@ function WarWindow.rows(st, zoneName, pPlayer, pOfficer)
 		add("Transport to the front", WarWindow.ACTION_DEPLOY)
 	end
 	-- B60: a ride to a planet -- your capital there, or the field camp.
-	if WarDeploy ~= nil and WarDeploy.transportLabel ~= nil and WarStandings ~= nil and WarStandings.factionOf ~= nil then
+	if WarStandings ~= nil and WarStandings.factionOf ~= nil then
 		local side = (pPlayer ~= nil) and WarStandings.factionOf(pPlayer) or nil
-		for _, planet in ipairs(WarDeploy.PLANETS or {}) do
-			local label = (side ~= nil) and WarDeploy.transportLabel(side, planet) or nil
-			if label ~= nil then
-				local pn = (WarReport ~= nil and WarReport.PLANET_NAME and WarReport.PLANET_NAME[planet]) or planet
-				add("Transport to " .. pn .. ": " .. label, "transport:" .. planet)
-			end
+		for _, row in ipairs(WarWindow.transportRows(side)) do
+			add(row.text, row.value)
 		end
 	end
 	add("Print this report to chat", WarWindow.ACTION_REPORT)
@@ -188,6 +201,11 @@ if type(Tests) == "table" then
 			end
 			printf("WARWINDOW: " .. ((actions >= 2) and "PASS" or "FAIL") .. " action rows present (" .. tostring(actions) .. ")\n")
 			printf("WARWINDOW: " .. ((SuiListBox ~= nil and SuiListBox.new ~= nil) and "PASS" or "FAIL") .. " SuiListBox is on this thread\n")
+			-- B60: the transport rows, pure
+			local tr = WarWindow.transportRows("rebel")
+			printf("WARWINDOW: " .. ((#tr == 3 and tostring(tr[1].text):find("Corellia", 1, true) ~= nil and tr[1].value == "transport:corellia") and "PASS" or "FAIL")
+				.. " transport rows for a side (" .. tostring(#tr) .. ")\n")
+			printf("WARWINDOW: " .. ((#WarWindow.transportRows(nil) == 0) and "PASS" or "FAIL") .. " no side, no transport rows\n")
 			printf("WARWINDOW: " .. ((#rows <= WarWindow.MAX_ROWS) and "PASS" or "FAIL") .. " within the row cap\n")
 			local empty = WarWindow.rows(nil, "naboo", nil, nil)
 			printf("WARWINDOW: " .. ((#empty == 1) and "PASS" or "FAIL") .. " no state gives one line\n")
