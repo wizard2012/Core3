@@ -103,6 +103,28 @@ function WarVoice.commanderDown(faction, townName, commanderName)
 		tostring(commanderName or "The commander"), sideName, tostring(townName))
 end
 
+--- Every war line galaxy-wide carries the tag, so it reads at a glance or
+-- filters away (owner, 2026-09-07: "keep it, tag it"). The one door.
+WarVoice.TAG = "[War] "
+
+function WarVoice.tag(line)
+	if line == nil then
+		return nil
+	end
+	line = tostring(line)
+	if string.sub(line, 1, #WarVoice.TAG) == WarVoice.TAG then
+		return line
+	end
+	return WarVoice.TAG .. line
+end
+
+function warBroadcast(line)
+	if line == nil then
+		return false
+	end
+	return broadcastToGalaxy(nil, WarVoice.tag(line))
+end
+
 --- Presence line when ground changed hands recently. `faction` is the CAPTOR.
 function WarVoice.captureNote(faction)
 	return string.format("%s took a position here within the hour.", pick(WarVoice.FORCES, faction, "Enemy forces"))

@@ -38,7 +38,7 @@
   treated as "adopt the current tick silently" -- the first reload AFTER the
   restart announces normally, and history is not replayed at people.
 
-  BROADCAST MECHANISM: broadcastToGalaxy(nil, message), registered as a Lua
+  BROADCAST MECHANISM: warBroadcast(message), registered as a Lua
   global at DirectorManager.cpp:546. With a nil creature,
   ChatManagerImplementation::broadcastGalaxy adds NO "[name]" prefix (verified
   in source) and sends the bare string to every online player via
@@ -169,7 +169,7 @@ function WarAnnounce:dispatch(tick)
 				and WarReport.regionName(p.region) or tostring(p.region)
 			local line = WarVoice.dispatch(name, p.faction, p.players, moved[p.region])
 			if line ~= nil then
-				local ok, err = pcall(function() broadcastToGalaxy(nil, line) end)
+				local ok, err = pcall(function() warBroadcast(line) end)
 				if ok then
 					sent = sent + 1
 					printf("WarAnnounce: dispatch tick=" .. tostring(tick) .. " :: " .. line .. "\n")
@@ -206,7 +206,7 @@ function WarAnnounce:supplyDispatch(tick)
 				and WarReport.regionName(c.region) or tostring(c.region)
 			local line = WarVoice.supplyChange(name, c.from, c.to)
 			if line ~= nil then
-				local ok, err = pcall(function() broadcastToGalaxy(nil, line) end)
+				local ok, err = pcall(function() warBroadcast(line) end)
 				if ok then
 					sent = sent + 1
 					printf("WarAnnounce: supply tick=" .. tostring(tick) .. " :: " .. line .. "\n")
@@ -240,7 +240,7 @@ function WarAnnounce:transitionDispatch(tick)
 	writeStringData(WarAnnounce.SNAPSHOT_KEY, WarLines.packSnapshot(snap))
 	for i = 1, math.min(#lines, WarAnnounce.TRANSITION_MAX_LINES) do
 		local line = lines[i]
-		local ok, err = pcall(function() broadcastToGalaxy(nil, line) end)
+		local ok, err = pcall(function() warBroadcast(line) end)
 		if ok then
 			printf("WarAnnounce: transition tick=" .. tostring(tick) .. " :: " .. line .. "\n")
 		else
@@ -282,7 +282,7 @@ function WarAnnounce:standingsDispatch(tick, force)
 	for _, faction in ipairs({ "imperial", "rebel" }) do
 		local line = WarLines.topLine(st, faction, 3)
 		if line ~= nil then
-			local ok, err = pcall(function() broadcastToGalaxy(nil, line) end)
+			local ok, err = pcall(function() warBroadcast(line) end)
 			if ok then
 				printf("WarAnnounce: standings tick=" .. tostring(tick) .. " :: " .. line .. "\n")
 			else
@@ -317,7 +317,7 @@ function WarAnnounce:finaleDispatch(tick)
 			local last = readSharedMemory(WarAnnounce.FINALE_KEY_PREFIX .. id) or 0
 			if last == 0 or (tick - last) >= WarAnnounce.FINALE_EVERY_TICKS then
 				writeSharedMemory(WarAnnounce.FINALE_KEY_PREFIX .. id, tick)
-				local ok, err = pcall(function() broadcastToGalaxy(nil, line) end)
+				local ok, err = pcall(function() warBroadcast(line) end)
 				if ok then
 					printf("WarAnnounce: finale tick=" .. tostring(tick) .. " :: " .. line .. "\n")
 				else
@@ -390,7 +390,7 @@ function WarAnnounce:run()
 		local line = self:lineFor(flips[i])
 		if line ~= nil then
 			local ok, err = pcall(function()
-				broadcastToGalaxy(nil, line)
+				warBroadcast(line)
 			end)
 			-- Log either way. broadcastToGalaxy itself logs nothing, so without
 			-- this there is no server-side evidence an announcement happened and

@@ -133,6 +133,21 @@ function WarOfficer:factionFor(regionId)
 	return r.faction
 end
 
+--- The sim's officer name for a town: the export's front record carries the
+-- defending officer's name; nil when the town is no front or has no officer.
+function WarOfficer:nameFor(regionId)
+	local st = (WarReport ~= nil and WarReport.state ~= nil) and WarReport.state() or nil
+	if st == nil or type(st.fronts) ~= "table" then
+		return nil
+	end
+	for _, f in ipairs(st.fronts) do
+		if f.region == regionId and type(f.officer) == "string" and f.officer ~= "" then
+			return f.officer
+		end
+	end
+	return nil
+end
+
 function WarOfficer:spawnPost(post)
 	if post == nil or not isZoneEnabled(post.zone) then
 		return
@@ -158,6 +173,12 @@ function WarOfficer:spawnPost(post)
 	end
 
 	AiAgent(pNpc):addObjectFlag(AI_STATIONARY)
+	-- The sim's posted officer, by name, when the export knows one for this
+	-- town (the front's defending officer): the digest and the world agree.
+	pcall(function()
+		local nm = WarOfficer:nameFor(post.region)
+		if nm ~= nil then SceneObject(pNpc):setCustomObjectName(nm) end
+	end)
 
 	local pArea = spawnActiveArea(post.zone, "object/active_area.iff",
 		post.x, 0, post.y, WarOfficer.BRIEF_RADIUS_M, 0)

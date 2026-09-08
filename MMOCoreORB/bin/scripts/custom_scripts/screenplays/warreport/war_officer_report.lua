@@ -137,6 +137,11 @@ function WarOfficerReportMenu:attachAll(pObject, args)
 				if pNpc ~= nil then
 					SceneObject(pNpc):setObjectMenuComponent("WarOfficerReportMenuComponent")
 					attached = attached + 1
+					-- The name follows the sim's posted officer as fronts move.
+					pcall(function()
+						local nm = (WarOfficer.nameFor ~= nil) and WarOfficer:nameFor(region) or nil
+						if nm ~= nil then SceneObject(pNpc):setCustomObjectName(nm) end
+					end)
 				end
 			end
 		end

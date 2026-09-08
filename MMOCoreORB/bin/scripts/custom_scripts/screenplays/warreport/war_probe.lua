@@ -826,7 +826,7 @@ end
 -- restart. deploy/scripts/restart-announced.sh sends it and waits.
 function Tests:warRestartNotice()
 	local line = "Server restart in two minutes for a war update. Finish the fight you are in; the war itself keeps going, your standing and your orders are safe."
-	local ok = pcall(function() broadcastToGalaxy(nil, line) end)
+	local ok = pcall(function() warBroadcast(line) end)
 	printf("WARRESTART: notice " .. (ok and "sent" or "FAILED") .. " :: " .. line .. "\n")
 end
 

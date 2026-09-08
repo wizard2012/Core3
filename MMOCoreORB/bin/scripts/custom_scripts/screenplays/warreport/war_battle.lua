@@ -2165,7 +2165,7 @@ function WarBattle.stageStreetFight(regionId, attacker, heldSites, cycleNo)
 		writeData("warbattle:streets_broadcast_ms:" .. regionId, nowMs)
 		local townName = (WarReport.regionName ~= nil) and WarReport.regionName(regionId) or tostring(regionId)
 		local line = WarVoice.streetsBroadcast(attacker, townName)
-		local okB = pcall(function() broadcastToGalaxy(nil, line) end)
+		local okB = pcall(function() warBroadcast(line) end)
 		printf("WarBattle: streets broadcast " .. (okB and "sent" or "FAILED") .. " :: " .. tostring(line) .. "\n")
 	end
 	local pA = getSceneObject(readData("warbattle:sgt:" .. slotKey .. ":" .. attacker) or 0)
@@ -2383,7 +2383,7 @@ function WarBattle.tendCommander(regionId, f)
 		WarBattle.report({ [regionId .. "|" .. f.attacker] = 1 }, "commander_killed")
 		if WarVoice ~= nil and WarVoice.commanderDown ~= nil and WarReport ~= nil and WarReport.regionName ~= nil then
 			local line = WarVoice.commanderDown(f.attacker, WarReport.regionName(regionId), nm)
-			local okB = pcall(function() broadcastToGalaxy(nil, line) end)
+			local okB = pcall(function() warBroadcast(line) end)
 			printf("WarBattle: commander broadcast " .. (okB and "sent" or "FAILED") .. " :: " .. tostring(line) .. "\n")
 		end
 		return "fell"
