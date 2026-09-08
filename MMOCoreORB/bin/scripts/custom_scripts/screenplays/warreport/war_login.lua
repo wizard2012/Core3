@@ -138,6 +138,10 @@ function WarReportLogin:sendReport(pPlayer)
 			if WarOrders ~= nil and WarOrders.sweepWaypoints ~= nil then
 				pcall(function() WarOrders.sweepWaypoints(pPlayer) end)
 			end
+			-- B47: a presence order whose minute chain stopped gets it back.
+			if WarOrders ~= nil and WarOrders.onLogin ~= nil then
+				pcall(function() WarOrders.onLogin(pPlayer) end)
+			end
 			return
 		end
 

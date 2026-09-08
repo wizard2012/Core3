@@ -821,12 +821,21 @@ function Tests:warRaidStageNow()
 	printf("WARRAID: end\n")
 end
 
+--- test warRestartNotice: AN ACTION -- the galaxy-wide line the restart rule
+-- (owner, 2026-09-07: "anytime, announce first") wants two minutes before a
+-- restart. deploy/scripts/restart-announced.sh sends it and waits.
+function Tests:warRestartNotice()
+	local line = "Server restart in two minutes for a war update. Finish the fight you are in; the war itself keeps going, your standing and your orders are safe."
+	local ok = pcall(function() broadcastToGalaxy(nil, line) end)
+	printf("WARRESTART: notice " .. (ok and "sent" or "FAILED") .. " :: " .. line .. "\n")
+end
+
 --- test warAllCheck: every readout probe in one console command, each in its
 -- own pcall so one failing cannot hide the others. Grep WARALL for the
 -- summary, then the probe's own marker for its lines.
 function Tests:warAllCheck()
 	printf("WARALL: begin\n")
-	local probes = { "warReadoutsRender", "warStandingsCheck", "warOrdersCheck", "warDigestCheck", "warSquadProbe", "warSitesCheck", "warDeployCheck" }
+	local probes = { "warReadoutsRender", "warStandingsCheck", "warOrdersCheck", "warDigestCheck", "warSquadProbe", "warSitesCheck", "warDeployCheck", "warWindowCheck" }
 	for _, name in ipairs(probes) do
 		local fn = Tests[name]
 		if type(fn) ~= "function" then

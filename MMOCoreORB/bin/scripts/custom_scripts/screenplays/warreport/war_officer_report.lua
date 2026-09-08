@@ -157,6 +157,10 @@ function WarOfficerReportMenuComponent:fillObjectMenuResponse(pSceneObject, pMen
 	if WarDeploy ~= nil and WarDeploy.onRadial ~= nil then
 		menuResponse:addRadialMenuItem(WarDeploy.RADIAL_ID or 22, 3, "Deploy")
 	end
+	-- B48: the War window (war_window.lua).
+	if WarWindow ~= nil and WarWindow.open ~= nil then
+		menuResponse:addRadialMenuItem(WarWindow.RADIAL_ID or 23, 3, "War")
+	end
 end
 
 function WarOfficerReportMenuComponent:handleObjectMenuSelect(pSceneObject, pPlayer, selectedID)
@@ -175,6 +179,11 @@ function WarOfficerReportMenuComponent:handleObjectMenuSelect(pSceneObject, pPla
 		local ok, err = pcall(function() WarDeploy.onRadial(pPlayer, pSceneObject) end)
 		if not ok then
 			printf("WarDeploy.onRadial failed, swallowed: " .. tostring(err) .. "\n")
+		end
+	elseif WarWindow ~= nil and selectedID == (WarWindow.RADIAL_ID or 23) then
+		local ok, err = pcall(function() WarWindow.open(pPlayer, pSceneObject) end)
+		if not ok then
+			printf("WarWindow.open failed, swallowed: " .. tostring(err) .. "\n")
 		end
 	end
 

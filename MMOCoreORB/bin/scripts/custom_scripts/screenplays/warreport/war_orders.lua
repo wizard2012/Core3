@@ -95,6 +95,10 @@ WarOrders.RAID_AT_MINUTE = 2               -- B44 garrison duty: the raid comes 
 WarOrders.RAID_SIZE = 4                    -- raiders: a sergeant, a medic, two riflemen
 WarOrders.RAID_DISTANCE_M = 60             -- they start this far from the player, on a meshed point
 WarOrders.WP_PREFIX = "warorders:wp:"      -- the datapad waypoint an order placed (its object id)
+WarOrders.INDEX_KEY = "warorders:index"     -- B47: the oids with an active order, comma-separated
+WarOrders.STATE_FILE = "log/warorders.state" -- B47: the disk mirror (shared string data dies with the process)
+WarOrders.RESTORED_KEY = "warorders:restored_ms" -- B47: set once per process by restoreFromDisk
+WarOrders.CHAIN_PREFIX = "warorders:chain:"  -- B47: the last holdCheck tick per oid (a chain that stopped is restarted at login)
 WarOrders.WAYPOINT_COLOR = 3              -- not the recruiter's front-line colour (2), so the two read apart
 WarOrders.WAYPOINT_TYPE = 1101            -- our own specialTypeID: the engine keeps one pin of a type, and the
                                           -- login sweep (sweepWaypoints) can find a pin a restart orphaned
@@ -522,16 +526,140 @@ end
 
 function WarOrders.save(oid, o)
 	writeStringData(key(oid), WarOrders.encode(o))
+	indexAdd(oid)
+	pcall(WarOrders.persist)
 end
 
 --- Forget the order; the datapad waypoint it placed goes with it.
 function WarOrders.clear(oid, pPlayer)
 	writeStringData(key(oid), "")
 	pcall(function() WarOrders.removeWaypoint(pPlayer, oid) end)
+	indexRemove(oid)
+	pcall(WarOrders.persist)
 end
 
 local function wpKey(oid)
 	return WarOrders.WP_PREFIX .. tostring(oid)
+end
+
+-- B47: the index of active orders, so the disk mirror can be rewritten in
+-- full on every change (a handful of players: cheap).
+local function indexList()
+	local raw = readStringData(WarOrders.INDEX_KEY)
+	local out = {}
+	if raw ~= nil and raw ~= "" then
+		for id in string.gmatch(raw, "[^,]+") do
+			out[#out + 1] = id
+		end
+	end
+	return out
+end
+
+local function indexWrite(list)
+	writeStringData(WarOrders.INDEX_KEY, table.concat(list, ","))
+end
+
+local function indexAdd(oid)
+	local list = indexList()
+	for _, id in ipairs(list) do
+		if id == tostring(oid) then
+			return
+		end
+	end
+	list[#list + 1] = tostring(oid)
+	indexWrite(list)
+end
+
+local function indexRemove(oid)
+	local keep = {}
+	for _, id in ipairs(indexList()) do
+		if id ~= tostring(oid) then
+			keep[#keep + 1] = id
+		end
+	end
+	indexWrite(keep)
+end
+
+--- B47: mirror every active order to disk, one tab-separated line each:
+-- oid, the record, the waypoint id, the last-order note. Called on every
+-- save and clear. A restart loses shared string data; the mirror does not.
+function WarOrders.persist()
+	local fh = io.open(WarOrders.STATE_FILE, "w")
+	if fh == nil then
+		return false
+	end
+	for _, id in ipairs(indexList()) do
+		local rec = readStringData(key(id))
+		if rec ~= nil and rec ~= "" then
+			fh:write(id .. "\t" .. rec .. "\t" .. tostring(readStringData(wpKey(id)) or "") .. "\t"
+				.. tostring(readStringData(lastKey(id)) or "") .. "\n")
+		end
+	end
+	fh:close()
+	return true
+end
+
+--- B47: read the mirror back once per process (RESTORED_KEY is shared
+-- memory: empty after a restart, set after the first pass, so a reload's
+-- re-include does nothing). Lapsed orders are dropped; a live shared record
+-- is never overwritten. Returns the count restored.
+function WarOrders.restoreFromDisk()
+	if (readData(WarOrders.RESTORED_KEY) or 0) > 0 then
+		return 0
+	end
+	writeData(WarOrders.RESTORED_KEY, getTimestampMilli())
+	local fh = io.open(WarOrders.STATE_FILE, "r")
+	if fh == nil then
+		return 0
+	end
+	local restored, now = 0, getTimestampMilli()
+	for line in fh:lines() do
+		local id, rec, wp, last = string.match(line, "^(%d+)\t([^\t]*)\t([^\t]*)\t([^\t]*)$")
+		if id ~= nil and rec ~= "" then
+			local o = WarOrders.decode(rec)
+			if o ~= nil and now < (o.expiresAt or 0) and (readStringData(key(id)) or "") == "" then
+				writeStringData(key(id), rec)
+				if wp ~= "" then
+					writeStringData(wpKey(id), wp)
+				end
+				if last ~= "" then
+					writeStringData(lastKey(id), last)
+				end
+				indexAdd(id)
+				restored = restored + 1
+			end
+		end
+	end
+	fh:close()
+	printf("WarOrders: restored " .. tostring(restored) .. " order(s) from " .. WarOrders.STATE_FILE .. "\n")
+	return restored
+end
+
+--- B47: at login, a presence order (hold, rally, scout) whose minute chain
+-- stopped -- the process restarted, or the player was away -- gets its
+-- chain back. The chain stamps CHAIN_PREFIX every tick; older than two
+-- ticks means nobody is counting.
+function WarOrders.onLogin(pPlayer)
+	if pPlayer == nil then
+		return false
+	end
+	local oid = SceneObject(pPlayer):getObjectID()
+	local o = WarOrders.active(oid)
+	if o == nil or not (o.type == "hold" or o.type == "rally" or o.type == "scout") then
+		return false
+	end
+	local now = getTimestampMilli()
+	if now >= (o.expiresAt or 0) then
+		return false
+	end
+	local stamp = readData(WarOrders.CHAIN_PREFIX .. tostring(oid)) or 0
+	if stamp > 0 and (now - stamp) < 2 * WarOrders.HOLD_CHECK_MS then
+		return false
+	end
+	writeData(WarOrders.CHAIN_PREFIX .. tostring(oid), now)
+	createEvent(WarOrders.HOLD_CHECK_MS, "WarOrders", "holdCheck", pPlayer, "")
+	printf("WarOrders: " .. tostring(oid) .. " " .. o.type .. " chain restarted at login\n")
+	return true
 end
 
 --- The datapad waypoint's name for an order; nil for a hunt (its target is a
@@ -886,6 +1014,7 @@ function WarOrders:holdCheck(pPlayer)
 			return
 		end
 		local now = getTimestampMilli()
+		writeData(WarOrders.CHAIN_PREFIX .. tostring(oid), now)  -- B47: this chain is alive
 		if now >= (o.expiresAt or 0) then
 			WarOrders.clear(oid, pPlayer)
 			CreatureObject(pPlayer):sendSystemMessage("Your orders have lapsed: " .. name(o.region) .. " was not "
@@ -970,6 +1099,9 @@ function WarOrders._install()
 	WarOrders._installedWrapperRef = wrapped
 end
 WarOrders._install()
+-- B47: the disk mirror, once per process (shared-memory gated; no spawn, no
+-- event -- allowed at include time).
+pcall(WarOrders.restoreFromDisk)
 
 -- Console probe: test warOrdersCheck
 if type(Tests) == "table" then
@@ -1048,6 +1180,32 @@ if type(Tests) == "table" then
 		end)
 		if not ok then
 			printf("WARORDERS: failed: " .. tostring(err) .. "\n")
+		end
+		-- B47: the disk mirror round-trips a synthetic order and forgets it on clear
+		do
+			local pid = 4243
+			local rec = { type = "hold", region = "nab_theed", faction = "imperial", need = 10, done = 1, issuedAt = now, expiresAt = now + 60000, extra = "raided" }
+			WarOrders.save(pid, rec)
+			local fh = io.open(WarOrders.STATE_FILE, "r")
+			local found = false
+			if fh ~= nil then
+				for line in fh:lines() do
+					if string.match(line, "^4243\t") ~= nil and string.find(line, "raided", 1, true) ~= nil then found = true end
+				end
+				fh:close()
+			end
+			printf("WARORDERS: " .. (found and "PASS" or "FAIL") .. " the disk mirror carries a saved order (" .. WarOrders.STATE_FILE .. ")\n")
+			WarOrders.clear(pid, nil)
+			local gone = true
+			fh = io.open(WarOrders.STATE_FILE, "r")
+			if fh ~= nil then
+				for line in fh:lines() do
+					if string.match(line, "^4243\t") ~= nil then gone = false end
+				end
+				fh:close()
+			end
+			printf("WARORDERS: " .. (gone and "PASS" or "FAIL") .. " a cleared order leaves the mirror\n")
+			printf("WARORDERS: " .. ((WarOrders.restoreFromDisk() == 0) and "PASS" or "FAIL") .. " a second restore in the same process is a no-op\n")
 		end
 		-- garrison duty (B44): the raid mechanism is reachable and sized
 		printf("WARORDERS: " .. ((WarBattle ~= nil and WarBattle.spawnRaid ~= nil) and "PASS" or "FAIL") .. " WarBattle.spawnRaid is visible\n")
