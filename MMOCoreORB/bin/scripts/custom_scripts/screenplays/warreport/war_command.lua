@@ -64,7 +64,21 @@
 
 WarCommand = WarCommand or { screenplayName = "WarCommand" }
 
-WarCommand.RADIAL = { TAKE = 20, ATTACK = 21, HOLD = 22, FALLBACK = 23, DISMISS = 24 }
+WarCommand.RADIAL = { TAKE = 20, ATTACK = 21, HOLD = 22, FALLBACK = 23, DISMISS = 24, ADVANCE = 25 }
+WarCommand.ADVANCE_MAX_M = 400          -- B52: an advance further than this is refused (the pin is on another map)
+
+--- B52: where an advance goes -- the commander's order pin, else their
+-- target, else where they stand. Each pair may be nil. Pure.
+function WarCommand.advancePoint(pinX, pinY, targetX, targetY, selfX, selfY)
+	if pinX ~= nil and pinY ~= nil then
+		return pinX, pinY, "pin"
+	elseif targetX ~= nil and targetY ~= nil then
+		return targetX, targetY, "target"
+	elseif selfX ~= nil and selfY ~= nil then
+		return selfX, selfY, "self"
+	end
+	return nil
+end
 WarCommand.MAX_SQUAD = 24            -- a line plus its waves; a walker is not a squad member
 WarCommand.ALLOW_NPC_COMMANDER = false -- the probe flips this on and off around itself
 
@@ -420,6 +434,76 @@ function WarCommand.order(pPlayer, kind)
 		return #troops, nil
 	end
 
+	if kind == "advance" then
+		-- B52 (owner, evening sweep): the line moves to the commander's order
+		-- pin -- the objective -- in formation, the way the stall fix moves a
+		-- line (teleport plus engage), then takes on the enemies of that
+		-- region from the roster. Without a pin, to the target; without
+		-- that, on the commander.
+		local so = SceneObject(pPlayer)
+		local zone = so:getZoneName()
+		local pinX, pinY = nil, nil
+		if WarOrders ~= nil and WarOrders.active ~= nil and WarOrders.waypointPoint ~= nil and WarReport ~= nil then
+			local o = WarOrders.active(commanderOid)
+			if o ~= nil and o.region ~= nil and WarReport.PLANET_OF ~= nil and WarReport.PLANET_OF[o.region] == zone then
+				pinX, pinY = WarOrders.waypointPoint(o, WarReport.COORDS[o.region])
+			end
+		end
+		local tx, ty = nil, nil
+		pcall(function()
+			local targetId = CreatureObject(pPlayer):getTargetID()
+			local pT = (targetId ~= nil and targetId > 0) and getSceneObject(targetId) or nil
+			if pT ~= nil and SceneObject(pT):getZoneName() == zone then
+				tx, ty = SceneObject(pT):getWorldPositionX(), SceneObject(pT):getWorldPositionY()
+			end
+		end)
+		local x, y, how = WarCommand.advancePoint(pinX, pinY, tx, ty, so:getWorldPositionX(), so:getWorldPositionY())
+		if x == nil then
+			return 0, "nowhere to go"
+		end
+		local dx, dy = x - so:getWorldPositionX(), y - so:getWorldPositionY()
+		if math.sqrt(dx * dx + dy * dy) > WarCommand.ADVANCE_MAX_M then
+			return 0, "too far"
+		end
+		-- Abreast across the line to the point, gap like a staged line.
+		local len = math.max(1, math.sqrt(dx * dx + dy * dy))
+		local px, py = -dy / len, dx / len
+		local gap = (WarBattle ~= nil and WarBattle.TROOPER_GAP_M) or 3
+		local half = (#troops - 1) / 2
+		local region = (WarReport ~= nil and WarReport.regionAt ~= nil) and WarReport.regionAt(zone, x, y) or nil
+		local enemies = {}
+		if region ~= nil and WarBattle ~= nil and WarBattle.ROSTER_KEY ~= nil then
+			local raw = readStringData(WarBattle.ROSTER_KEY) or ""
+			for rec in string.gmatch(raw, "[^;]+") do
+				local oid, rid, _, fac = string.match(rec, "^(%d+)|([%w_]+)|([%w_]+)|([%w_]+)")
+				if oid ~= nil and rid == region and fac ~= nil and fac ~= squad.faction then
+					local pE = getSceneObject(tonumber(oid))
+					if pE ~= nil then enemies[#enemies + 1] = pE end
+				end
+			end
+		end
+		for i, u in ipairs(troops) do
+			pcall(function()
+				local offset = (i - 1 - half) * gap
+				local ax, ay = x + offset * px, y + offset * py
+				local z = (WarBattle ~= nil and WarBattle.floorAt ~= nil) and WarBattle.floorAt(zone, ax, ay) or 0
+				local a = AiAgent(u.p)
+				a:clearFollowObject()
+				SceneObject(u.p):teleport(ax, z, ay, 0)
+				a:setHomeLocation(ax, z, ay, nil)
+				if #enemies > 0 then
+					WarBattle.engage(u.p, enemies[((i - 1) % #enemies) + 1], true)
+				else
+					a:executeBehavior()
+				end
+			end)
+		end
+		say(voice, "order_advance", squad.faction, nil)
+		printf("WarCommand: " .. tostring(commanderOid) .. " advanced " .. tostring(#troops) .. " to the " .. tostring(how)
+			.. " at " .. string.format("%.0f, %.0f", x, y) .. " (" .. tostring(#enemies) .. " enemies there)\n")
+		return #troops, nil
+	end
+
 	return 0, "unknown order"
 end
 
@@ -580,6 +664,7 @@ function WarCommandMenuComponent:fillObjectMenuResponse(pNpc, pMenuResponse, pPl
 			menu:addRadialMenuItem(WarCommand.RADIAL.ATTACK, 3, "Attack my target")
 			menu:addRadialMenuItem(WarCommand.RADIAL.HOLD, 3, "Hold here")
 			menu:addRadialMenuItem(WarCommand.RADIAL.FALLBACK, 3, "Fall back to me")
+			menu:addRadialMenuItem(WarCommand.RADIAL.ADVANCE, 3, "Advance to my pin")
 			menu:addRadialMenuItem(WarCommand.RADIAL.DISMISS, 3, "Dismiss squad")
 		elseif isSergeant(oid, rec) then
 			menu:addRadialMenuItem(WarCommand.RADIAL.TAKE, 3, "Take command")
@@ -601,8 +686,9 @@ function WarCommandMenuComponent:handleObjectMenuSelect(pNpc, pPlayer, selectedI
 			if n == 0 then
 				tell(pPlayer, "You cannot take command: " .. tostring(why) .. ".")
 			end
-		elseif selectedID == R.ATTACK or selectedID == R.HOLD or selectedID == R.FALLBACK then
-			local kind = (selectedID == R.ATTACK) and "attack" or ((selectedID == R.HOLD) and "hold" or "fallback")
+		elseif selectedID == R.ATTACK or selectedID == R.HOLD or selectedID == R.FALLBACK or selectedID == R.ADVANCE then
+			local kind = (selectedID == R.ATTACK) and "attack" or ((selectedID == R.HOLD) and "hold"
+				or ((selectedID == R.ADVANCE) and "advance" or "fallback"))
 			local n, why = WarCommand.order(pPlayer, kind)
 			if n == 0 then
 				tell(pPlayer, "No order given: " .. tostring(why) .. ".")
@@ -903,4 +989,28 @@ function Tests:warSquadAbilityCheck()
 		printf("WARSQUADABILITY: failed: " .. tostring(err) .. "\n")
 	end
 	printf("WARSQUADABILITY: end\n")
+end
+
+-- Console probe: test warAdvanceCheck (B52)
+if type(Tests) == "table" then
+	function Tests:warAdvanceCheck()
+		printf("WARADVANCE: begin\n")
+		local ok, err = pcall(function()
+			local x, y, how = WarCommand.advancePoint(10, 20, 30, 40, 50, 60)
+			printf("WARADVANCE: " .. ((x == 10 and y == 20 and how == "pin") and "PASS" or "FAIL") .. " the pin first\n")
+			x, y, how = WarCommand.advancePoint(nil, nil, 30, 40, 50, 60)
+			printf("WARADVANCE: " .. ((x == 30 and how == "target") and "PASS" or "FAIL") .. " then the target\n")
+			x, y, how = WarCommand.advancePoint(nil, nil, nil, nil, 50, 60)
+			printf("WARADVANCE: " .. ((x == 50 and how == "self") and "PASS" or "FAIL") .. " then the commander\n")
+			printf("WARADVANCE: " .. ((WarCommand.advancePoint() == nil) and "PASS" or "FAIL") .. " nothing gives nil\n")
+			local n, why = WarCommand.order(nil, "advance")
+			printf("WARADVANCE: " .. ((n == 0 and why == "nobody") and "PASS" or "FAIL") .. " no commander, no advance\n")
+			printf("WARADVANCE: " .. ((WarCommand.RADIAL.ADVANCE == 25) and "PASS" or "FAIL") .. " radial 25\n")
+			printf("WARADVANCE: " .. ((WarVoice ~= nil and WarVoice.battle ~= nil and WarVoice.battle("order_advance", "rebel", nil) ~= nil) and "PASS" or "FAIL") .. " the order has a voice line\n")
+		end)
+		if not ok then
+			printf("WARADVANCE: failed: " .. tostring(err) .. "\n")
+		end
+		printf("WARADVANCE: end\n")
+	end
 end
