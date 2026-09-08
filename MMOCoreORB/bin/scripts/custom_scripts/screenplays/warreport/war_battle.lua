@@ -734,6 +734,8 @@ function WarBattle.aliveCombatants()
 end
 
 function WarBattle:clear()
+	-- B53: a razing strikes every gate too (they live outside the roster).
+	pcall(function() WarBattle.sweepGates(nil) end)
 	local oids = trackedOids()
 	local removed = 0
 	for i = 1, #oids do
@@ -2277,6 +2279,31 @@ function WarBattle.tendGates(zone, regionId, holder, coords, besieged, wanted)
 	return #keep
 end
 
+--- B53: strike the gates of every capital that is not a besieged front right
+-- now -- the siege lifted, the capital fell (the season ended: the front
+-- loop never runs in a ceasefire), the capital dropped out of the fronts,
+-- or a razing. `frontIds` is the set of region ids with a front this cycle
+-- (nil = none). Called at the top of every staging cycle, before the
+-- ceasefire return, and from clear() (verifier, 2026-09-07). Returns the
+-- turrets struck.
+function WarBattle.sweepGates(frontIds)
+	local st = (WarReport ~= nil and WarReport.state ~= nil) and WarReport.state() or nil
+	if st == nil or type(st.regions) ~= "table" then
+		return 0
+	end
+	local struck = 0
+	for id, r in pairs(st.regions) do
+		if r.is_capital == true then
+			local besieged = type(r.siege) == "table" and r.siege.active == true
+			local isFront = frontIds ~= nil and frontIds[id] == true
+			if (not besieged or not isFront) and #gateOids(id) > 0 then
+				struck = struck + WarBattle.clearGates(id)
+			end
+		end
+	end
+	return struck
+end
+
 --- A gate turret fell: the attackers hear it, and the streets are one
 -- turret closer.
 function WarBattle:gateDestroyed(pTurret, pKiller)
@@ -2552,6 +2579,13 @@ function WarBattle:stageBattles(heldSites, heldGarrisons)
 	-- Slice 4: the season-end ceasefire, after the cycle's formup and
 	-- presence areas are cleared -- (verifier, 2026-09-06: the areas are cleared first
 	-- so nothing of the last cycle lingers through the intermission).
+	-- B53: gates at capitals that are no longer besieged fronts go first --
+	-- before the ceasefire return, so a season's end strikes them too.
+	pcall(function()
+		local ids = {}
+		for _, f in ipairs(WarBattle.fronts()) do ids[f.id] = true end
+		WarBattle.sweepGates(ids)
+	end)
 	if WarBattle.ceasefire(WarReport.state()) then
 		return 0, 0
 	end

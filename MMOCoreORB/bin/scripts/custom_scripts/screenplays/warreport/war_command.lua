@@ -694,7 +694,8 @@ function WarCommandMenuComponent:handleObjectMenuSelect(pNpc, pPlayer, selectedI
 				tell(pPlayer, "No order given: " .. tostring(why) .. ".")
 			else
 				tell(pPlayer, string.format("%d troops: %s.", n,
-					(kind == "attack") and "attack your target" or ((kind == "hold") and "hold here" or "fall back to you")))
+					(kind == "attack") and "attack your target" or ((kind == "hold") and "hold here"
+				or ((kind == "advance") and "advance to your pin" or "fall back to you"))))
 			end
 		elseif selectedID == R.DISMISS then
 			local n = WarCommand.release(SceneObject(pPlayer):getObjectID(), "dismissed")
