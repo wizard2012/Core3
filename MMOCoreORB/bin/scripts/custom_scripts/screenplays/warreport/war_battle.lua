@@ -2567,6 +2567,7 @@ local function spawnGarrison(zone, regionId, faction, originX, originY, slotTag)
 			local pG = spawnMobile(zone, template, 0, gx, WarBattle.floorAt(zone, gx, gy), gy, 0, 0)
 
 			if pG ~= nil then
+				if WarContribHook ~= nil and WarContribHook.attachTroop ~= nil then pcall(WarContribHook.attachTroop, pG) end
 				spawned = spawned + 1
 				trackUnit(SceneObject(pG):getObjectID(), regionId, slotTag, faction, originX, originY)
 				-- Same materiel path as a battle NPC (see spawnSite).

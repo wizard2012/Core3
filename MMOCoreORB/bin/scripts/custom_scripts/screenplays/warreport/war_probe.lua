@@ -1024,6 +1024,52 @@ function Tests:warSpawnSafetyCheck()
 	printf("WARSPAWNSAFETY: end\n")
 end
 
+--- test warInventoryDump (owner's tool): log/war_dump.txt names, one per
+-- line; every object in each inventory and datapad with its template path,
+-- game object type and class hints.
+function Tests:warInventoryDump()
+	printf("WARINV: begin\n")
+	local ok, err = pcall(function()
+		local f = io.open("log/war_dump.txt", "r")
+		if f == nil then printf("WARINV: no log/war_dump.txt\n") return end
+		local names = {}
+		for line in f:lines() do local n = string.match(line, "^%s*(%S+)") if n then names[#names + 1] = n end end
+		f:close()
+		for _, name in ipairs(names) do
+			local pPlayer = getPlayerByName(name)
+			if pPlayer == nil then
+				printf("WARINV: " .. name .. ": no such player\n")
+			else
+				for _, slot in ipairs({ "inventory", "datapad" }) do
+					local pC = SceneObject(pPlayer):getSlottedObject(slot)
+					if pC ~= nil then
+						local n = SceneObject(pC):getContainerObjectsSize()
+						printf("WARINV: " .. name .. " " .. slot .. ": " .. tostring(n) .. " object(s)\n")
+						for i = 0, n - 1 do
+							local pO = SceneObject(pC):getContainerObject(i)
+							if pO ~= nil then
+								local so = SceneObject(pO)
+								local path, goty, disp, rc = "?", "?", "?", "?"
+								pcall(function() path = so:getTemplateObjectPath() end)
+								pcall(function() goty = tostring(math.tointeger(so:getGameObjectType()) or so:getGameObjectType()) end)
+								pcall(function() disp = so:getDisplayedName() end)
+								-- never cast a child: a datapad child is intangible (crash 2026-09-08 22:33)
+								local g = tonumber(goty) or 0
+								rc = tostring(g >= 0x400000 and g <= 0x40000F)
+								if true then
+									printf(string.format("WARINV:   %s goty=%s resourceContainer=%s name=%s oid=%s\n", tostring(path), goty, rc, tostring(disp), tostring(so:getObjectID())))
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+	end)
+	if not ok then printf("WARINV: FAIL error " .. tostring(err) .. "\n") end
+	printf("WARINV: end\n")
+end
+
 --- test warGrantSkills (owner's tool): award the skills listed in
 -- log/war_grant.txt ("<firstname> <skill>" per line) with their whole
 -- prerequisite tree, then rename the file to war_grant.done. The player
@@ -1054,6 +1100,35 @@ function Tests:warGrantSkills()
 					local has = PlayerObject(pGhost):hasSchematic(template)
 					printf("WARGRANT: " .. (has and "PASS" or "FAIL") .. " " .. sname .. " schematic " .. template
 						.. (had and " (already had it)" or (has and " (rewarded)" or " (refused: unknown schematic?)")) .. "\n")
+				end
+				goto nextline
+			end
+			local dname, doid = string.match(line, "^%s*(%S+)%s+destroy%s+(%d+)%s*$")
+			if dname ~= nil and doid ~= nil then
+				local pPlayer = getPlayerByName(dname)
+				local target = tonumber(doid)
+				local found = nil
+				if pPlayer ~= nil then
+					for _, slot in ipairs({ "inventory", "datapad" }) do
+						local pC = SceneObject(pPlayer):getSlottedObject(slot)
+						if pC ~= nil then
+							for i = 0, SceneObject(pC):getContainerObjectsSize() - 1 do
+								local pO = SceneObject(pC):getContainerObject(i)
+								if pO ~= nil and SceneObject(pO):getObjectID() == target then found = pO end
+							end
+						end
+					end
+				end
+				if found == nil then
+					printf("WARGRANT: FAIL " .. dname .. " destroy " .. doid .. ": not in that player's inventory or datapad\n")
+				else
+					local path = "?"
+					pcall(function() path = SceneObject(found):getTemplateObjectPath() end)
+					local okD = pcall(function()
+						SceneObject(found):destroyObjectFromWorld(true)
+						SceneObject(found):destroyObjectFromDatabase()
+					end)
+					printf("WARGRANT: " .. (okD and "PASS" or "FAIL") .. " " .. dname .. " destroy " .. doid .. " (" .. tostring(path) .. ")\n")
 				end
 				goto nextline
 			end

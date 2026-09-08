@@ -143,6 +143,71 @@ function WarContribHook:install()
 	end
 end
 
+--- D24 (built 2026-09-08): a war body's kill credits the player who commands
+-- it (war_command.lua) or whom it fell in behind (war_squad.lua). The engine
+-- credits the top damage dealer, so in a line fight the bodies take every
+-- kill and the player in the middle of it recorded nothing (owner report).
+WarContribHook.TROOP_CREDIT_RANGE_M = 150   -- the commander is fighting, or this close to the body
+
+function WarContribHook.attachTroop(pNpc)
+	if pNpc == nil then return end
+	pcall(function() createObserver(KILLEDCREATURE, "WarContribHook", "onTroopKill", pNpc) end)
+end
+
+--- The player a body fights for, or nil.
+function WarContribHook.commanderOf(oid)
+	local c = readData("warcommand:troop:" .. tostring(oid)) or 0
+	if c == 0 then c = readData("warsquad:claimed:" .. tostring(oid)) or 0 end
+	if c == 0 then return nil end
+	local p = getSceneObject(c)
+	if p == nil or not SceneObject(p):isPlayerCreature() then return nil end
+	return p
+end
+
+function WarContribHook:onTroopKill(pNpc, pVictim, arg2)
+	local ok, err = pcall(function()
+		if pNpc == nil or pVictim == nil or WarContrib == nil or WarContrib.record == nil then return end
+		local pCommander = WarContribHook.commanderOf(SceneObject(pNpc):getObjectID())
+		if pCommander == nil then return end
+		local commander = CreatureObject(pCommander)
+		if commander:isDead() then return end
+		local bodyFaction = CreatureObject(pNpc):getFaction()
+		if bodyFaction ~= FACTIONIMPERIAL and bodyFaction ~= FACTIONREBEL then return end
+		local opposing = (bodyFaction == FACTIONREBEL) and FACTIONIMPERIAL or FACTIONREBEL
+		if CreatureObject(pVictim):getFaction() ~= opposing then return end
+		-- D24: only while the commander is fighting (or standing with the body)
+		local near = false
+		if SceneObject(pCommander):getZoneName() == SceneObject(pNpc):getZoneName() then
+			local dx = SceneObject(pCommander):getWorldPositionX() - SceneObject(pNpc):getWorldPositionX()
+			local dy = SceneObject(pCommander):getWorldPositionY() - SceneObject(pNpc):getWorldPositionY()
+			near = (dx * dx + dy * dy) <= WarContribHook.TROOP_CREDIT_RANGE_M * WarContribHook.TROOP_CREDIT_RANGE_M
+		end
+		if not near and not commander:isInCombat() then return end
+		local regionId = nil
+		if WarReport ~= nil and WarReport.regionAt ~= nil then
+			regionId = WarReport.regionAt(SceneObject(pNpc):getZoneName(), SceneObject(pNpc):getWorldPositionX(), SceneObject(pNpc):getWorldPositionY())
+		end
+		if regionId == nil then return end
+		local isVictimPlayer = SceneObject(pVictim):isPlayerCreature()
+		local source = isVictimPlayer and "pvp_kill" or "npc_kill_faction"
+		local points = isVictimPlayer and WarContribHook.PVP_KILL_POINTS or WarContribHook.NPC_KILL_POINTS
+		local factionStr = (bodyFaction == FACTIONREBEL) and "rebel" or "imperial"
+		local characterId = SceneObject(pCommander):getObjectID()
+		local recorded, reason = WarContrib.record(factionStr, regionId, source, points, characterId)
+		if recorded then
+			local town = (WarLines ~= nil and WarLines.name ~= nil) and WarLines.name(regionId) or regionId
+			commander:sendSystemMessage("[War] Your troops brought one down at " .. tostring(town) .. ". It counts for you.")
+			printf(string.format("WarContribHook: troop %s kill credited to %s at %s (%s)\n", tostring(SceneObject(pNpc):getObjectID()), tostring(characterId), tostring(regionId), source))
+		else
+			printf("WarContribHook: troop kill NOT recorded (" .. tostring(reason) .. ") at " .. tostring(regionId) .. "\n")
+		end
+	end)
+	if not ok then
+		printf("WarContribHook:onTroopKill failed, swallowed: " .. tostring(err) .. "\n")
+	end
+	return 0
+end
+
 --- KILLEDCREATURE handler. `pPlayer` is the credited killer (the object the
 -- observer is registered on); `pVictim` is the destroyed creature. Must
 -- return a number (1 = remove observer, 0 = keep) -- ScreenPlayObserver

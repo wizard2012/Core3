@@ -296,6 +296,9 @@ end
 --- Attach the command radial to a war body. Called by war_battle.lua at
 -- spawn; harmless to repeat.
 function WarCommand.attach(pNpc)
+	if WarContribHook ~= nil and WarContribHook.attachTroop ~= nil then
+		pcall(WarContribHook.attachTroop, pNpc)  -- D24: its kills credit its commander
+	end
 	if pNpc == nil then
 		return
 	end
