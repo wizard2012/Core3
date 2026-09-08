@@ -8,6 +8,10 @@
  * every tick, one line per town with a city:
  *     zone <TAB> city-token <TAB> holder <TAB> capital     e.g.  corellia  coronet  imperial  1
  * (capital = 1 when the town is its holder's own capital, from the sim's map)
+ * and, since B61 S3, one row per orbit:  space_<planet>  orbit  holder  0
+ * -- an enemy-held sky closes the planet's interplanetary tickets and ship
+ * fast-travel to the other side, and a ship parked at a port the enemy now
+ * holds lands at the side's nearest open starport instead (fallbackPort).
  * where city-token is the last segment of the Core3 city-region name
  * ("@corellia_region_names:coronet" -> "coronet"). This singleton re-reads
  * the file when its mtime changes (checked at most every five seconds) and
@@ -35,6 +39,7 @@
 #include "server/zone/objects/player/FactionStatus.h"
 #include "server/zone/objects/region/CityRegion.h"
 #include "server/zone/managers/planet/PlanetTravelPoint.h"
+#include "server/zone/managers/planet/PlanetManager.h"
 #include "templates/faction/Factions.h"
 #include "templates/building/CloningBuildingObjectTemplate.h"
 
@@ -238,6 +243,109 @@ public:
 		ManagedReference<CityRegion*> city = shuttle->getCityRegion().get();
 
 		return isCityClosedTo(player, city.get());
+	}
+
+	// B61 S3: the sky over a planet, from the holders file's orbit rows.
+	String holderOfSky(const String& planetZone) {
+		return holderOf("space_" + planetZone, "orbit");
+	}
+
+	// Closed sky: a declared character of the other side may not ticket or
+	// fast-travel to the planet (flying in through the picket still works).
+	bool isSkyClosedTo(CreatureObject* player, const String& planetZone) {
+		if (player == nullptr || planetZone.isEmpty())
+			return false;
+
+		String side = sideOf(player);
+
+		if (side.isEmpty())
+			return false; // neutral
+
+		if (player->getFactionStatus() == FactionStatus::ONLEAVE)
+			return false; // a civilian
+
+		String holder = holderOfSky(planetZone);
+
+		if (holder.isEmpty())
+			return false; // not a war planet
+
+		return holder != side;
+	}
+
+	static String planetDisplay(const String& planetZone) {
+		if (planetZone.isEmpty())
+			return "that planet";
+
+		return planetZone.subString(0, 1).toUpperCase() + planetZone.subString(1);
+	}
+
+	// "The Alliance holds the sky over Tatooine; no ticket lands there for the other side."
+	String skyClosedText(const String& planetZone) {
+		String holder = sideName(holderOfSky(planetZone));
+
+		if (holder.isEmpty())
+			return "The sky over " + planetDisplay(planetZone) + " is closed to you for now.";
+
+		String cap = holder.subString(0, 1).toUpperCase() + holder.subString(1);
+
+		return cap + " holds the sky over " + planetDisplay(planetZone) + "; no ticket lands there for the other side.";
+	}
+
+	// A friendly starport on any planet, for a ship whose parking port the
+	// enemy holds now: the side's capitals first (the holders file flags
+	// them), then the first open interplanetary point in zone order.
+	// nullptr, and zoneOut empty, when nothing is open anywhere.
+	Reference<PlanetTravelPoint*> fallbackPort(CreatureObject* player, ZoneServer* server, String& zoneOut) {
+		zoneOut = "";
+
+		if (player == nullptr || server == nullptr)
+			return nullptr;
+
+		String side = sideOf(player);
+
+		for (int pass = 0; pass < 2; ++pass) {
+			for (int i = 0; i < server->getZoneCount(); ++i) {
+				Zone* zone = server->getZone(i);
+
+				if (zone == nullptr || zone->isSpaceZone())
+					continue;
+
+				PlanetManager* pm = zone->getPlanetManager();
+
+				if (pm == nullptr)
+					continue;
+
+				for (int j = 0; j < pm->getPlanetTravelPointCount(); ++j) {
+					Reference<PlanetTravelPoint*> ptp = pm->getPlanetTravelPointAt(j);
+
+					if (ptp == nullptr || !ptp->isInterplanetary())
+						continue;
+
+					ManagedReference<CreatureObject*> shuttle = ptp->getShuttle();
+
+					if (shuttle == nullptr)
+						continue;
+
+					ManagedReference<CityRegion*> city = shuttle->getCityRegion().get();
+
+					if (city == nullptr)
+						continue;
+
+					if (pass == 0) {
+						if (!isCapitalCity(zone->getZoneName(), cityToken(city.get())) || holderOfCity(city.get()) != side)
+							continue;
+					}
+
+					if (isCityClosedTo(player, city.get()))
+						continue;
+
+					zoneOut = zone->getZoneName();
+					return ptp;
+				}
+			}
+		}
+
+		return nullptr;
 	}
 
 	// "The Empire holds Coronet; its port and cloner serve the Empire now."

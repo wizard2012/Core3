@@ -8,6 +8,7 @@
 #include "server/zone/ZoneServer.h"
 #include "server/zone/objects/creature/CreatureObject.h"
 #include "server/zone/objects/intangible/ShipControlDevice.h"
+#include "server/zone/managers/gcw/WarTravel.h"
 #include "server/zone/objects/ship/ShipObject.h"
 #include "server/zone/objects/ship/PobShipObject.h"
 #include "templates/params/creature/PlayerArrangement.h"
@@ -66,6 +67,33 @@ public:
 		// Remove the ships astromech if one is assigned
 		if (ship->getShipDroidID() != 0) {
 			removeDroid(ship, player);
+		}
+
+		// B61 S3 (SWGWar): the port this ship parked at may be the enemy's now;
+		// land at the side's nearest open starport instead, and park there.
+		{
+			WarTravel* war = WarTravel::instance();
+			String launchZone = ship->getSpaceLaunchZone();
+			Zone* landZone = launchZone.isEmpty() ? nullptr : zoneServer->getZone(launchZone);
+			PlanetManager* landPm = (landZone != nullptr && !landZone->isSpaceZone()) ? landZone->getPlanetManager() : nullptr;
+			Reference<PlanetTravelPoint*> parked = (landPm != nullptr) ? landPm->getNearestPlanetTravelPoint(ship->getSpaceLaunchLocation(), 16000.f, false) : nullptr;
+
+			if (parked != nullptr && war->isPointClosedTo(player, parked)) {
+				String otherZone;
+				Reference<PlanetTravelPoint*> open = war->fallbackPort(player, zoneServer, otherZone);
+
+				if (open != nullptr && !otherZone.isEmpty()) {
+					String pointName = open->getPointName();
+					Vector3 arrival = open->getArrivalPosition();
+					ship->setSpaceLaunchZone(otherZone);
+					ship->setSpaceLaunchCityName(pointName);
+					ship->setSpaceLaunchLocation(arrival);
+
+					ManagedReference<CreatureObject*> parkedShuttle = parked->getShuttle();
+					ManagedReference<CityRegion*> parkedCity = (parkedShuttle != nullptr) ? parkedShuttle->getCityRegion().get() : nullptr;
+					player->sendSystemMessage(war->closedText(parkedCity.get()) + " Your ship lands at " + open->getPointName() + " instead.");
+				}
+			}
 		}
 
 		// Make sure no players remain in the ship

@@ -954,6 +954,15 @@ function Tests:warTravelCheck()
 			printf("WARTRAVEL: no war state\n")
 			return
 		end
+		-- B61 S3: the sky rows (space_<planet> / orbit) agree with the export's orbits block
+		if type(st.orbits) == "table" then
+			local okSky, badSky = 0, 0
+			for oid, o in pairs(st.orbits) do
+				local got = warHolderOf("space_" .. tostring(o.planet), "orbit")
+				if got == o.faction then okSky = okSky + 1 else badSky = badSky + 1 end
+			end
+			printf("WARTRAVEL: " .. ((badSky == 0 and okSky > 0) and "PASS" or "FAIL") .. " sky rows agree for " .. tostring(okSky) .. " of " .. tostring(okSky + badSky) .. " orbits\n")
+		end
 		local pass, fail = 0, 0
 		for rid, c in pairs(WarLines.CITY_OF) do
 			local want = st.regions[rid] and st.regions[rid].faction or "?"

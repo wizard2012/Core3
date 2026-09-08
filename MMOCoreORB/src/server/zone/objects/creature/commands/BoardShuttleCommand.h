@@ -155,6 +155,12 @@ public:
 					return GENERALERROR;
 				}
 #endif
+				// B61 S3 (SWGWar): the sky over the destination planet is the enemy's now.
+				if (arrivalPlanet != departurePlanet && WarTravel::instance()->isSkyClosedTo(creature, arrivalPlanet)) {
+					creature->sendSystemMessage(WarTravel::instance()->skyClosedText(arrivalPlanet) + " Keep the ticket; it is good when the sky changes hands.");
+					return GENERALERROR;
+				}
+
 				// B60 (SWGWar): the destination is a war town the player's enemy holds now.
 				if (WarTravel::instance()->isCityClosedTo(creature, region.get())) {
 					creature->sendSystemMessage(WarTravel::instance()->closedText(region.get()) + " Keep the ticket; it is good when the town changes hands.");

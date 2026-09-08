@@ -204,6 +204,15 @@ class PlanetManager extends ManagedService implements Logger {
 	public native PlanetTravelPoint getRandomStarport();
 
 	/**
+	 * B61 S3 (SWGWar): the travel points by index, for a caller that has to
+	 * scan them (WarTravel::fallbackPort). nullptr past the end.
+	 */
+	@local
+	public native PlanetTravelPoint getPlanetTravelPointAt(int index);
+
+	public native int getPlanetTravelPointCount();
+
+	/**
 	 * Returns the closest PlanetTravelPoint within the given range.
 	 * @param position The position to use as reference.
 	 * @param range The maximum range to search within.

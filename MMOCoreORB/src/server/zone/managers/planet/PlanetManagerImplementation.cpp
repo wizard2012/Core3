@@ -813,6 +813,23 @@ PlanetTravelPoint* PlanetManagerImplementation::getRandomStarport() {
 	return planetStarports.get(System::random(planetStarports.size() - 1));
 }
 
+// B61 S3 (SWGWar): the travel points by index, for WarTravel::fallbackPort.
+PlanetTravelPoint* PlanetManagerImplementation::getPlanetTravelPointAt(int index) {
+	if (planetTravelPointList == nullptr || index < 0 || index >= planetTravelPointList->size())
+		return nullptr;
+
+	Reference<PlanetTravelPoint*> ptp = planetTravelPointList->get(index);
+
+	return ptp;
+}
+
+int PlanetManagerImplementation::getPlanetTravelPointCount() {
+	if (planetTravelPointList == nullptr)
+		return 0;
+
+	return planetTravelPointList->size();
+}
+
 Vector3 PlanetManagerImplementation::getRandomSpawnPoint() {
 	Vector3 position;
 	bool found = false;

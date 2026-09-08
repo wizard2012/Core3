@@ -13,6 +13,8 @@
 #include "server/zone/packets/scene/UpdateTransformMessage.h"
 #include "server/zone/objects/intangible/tasks/LaunchShipTask.h"
 #include "server/zone/objects/group/GroupObject.h"
+#include "server/zone/objects/region/CityRegion.h"
+#include "server/zone/managers/gcw/WarTravel.h"
 
 class LaunchIntoSpaceCommand : public QueueCommand {
 public:
@@ -118,6 +120,24 @@ public:
 
 			if (planetTravelPoint == nullptr || !planetTravelPoint->isInterplanetary()) {
 				return GENERALERROR;
+			}
+
+			// B61 S3 (SWGWar): an arrival port the enemy holds, or an enemy-held
+			// sky over the planet, refuses the fast travel (flying in still works).
+			{
+				WarTravel* war = WarTravel::instance();
+
+				if (war->isPointClosedTo(creature, planetTravelPoint)) {
+					ManagedReference<CreatureObject*> arrivalShuttle = planetTravelPoint->getShuttle();
+					ManagedReference<CityRegion*> arrivalCity = (arrivalShuttle != nullptr) ? arrivalShuttle->getCityRegion().get() : nullptr;
+					creature->sendSystemMessage(war->closedText(arrivalCity.get()));
+					return GENERALERROR;
+				}
+
+				if (war->isSkyClosedTo(creature, arrivalPlanet)) {
+					creature->sendSystemMessage(war->skyClosedText(arrivalPlanet));
+					return GENERALERROR;
+				}
 			}
 
 			// Arrival Position on Planet

@@ -153,6 +153,12 @@ public:
 				return GENERALERROR;
 			}
 
+			// B61 S3: an enemy-held sky closes the planet's interplanetary tickets.
+			if (arrivalPlanet != departurePlanet && war->isSkyClosedTo(creature, arrivalPlanet)) {
+				creature->sendSystemMessage(war->skyClosedText(arrivalPlanet));
+				return GENERALERROR;
+			}
+
 			Reference<PlanetTravelPoint*> fromPoint = pmDeparture->getPlanetTravelPoint(departurePoint);
 
 			if (fromPoint != nullptr && war->isPointClosedTo(creature, fromPoint)) {
