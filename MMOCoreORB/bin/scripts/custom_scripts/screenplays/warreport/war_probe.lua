@@ -864,6 +864,26 @@ function Tests:warFinaleCheck()
 	printf("WARFINALE: end\n")
 end
 
+--- test warRankTable (B20): the faction rank table through the three
+-- read-only bindings, ranks 0..22. Nothing is set on anyone. The row past
+-- the end shows the -1 that B20 records as the landmine (rank count 22).
+function Tests:warRankTable()
+	printf("WARRANKTABLE: begin\n")
+	local ok, err = pcall(function()
+		for rank = 0, 22 do
+			local name = getRankName(rank)
+			local cost = getRankCost(rank)
+			local cap = getFactionPointsCap(rank)
+			printf(string.format("WARRANKTABLE: rank=%d name=%s cost=%s cap=%s\n",
+				rank, tostring(name), tostring(cost), tostring(cap)))
+		end
+	end)
+	if not ok then
+		printf("WARRANKTABLE: failed: " .. tostring(err) .. "\n")
+	end
+	printf("WARRANKTABLE: end\n")
+end
+
 --- test warAllCheck: every readout probe in one console command, each in its
 -- own pcall so one failing cannot hide the others. Grep WARALL for the
 -- summary, then the probe's own marker for its lines.
