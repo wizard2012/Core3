@@ -72,9 +72,11 @@ WarOrders.HOLD_MINUTES = 10
 WarOrders.SCOUT_MINUTES = 3
 WarOrders.HUNT_KILLS = 2
 WarOrders.SKY_KILLS = 3   -- B61 S2: a pilot's order -- war ships down over the home planet
+WarOrders.ESCORT_MINUTES = 2   -- B61 S4: minutes within WarSpace.ESCORT_RANGE_M of the freighter for the escort to count
 WarOrders.HOLD_CHECK_MS = 60 * 1000
 WarOrders.EXPIRY_MS = 2 * 60 * 60 * 1000
-WarOrders.POINTS = { line = 3.0, carry = 2.0, hold = 2.0, mend = 2.0, supply = 2.0, rally = 2.0, scout = 3.0, blockade = 4.0, hunt = 4.0, sky = 4.0 }
+WarOrders.POINTS = { line = 3.0, carry = 2.0, hold = 2.0, mend = 2.0, supply = 2.0, rally = 2.0, scout = 3.0, blockade = 4.0, hunt = 4.0, sky = 4.0,
+	escort = 4.0, picket = 6.0 }  -- B61 S4: the convoy seen in; the enemy picket wiped
 WarOrders.ORBIT_OF = { cor = "cor_orbit", nab = "nab_orbit", tat = "tat_orbit" }  -- B61 S2: the sky over a region's planet
 WarOrders.MEND_POINTS = 3.0             -- crates' worth of healing a mend order asks for
 WarOrders.SUPPLY_POINTS = 6.0           -- crates' worth of donations a supply order asks for: crafted goods price
@@ -327,6 +329,15 @@ function WarOrders.candidates(st, faction, homeRegion, prof)
 	if prof.pilot and homeKnown then
 		local orbit = WarOrders.ORBIT_OF[string.sub(tostring(homeRegion), 1, 3)]
 		if orbit ~= nil and type(st.orbits) == "table" and st.orbits[orbit] ~= nil then
+			-- B61 S4: the enemy's picket to break; a convoy to see in (unless the
+			-- other side's is up: one convoy per orbit at a time)
+			if st.orbits[orbit].faction == other(faction) then
+				out[#out + 1] = { type = "picket", region = orbit, need = 1 }
+			end
+			local conv = (WarSpace ~= nil and WarSpace.convoyRecord ~= nil) and WarSpace.convoyRecord(orbit) or nil
+			if conv == nil or conv.side == faction then
+				out[#out + 1] = { type = "escort", region = orbit, need = WarOrders.ESCORT_MINUTES }
+			end
 			out[#out + 1] = { type = "sky", region = orbit, need = WarOrders.SKY_KILLS }
 		end
 	end
@@ -381,6 +392,15 @@ function WarOrders.text(o, st)
 	if o.type == "sky" then
 		return "Clear the sky over " .. WarOrders.planetOfOrbit(o.region) .. ": bring down " .. tostring(o.need)
 			.. " " .. adj(enemy) .. " war ships in orbit. Launch from your datapad."
+	elseif o.type == "escort" then
+		local km = (WarSpace ~= nil and WarSpace.ESCORT_RANGE_M or 1500) / 1000
+		return "Escort the " .. side(o.faction) .. "'s convoy over " .. WarOrders.planetOfOrbit(o.region)
+			.. " to the dock: it launches at the entry point when you take this. Stay within " .. string.format("%.1f", km)
+			.. " km of the freighter for " .. tostring(o.need) .. " minutes of its run and see it in. Launch from your datapad."
+	elseif o.type == "picket" then
+		local n = (WarSpace ~= nil and WarSpace.PICKET_SIZE) or 4
+		return "Break the " .. side(enemy) .. "'s picket over " .. WarOrders.planetOfOrbit(o.region) .. ": bring down all "
+			.. tostring(n) .. " of its ships, at least one of them yours. Launch from your datapad."
 	end
 	if o.type == "line" then
 		return "Break the " .. side(enemy) .. "'s line at " .. name(o.region) .. ": kill " .. tostring(o.need)
@@ -434,6 +454,10 @@ function WarOrders.rewardText(o)
 		extra = " " .. pointsText(WarOrders.RALLY_SUPPORT) .. " of morale to the town."
 	elseif o.type == "scout" then
 		extra = " The next front opens where you went."
+	elseif o.type == "escort" then
+		extra = " The convoy's crates land for your side: in the orbit's store if the sky is yours, else at your side's port below."
+	elseif o.type == "picket" then
+		extra = " Their line over the planet is a lost fight; a dry sky changes hands on it."
 	end
 	return "Reward: " .. pointsText(pts) .. " on completion." .. extra .. " Expires in " .. tostring(hours) .. " h."
 end
@@ -450,6 +474,11 @@ end
 function WarOrders.doneText(o)
 	if o.type == "sky" then
 		return tostring(o.need) .. " " .. adj(other(o.faction)) .. " hulls down over " .. WarOrders.planetOfOrbit(o.region) .. "."
+	elseif o.type == "escort" then
+		return "The convoy over " .. WarOrders.planetOfOrbit(o.region) .. " is in: "
+			.. pointsText((WarSpace ~= nil and WarSpace.CONVOY_CRATES) or 5.0) .. " landed for your side."
+	elseif o.type == "picket" then
+		return "The " .. adj(other(o.faction)) .. " picket over " .. WarOrders.planetOfOrbit(o.region) .. " is broken."
 	end
 	if o.type == "line" then
 		return tostring(o.need) .. " " .. adj(other(o.faction)) .. " troopers down at " .. name(o.region) .. "."
@@ -490,6 +519,10 @@ function WarOrders.statusLine(o, st, nowMs)
 		progress = tostring(math.floor(done)) .. " of " .. tostring(o.need) .. " kills"
 	elseif o.type == "hold" or o.type == "rally" or o.type == "scout" then
 		progress = tostring(math.floor(done)) .. " of " .. tostring(o.need) .. " minutes"
+	elseif o.type == "escort" then
+		progress = tostring(math.floor(done)) .. " of " .. tostring(o.need) .. " minutes with the convoy"
+	elseif o.type == "picket" then
+		progress = tostring(math.floor(done)) .. " of the picket yours"
 	elseif o.type == "mend" then
 		progress = string.format("%.1f of %.1f crates' worth healed", done, tonumber(o.need) or 0)
 	elseif o.type == "supply" then
@@ -816,7 +849,11 @@ function WarOrders.sweepWaypoints(pPlayer)
 end
 
 local function isPresenceOrder(o)
-	return o.type == "hold" or o.type == "rally" or o.type == "scout"
+	return o.type == "hold" or o.type == "rally" or o.type == "scout" or o.type == "escort" or o.type == "picket"
+end
+
+local function isSkyOrder(o)
+	return o.type == "escort" or o.type == "picket"
 end
 
 --- The officer's "Orders" radial.
@@ -860,6 +897,28 @@ function WarOrders.onRadial(pPlayer, pOfficer)
 	WarOrders.save(oid, o)
 	creature:sendSystemMessage("Orders: " .. WarOrders.text(o, st))
 	creature:sendSystemMessage(WarOrders.rewardText(o))
+	-- B61 S4: the escort's convoy goes up now (or the one up becomes yours);
+	-- if the other side's is up the order is not given.
+	if o.type == "escort" then
+		local status = "unavailable"
+		if WarSpace ~= nil and WarSpace.requestConvoy ~= nil then
+			local okR, got = pcall(WarSpace.requestConvoy, o.region, faction, oid)
+			if okR and got ~= nil then status = got end
+		end
+		local planet = WarOrders.planetOfOrbit(o.region)
+		if status == "launched" then
+			creature:sendSystemMessage("The convoy is up over " .. planet .. ": a freighter and two escorts at the entry point, bound for the dock beside the picket.")
+		elseif status == "joined" then
+			creature:sendSystemMessage("A convoy of ours is already up over " .. planet .. "; find it and see it in.")
+		else
+			WarOrders.clear(oid, pPlayer)
+			creature:sendSystemMessage((status == "busy")
+				and ("No orders after all: the lane over " .. planet .. " is busy with an enemy convoy. Come back in a few minutes.")
+				or ("No orders after all: no convoy can launch over " .. planet .. " right now."))
+			printf("WarOrders: " .. tostring(oid) .. " escort at " .. o.region .. " refused: " .. tostring(status) .. "\n")
+			return
+		end
+	end
 	if WarOrders.placeWaypoint(pPlayer, oid, o) then
 		creature:sendSystemMessage("The place is marked on your datapad.")
 	end
@@ -934,6 +993,17 @@ function WarOrders.observe(faction, regionId, source, points, characterId)
 		return
 	end
 	local pPlayer = getSceneObject(oid)
+	if o.type == "picket" then
+		-- B61 S4: one of the picket yours; the wipe itself is seen by skyCheck
+		if source == "npc_kill_faction" then
+			o.done = (o.done or 0) + 1
+			WarOrders.save(oid, o)
+			if pPlayer ~= nil then
+				CreatureObject(pPlayer):sendSystemMessage("Orders: " .. tostring(math.floor(o.done)) .. " of the picket yours; break the rest.")
+			end
+		end
+		return
+	end
 	if (o.type == "line" and (source == "npc_kill_faction" or source == "pvp_kill"))
 		or (o.type == "hunt" and source == "pvp_kill")
 		or (o.type == "sky" and source == "npc_kill_faction") then
@@ -1047,6 +1117,10 @@ function WarOrders:holdCheck(pPlayer)
 		end
 		local now = getTimestampMilli()
 		writeData(WarOrders.CHAIN_PREFIX .. tostring(oid), now)  -- B47: this chain is alive
+		if isSkyOrder(o) then
+			WarOrders.skyCheck(oid, o, pPlayer, now)
+			return
+		end
 		if now >= (o.expiresAt or 0) then
 			WarOrders.clear(oid, pPlayer)
 			CreatureObject(pPlayer):sendSystemMessage("Your orders have lapsed: " .. name(o.region) .. " was not "
@@ -1093,6 +1167,95 @@ function WarOrders:holdCheck(pPlayer)
 		end
 		createEvent(WarOrders.HOLD_CHECK_MS, "WarOrders", "holdCheck", pPlayer, "")
 	end)
+end
+
+--- B61 S4: the per-minute check behind an escort or picket order. An
+-- escort samples the distance to the freighter (WarSpace.distanceToFreighter)
+-- and completes only from onConvoyDocked; a picket order completes when the
+-- enemy picket reads wiped (WarSpace.picketState) with a hull of the pilot's
+-- own on it (observe), or when the sky has changed hands with one.
+function WarOrders.skyCheck(oid, o, pPlayer, now)
+	local creature = CreatureObject(pPlayer)
+	local planet = WarOrders.planetOfOrbit(o.region)
+	if now >= (o.expiresAt or 0) then
+		WarOrders.clear(oid, pPlayer)
+		creature:sendSystemMessage("Your orders have lapsed: " .. ((o.type == "escort") and ("the convoy over " .. planet .. " was not seen in.")
+			or ("the picket over " .. planet .. " still stands.")))
+		return
+	end
+	if WarSpace == nil then
+		createEvent(WarOrders.HOLD_CHECK_MS, "WarOrders", "holdCheck", pPlayer, "")
+		return
+	end
+	if o.type == "escort" then
+		local rec = WarSpace.convoyRecord(o.region)
+		if rec == nil or rec.side ~= o.faction then
+			-- retired without docking under you (timed out, or lost before the sweep spoke)
+			WarOrders.clear(oid, pPlayer)
+			creature:sendSystemMessage("The convoy over " .. planet .. " is no longer up. See an officer for new orders.")
+			return
+		end
+		local d = WarSpace.distanceToFreighter(pPlayer, o.region)
+		if d ~= nil and d <= (WarSpace.ESCORT_RANGE_M or 1500) then
+			o.done = (o.done or 0) + 1
+			WarOrders.save(oid, o)
+			if o.done == 1 then
+				creature:sendSystemMessage("You are with the convoy. Stay with it to the dock.")
+			elseif o.done == o.need then
+				creature:sendSystemMessage("Orders: with the convoy " .. tostring(math.floor(o.done)) .. " of " .. tostring(o.need) .. " minutes. See it in.")
+			end
+		end
+	elseif o.type == "picket" then
+		local enemy = other(o.faction)
+		local pside, alive = WarSpace.picketState(o.region)
+		local st = (WarReport ~= nil and WarReport.state ~= nil) and WarReport.state() or nil
+		local holder = (st ~= nil and type(st.orbits) == "table" and st.orbits[o.region] ~= nil) and st.orbits[o.region].faction or nil
+		local wiped = (pside == enemy and alive == 0) or (holder == o.faction)
+		if wiped then
+			if (o.done or 0) >= 1 then
+				WarOrders.complete(oid, o, pPlayer)
+			else
+				WarOrders.clear(oid, pPlayer)
+				creature:sendSystemMessage("The " .. adj(enemy) .. " picket over " .. planet .. " is gone, and none of it was yours. See an officer for new orders.")
+			end
+			return
+		end
+	end
+	createEvent(WarOrders.HOLD_CHECK_MS, "WarOrders", "holdCheck", pPlayer, "")
+end
+
+--- B61 S4: an owned convoy docked (war_space.lua onConvoyArrived). The
+-- owner's escort order completes if the escort counted, else clears.
+function WarOrders.onConvoyDocked(orbitId, sideStr, ownerOid)
+	local oid = math.tointeger(tonumber(ownerOid))
+	if oid == nil or oid <= 0 then return end
+	local o = WarOrders.active(oid)
+	if o == nil or o.type ~= "escort" or o.region ~= orbitId then return end
+	local pPlayer = getSceneObject(oid)
+	if (o.done or 0) >= (o.need or 1) then
+		WarOrders.complete(oid, o, pPlayer)
+		return
+	end
+	WarOrders.clear(oid, pPlayer)
+	if pPlayer ~= nil then
+		CreatureObject(pPlayer):sendSystemMessage("The convoy over " .. WarOrders.planetOfOrbit(orbitId) .. " is in, but you were with it "
+			.. tostring(math.floor(o.done or 0)) .. " of " .. tostring(o.need) .. " minutes: no credit. See an officer for new orders.")
+	end
+	printf("WarOrders: " .. tostring(oid) .. " escort at " .. orbitId .. " docked without the escort\n")
+end
+
+--- B61 S4: an owned convoy lost (war_space.lua sweepConvoy).
+function WarOrders.onConvoyLost(orbitId, sideStr, ownerOid)
+	local oid = math.tointeger(tonumber(ownerOid))
+	if oid == nil or oid <= 0 then return end
+	local o = WarOrders.active(oid)
+	if o == nil or o.type ~= "escort" or o.region ~= orbitId then return end
+	local pPlayer = getSceneObject(oid)
+	WarOrders.clear(oid, pPlayer)
+	if pPlayer ~= nil then
+		CreatureObject(pPlayer):sendSystemMessage("The convoy over " .. WarOrders.planetOfOrbit(orbitId) .. " was lost. See an officer for new orders.")
+	end
+	printf("WarOrders: " .. tostring(oid) .. " escort at " .. orbitId .. " lost\n")
 end
 
 --- The officer's report line for an active order, or nil.

@@ -920,14 +920,53 @@ function Tests:warSpaceCheck()
 			printf(string.format("WARSPACE: %s %s -- holder %s, picket %s x%d, attack %s x%d, front %s, traffic %s, convoy %s, zone %s\n",
 				good and "PASS" or "FAIL", id, tostring(holder), tostring(pside), #palive, tostring(aside), #aalive,
 				(o ~= nil and type(o.front) == "table") and (tostring(o.front.attacker) .. " " .. tostring(o.front.intensity)) or "none",
-				traffic, conv and (conv.side .. " x" .. tostring(#conv.oids)) or "none",
+				traffic, conv and (conv.side .. " x" .. tostring(#conv.oids) .. ((conv.owner or 0) ~= 0 and " owned" or "")) or "none",
 				isZoneEnabled(cfg.zone) and "enabled" or "DISABLED"))
+		end
+		-- B61 S4: the pilot's orders and the hooks between the two modules
+		local priced = WarOrders ~= nil and type(WarOrders.POINTS) == "table" and WarOrders.POINTS.escort ~= nil and WarOrders.POINTS.picket ~= nil
+		printf("WARSPACE: " .. (priced and "PASS" or "FAIL") .. " escort and picket orders are priced ("
+			.. tostring(priced and WarOrders.POINTS.escort) .. ", " .. tostring(priced and WarOrders.POINTS.picket) .. ")\n")
+		local hooks = WarSpace.requestConvoy ~= nil and WarSpace.deliveryTarget ~= nil and WarSpace.deliver ~= nil
+			and WarSpace.picketState ~= nil and WarSpace.distanceToFreighter ~= nil
+			and WarOrders ~= nil and WarOrders.onConvoyDocked ~= nil and WarOrders.onConvoyLost ~= nil and WarOrders.skyCheck ~= nil
+		printf("WARSPACE: " .. (hooks and "PASS" or "FAIL") .. " the S4 hooks are present on this thread\n")
+		for _, id in ipairs(WarSpace.orbitIds()) do
+			local pside, alive = WarSpace.picketState(id)
+			local parts = {}
+			for _, sd in ipairs({ "imperial", "rebel" }) do
+				local target = WarSpace.deliveryTarget(id, sd, st)
+				local holds = st.orbits[id] ~= nil and st.orbits[id].faction == sd
+				local fine = (holds and target == id) or ((not holds) and (target ~= id or true))
+				parts[#parts + 1] = sd .. " -> " .. tostring(target) .. (fine and "" or " (?)")
+			end
+			printf(string.format("WARSPACE: PASS %s -- picket %s x%d live now; an owned convoy lands: %s\n",
+				id, tostring(pside), alive, table.concat(parts, ", ")))
 		end
 	end)
 	if not ok then
 		printf("WARSPACE: FAIL error " .. tostring(err) .. "\n")
 	end
 	printf("WARSPACE: end\n")
+end
+
+--- test warSpaceConvoyNow (B61 S4): fly one unowned Rebel convoy over
+-- Tatooine now (the export's own kind: no owner, no delivery row), so the
+-- convoy path runs with nobody in the zone. Watch screenlog for
+-- "convoy launched", then "is in (docked)" or "was lost" within two cycles.
+function Tests:warSpaceConvoyNow()
+	if WarSpace == nil or WarSpace.requestConvoy == nil then
+		printf("WARSPACE: FAIL the WarSpace module (S4) is not loaded\n")
+		return
+	end
+	local ok, got = pcall(WarSpace.requestConvoy, "tat_orbit", "rebel", 0)
+	printf("WARSPACE: convoy request over Tatooine (rebel, unowned): " .. tostring(ok and got or got) .. "\n")
+	local rec = WarSpace.convoyRecord("tat_orbit")
+	if rec ~= nil then
+		local pF = getSceneObject(rec.oids[1])
+		printf(string.format("WARSPACE: convoy %s x%d owner %s, freighter %s at %s\n", rec.side, #rec.oids, tostring(rec.owner),
+			pF and "present" or "MISSING", pF and string.format("%.0f %.0f %.0f", SceneObject(pF):getWorldPositionX(), SceneObject(pF):getWorldPositionZ(), SceneObject(pF):getWorldPositionY()) or "?"))
+	end
 end
 
 --- test warSpaceCycleNow (B61 S1): run one sky cycle at once (spawns and reports).
