@@ -308,8 +308,14 @@ function WarMap:doRefresh(pPlayer)
 	-- Clear this overlay's own pins ONLY (specialTypeID-scoped, see header)
 	-- before redrawing, so cities that changed planet visibility, dropped
 	-- out of the current planet's set, or simply moved never leave a stale
-	-- duplicate behind.
+	-- duplicate behind. One type PER REGION (SPECIAL_TYPE_ID + index): the
+	-- engine keeps exactly one pin per non-zero type, so a shared type let
+	-- each city's add destroy the previous city's pin and the overlay could
+	-- only ever show one (found 2026-09-08 while chasing piled-up pins).
 	PlayerObject(pGhost):removeWaypointBySpecialType(WarMap.SPECIAL_TYPE_ID)
+	for i = 1, #ids do
+		PlayerObject(pGhost):removeWaypointBySpecialType(WarMap.SPECIAL_TYPE_ID + i)
+	end
 
 	for i = 1, #ids do
 		local id = ids[i]
@@ -331,7 +337,7 @@ function WarMap:doRefresh(pPlayer)
 					color,
 					true,                   -- active
 					true,                   -- notifyClient
-					WarMap.SPECIAL_TYPE_ID,
+					WarMap.SPECIAL_TYPE_ID + i,  -- one type per region (see above)
 					0                       -- persistence: session-only
 				)
 			end

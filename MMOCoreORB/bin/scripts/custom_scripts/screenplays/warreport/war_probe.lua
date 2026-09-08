@@ -960,6 +960,50 @@ function Tests:warSpaceCheck()
 	printf("WARSPACE: end\n")
 end
 
+--- test warGrantSkills (owner's tool): award the skills listed in
+-- log/war_grant.txt ("<firstname> <skill>" per line) with their whole
+-- prerequisite tree, then rename the file to war_grant.done. The player
+-- must be known to the name map (a character that existed at boot).
+function Tests:warGrantSkills()
+	printf("WARGRANT: begin\n")
+	local ok, err = pcall(function()
+		local path = "log/war_grant.txt"
+		local f = io.open(path, "r")
+		if f == nil then
+			printf("WARGRANT: nothing to do (" .. path .. " not found)\n")
+			return
+		end
+		local lines = {}
+		for line in f:lines() do lines[#lines + 1] = line end
+		f:close()
+		for _, line in ipairs(lines) do
+			local name, skill = string.match(line, "^%s*(%S+)%s+(%S+)%s*$")
+			if name ~= nil and skill ~= nil then
+				local pPlayer = getPlayerByName(name)
+				if pPlayer == nil then
+					printf("WARGRANT: FAIL " .. name .. ": no such player\n")
+				else
+					local had = CreatureObject(pPlayer):hasSkill(skill)
+					awardSkill(pPlayer, skill)
+					local has = CreatureObject(pPlayer):hasSkill(skill)
+					printf("WARGRANT: " .. (has and "PASS" or "FAIL") .. " " .. name .. " " .. skill
+						.. (had and " (already had it)" or (has and " (awarded with prerequisites)" or " (awardSkill refused: unknown skill, or the player object is not loaded)")) .. "\n")
+					if has then
+						pcall(function() CreatureObject(pPlayer):sendSystemMessage("[War] The quartermaster signed off your " .. skill .. ".") end)
+					end
+				end
+			elseif line ~= "" then
+				printf("WARGRANT: skipped line: " .. line .. "\n")
+			end
+		end
+		os.rename(path, "log/war_grant.done")
+	end)
+	if not ok then
+		printf("WARGRANT: FAIL error " .. tostring(err) .. "\n")
+	end
+	printf("WARGRANT: end\n")
+end
+
 --- test warSpaceConvoyNow (B61 S4): fly one unowned Rebel convoy over
 -- Tatooine now (the export's own kind: no owner, no delivery row), so the
 -- convoy path runs with nobody in the zone. Watch screenlog for

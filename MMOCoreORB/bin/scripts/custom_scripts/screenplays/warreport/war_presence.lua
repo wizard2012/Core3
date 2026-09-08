@@ -36,6 +36,7 @@
 ]]
 
 WarPresence = ScreenPlay:new {
+	WAYPOINT_TYPE = 1102,  -- our own specialTypeID: one "Fighting:" pin per player (war_orders uses 1101)
 	screenplayName = "WarPresence",
 }
 
@@ -284,9 +285,12 @@ function WarPresence.markSite(pPlayer, regionId)
 		name = WarReport.regionName(regionId)
 	end
 
+	-- One pin of this kind at a time: a non-zero specialTypeID makes the
+	-- engine destroy the previous pin of that type on add (type 0 piled
+	-- them up, one per arrival -- owner report 2026-09-08).
 	pcall(function()
 		PlayerObject(pGhost):addWaypoint(zone, "Fighting: " .. tostring(name), "",
-			wx, 0, wy, color, true, true, 0, 0)
+			wx, 0, wy, color, true, true, WarPresence.WAYPOINT_TYPE, 0)
 	end)
 end
 

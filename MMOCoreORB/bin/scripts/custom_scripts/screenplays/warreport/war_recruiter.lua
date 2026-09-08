@@ -51,6 +51,7 @@ WarRecruiter.BRIEF_SCREENS = {
 -- Waypoint colour and per-player cooldown so repeat conversations do not
 -- stack duplicate markers in the datapad.
 WarRecruiter.WAYPOINT_COLOR = 2
+WarRecruiter.WAYPOINT_TYPE = 1103  -- our own specialTypeID: one "Front line:" pin per player
 WarRecruiter.COOLDOWN_MS = 3 * 60 * 1000
 
 --- Where the live battle is, or nil. Reads WarBattle's own record rather than
@@ -148,7 +149,7 @@ function WarRecruiter:markBattle(pPlayer, regionId)
 			"",
 			wx, 0, wy,
 			WarRecruiter.WAYPOINT_COLOR,
-			true, true, 0, 0)
+			true, true, WarRecruiter.WAYPOINT_TYPE, 0)  -- one "Front line:" pin at a time (type 0 piled up)
 	end)
 end
 
