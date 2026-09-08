@@ -272,6 +272,17 @@ function WarOfficerReportMenuComponent:sendReport(pPlayer, pOfficer)
 			for _, line in ipairs(WarStandings.officerLines(pPlayer, st)) do
 				creature:sendSystemMessage(line)
 			end
+			-- B51: the boards -- the enemy's most decorated (the hunt), what the
+			-- line wants this watch (the crafters).
+			if WarLines.wantedLine ~= nil and WarStandings.factionOf ~= nil then
+				local side = WarStandings.factionOf(pPlayer)
+				local wanted = (side ~= nil) and WarLines.wantedLine(st, side, 3) or nil
+				if wanted ~= nil then creature:sendSystemMessage(wanted) end
+			end
+			if WarLines.craftLine ~= nil then
+				local craft = WarLines.craftLine(st)
+				if craft ~= nil then creature:sendSystemMessage(craft) end
+			end
 		end
 		-- Slice 8: the standing order, if one is open.
 		if WarOrders ~= nil and WarOrders.reportLine ~= nil then

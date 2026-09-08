@@ -73,6 +73,18 @@ function WarWindow.rows(st, zoneName, pPlayer, pOfficer)
 				add(orderLine, "")
 			end
 		end
+		-- B51: the boards.
+		if WarLines.wantedLine ~= nil and WarStandings ~= nil and WarStandings.factionOf ~= nil then
+			local ok, wanted = pcall(function()
+				local side = WarStandings.factionOf(pPlayer)
+				return (side ~= nil) and WarLines.wantedLine(st, side, 3) or nil
+			end)
+			if ok and wanted ~= nil then add(wanted, "") end
+		end
+	end
+	if WarLines.craftLine ~= nil then
+		local ok, craft = pcall(function() return WarLines.craftLine(st) end)
+		if ok and craft ~= nil then add(craft, "") end
 	end
 	add("-- Select a row and press Do it --", "")
 	if WarOrders ~= nil and WarOrders.onRadial ~= nil then
