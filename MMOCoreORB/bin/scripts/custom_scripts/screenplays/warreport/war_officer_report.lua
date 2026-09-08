@@ -190,6 +190,10 @@ function WarOfficerReportMenuComponent:fillObjectMenuResponse(pSceneObject, pMen
 	if WarDeploy ~= nil and WarDeploy.onTransportRadial ~= nil then
 		menuResponse:addRadialMenuItem(WarDeploy.TRANSPORT_RADIAL_ID or 26, 3, "Transport")
 	end
+	-- B61 S2: the war-pilot sign-up (war_space.lua).
+	if WarSpace ~= nil and WarSpace.onSignupRadial ~= nil then
+		menuResponse:addRadialMenuItem(WarSpace.SIGNUP_RADIAL_ID or 27, 3, "Sign up as a pilot")
+	end
 end
 
 function WarOfficerReportMenuComponent:handleObjectMenuSelect(pSceneObject, pPlayer, selectedID)
@@ -208,6 +212,11 @@ function WarOfficerReportMenuComponent:handleObjectMenuSelect(pSceneObject, pPla
 		local ok, err = pcall(function() WarDeploy.onRadial(pPlayer, pSceneObject) end)
 		if not ok then
 			printf("WarDeploy.onRadial failed, swallowed: " .. tostring(err) .. "\n")
+		end
+	elseif WarSpace ~= nil and WarSpace.onSignupRadial ~= nil and selectedID == (WarSpace.SIGNUP_RADIAL_ID or 27) then
+		local ok, err = pcall(function() WarSpace.onSignupRadial(pPlayer, pSceneObject) end)
+		if not ok then
+			printf("WarSpace.onSignupRadial failed, swallowed: " .. tostring(err) .. "\n")
 		end
 	elseif WarDeploy ~= nil and WarDeploy.onTransportRadial ~= nil and selectedID == (WarDeploy.TRANSPORT_RADIAL_ID or 26) then
 		local ok, err = pcall(function() WarDeploy.onTransportRadial(pPlayer, pSceneObject) end)

@@ -58,6 +58,15 @@ WarSpace.GUARD_MAX     = 1200
 
 WarSpace.PICKET_KEY    = "warspace:picket:"
 WarSpace.ATTACK_KEY    = "warspace:attack:"
+-- S2: convoys. One per orbit at a time, one per side per export tick, a
+-- freighter and two escorts from the entry point to a named patrol point
+-- beside the picket; delivered on arrival (or after CONVOY_TTL_MS), lost
+-- when the freighter dies (convoy_lost for its side at the orbit).
+WarSpace.CONVOY_KEY    = "warspace:convoy:"      -- "<side>|<oids>|<spawned_ms>|<tick>"
+WarSpace.CONVOY_TICK   = "warspace:convoytick:"  -- .. "<orbit>:<side>" -> last export tick flown
+WarSpace.CONVOY_TTL_MS = 12 * 60 * 1000
+WarSpace.CONVOY_SIZE   = 3
+WarSpace.SIGNUP_RADIAL_ID = 27
 WarSpace.SCHEDULED_KEY = "warspace:scheduled"
 WarSpace.LAST_KEY      = "warspace:last_ms"
 WarSpace.CYCLE_KEY     = "warspace:cycle"
@@ -67,21 +76,31 @@ WarSpace.CYCLE_KEY     = "warspace:cycle"
 -- start inside its no-fly volume); `attack` is another 3 km out along the
 -- same bearing, so a fight begins on approach. All inside the zone's
 -- +-7680 bounds. Axis order is Core3's x, z, y.
+-- `dock` is a stock named patrol point (ship_mobile/patrol_points) within
+-- 1.4 km of the picket: a fixed patrol needs a NAME, and the names are loaded
+-- at boot, so the convoy's destination is borrowed from the stock map.
 WarSpace.ORBITS = {
 	cor_orbit = { zone = "space_corellia", planet = "corellia",
-		picket = { x = 5020, z = -5000, y = -1700 }, attack = { x = 2520, z = -4400, y = -200 } },
+		picket = { x = 5020, z = -5000, y = -1700 }, attack = { x = 2520, z = -4400, y = -200 },
+		dock = "rebel_patrol_2" },
 	nab_orbit = { zone = "space_naboo", planet = "naboo",
-		picket = { x = -1000, z = 1300, y = -5600 }, attack = { x = 1500, z = 1900, y = -4100 } },
+		picket = { x = -1000, z = 1300, y = -5600 }, attack = { x = 1500, z = 1900, y = -4100 },
+		dock = "freighters_station_1_04" },
 	tat_orbit = { zone = "space_tatooine", planet = "tatooine",
-		picket = { x = 800, z = -5500, y = 1000 }, attack = { x = -1700, z = -4900, y = -500 } },
+		picket = { x = 800, z = -5500, y = 1000 }, attack = { x = -1700, z = -4900, y = -500 },
+		dock = "mos_eisley_police_1_06" },
 }
 
 -- Stock ship-agent templates (bin/scripts/ship_mobile/ships/). Tier 1-2:
 -- a picket a new pilot in a starter fighter can fight, not a wall.
 WarSpace.WINGS = {
-	imperial = { leader = "imp_tie_interceptor_tier2", fighter = "imp_tie_fighter_tier1", bomber = "imp_tie_bomber_tier1" },
-	rebel    = { leader = "reb_awing_tier2",           fighter = "reb_xwing_tier1",       bomber = "reb_ywing_tier1" },
+	imperial = { leader = "imp_tie_interceptor_tier2", fighter = "imp_tie_fighter_tier1", bomber = "imp_tie_bomber_tier1",
+		freighter = "imp_freightermedium_tier1" },
+	rebel    = { leader = "reb_awing_tier2",           fighter = "reb_xwing_tier1",       bomber = "reb_ywing_tier1",
+		freighter = "reb_freightermedium_tier1" },
 }
+WarSpace.SIDE_NAME = { imperial = "Imperial", rebel = "Alliance" }
+WarSpace.STARTER = { imperial = "a TIE fighter", rebel = "a Z-95 Headhunter" }
 
 -- Deterministic scatter around a point, one entry per slot (metres).
 WarSpace.SCATTER = {
@@ -254,6 +273,137 @@ function WarSpace.report(counts, source)
 	end
 end
 
+-- -------------------------------------------------------------- convoys --
+
+--- Read the convoy record: side, oids (freighter first), spawned_ms, tick.
+function WarSpace.convoyRecord(orbitId)
+	local raw = readStringData(WarSpace.CONVOY_KEY .. orbitId)
+	if raw == nil or raw == "" then return nil end
+	local side, list, ms, tick = string.match(raw, "^([a-z]+)|([^|]*)|(%d+)|(%d+)$")
+	if side == nil then return nil end
+	local oids = {}
+	for tok in string.gmatch(list, "([^,]+)") do
+		local oid = tonumber(tok)
+		if oid ~= nil then oids[#oids + 1] = oid end
+	end
+	return { side = side, oids = oids, spawned = tonumber(ms) or 0, tick = tonumber(tick) or 0 }
+end
+
+function WarSpace.saveConvoy(orbitId, rec)
+	if rec == nil or #rec.oids == 0 then
+		writeStringData(WarSpace.CONVOY_KEY .. orbitId, "")
+		return
+	end
+	local parts = {}
+	for i = 1, #rec.oids do parts[i] = tostring(rec.oids[i]) end
+	writeStringData(WarSpace.CONVOY_KEY .. orbitId,
+		rec.side .. "|" .. table.concat(parts, ",") .. "|" .. tostring(math.floor(rec.spawned)) .. "|" .. tostring(math.floor(rec.tick)))
+end
+
+--- Sweep the convoy: file its bodies, retire it when delivered, timed out or
+-- lost, else keep it. Returns the record kept (or nil).
+function WarSpace.sweepConvoy(orbitId, casualties, lost)
+	local rec = WarSpace.convoyRecord(orbitId)
+	if rec == nil then return nil end
+	local alive, dead, freighterAlive = {}, 0, false
+	for i = 1, #rec.oids do
+		local oid = rec.oids[i]
+		local p = getSceneObject(oid)
+		local gone = (p == nil)
+		if not gone then
+			local ok, destroyed = pcall(function() return ShipObject(p):isShipDestroyed() end)
+			if ok and destroyed then
+				gone = true
+				pcall(function() SceneObject(p):destroyObjectFromWorld(false) end)
+			end
+		end
+		if gone then
+			dead = dead + 1
+		else
+			alive[#alive + 1] = oid
+			if i == 1 then freighterAlive = true end
+		end
+	end
+	if dead > 0 then bump(casualties, orbitId, rec.side, dead) end
+	local delivered = (readData(WarSpace.CONVOY_KEY .. orbitId .. ":in") or 0) == 1
+	local aged = (getTimestampMilli() - rec.spawned) >= WarSpace.CONVOY_TTL_MS
+	if not freighterAlive then
+		bump(lost, orbitId, rec.side, 1)
+		printf(string.format("WarSpace: the %s convoy over %s was lost\n", rec.side, WarSpace.planetName(orbitId)))
+	end
+	if not freighterAlive or delivered or aged then
+		WarSpace.despawnAll(alive)
+		if freighterAlive then
+			printf(string.format("WarSpace: the %s convoy over %s is in (%s)\n", rec.side, WarSpace.planetName(orbitId), delivered and "docked" or "timed out"))
+		end
+		pcall(function() deleteData(WarSpace.CONVOY_KEY .. orbitId .. ":in") end)
+		WarSpace.saveConvoy(orbitId, nil)
+		return nil
+	end
+	rec.oids = alive
+	WarSpace.saveConvoy(orbitId, rec)
+	return rec
+end
+
+--- Fly one convoy for `side` if the export says crates crossed this sky for
+-- it this tick and none has flown for it this tick yet. Returns the record.
+function WarSpace.flyConvoy(orbitId, cfg, side, tick)
+	local wing = WarSpace.WINGS[side]
+	if wing == nil or cfg.dock == nil then return nil end
+	local key = WarSpace.CONVOY_TICK .. orbitId .. ":" .. side
+	if (readData(key) or 0) == tick then return nil end
+	writeData(key, tick)
+	local oids = {}
+	local plan = { { wing.freighter, "freighter" }, { wing.fighter, "escort" }, { wing.fighter, "escort" } }
+	local pFreighter = nil
+	for i = 1, #plan do
+		local off = WarSpace.SCATTER[i + 4]
+		local p = spawnShipAgent(plan[i][1], cfg.zone, cfg.attack.x + off[1], cfg.attack.z + off[2], cfg.attack.y + off[3])
+		if p == nil then
+			printf("WarSpace: spawnShipAgent failed for " .. tostring(plan[i][1]) .. " in " .. tostring(cfg.zone) .. "\n")
+		else
+			local oid = SceneObject(p):getObjectID()
+			oids[#oids + 1] = oid
+			writeStringData(tostring(oid) .. ":warspace", orbitId .. "|" .. side)
+			pcall(function() ShipAiAgent(p):setDespawnOnNoPlayerInRange(false) end)
+			createObserver(SHIPDESTROYED, "WarSpace", "onShipDestroyed", p)
+			if plan[i][2] == "freighter" then
+				pFreighter = p
+				pcall(function()
+					ShipAiAgent(p):setFixedPatrol()
+					ShipAiAgent(p):addFixedPatrolPoint(cfg.dock, true)
+				end)
+				createObserver(DESTINATIONREACHED, "WarSpace", "onConvoyArrived", p)
+			else
+				local escorted = false
+				if pFreighter ~= nil then
+					escorted = pcall(function() ShipAiAgent(p):setEscort(pFreighter) end)
+				end
+				if not escorted then
+					pcall(function() ShipAiAgent(p):setRandomPatrol() end)
+				end
+			end
+		end
+	end
+	if #oids == 0 then return nil end
+	local rec = { side = side, oids = oids, spawned = getTimestampMilli(), tick = tick }
+	WarSpace.saveConvoy(orbitId, rec)
+	printf(string.format("WarSpace: %s convoy launched over %s (%d hulls) for the %s\n", side, WarSpace.planetName(orbitId), #oids, cfg.dock))
+	return rec
+end
+
+--- DESTINATIONREACHED on the freighter: docked. The next sweep retires it.
+function WarSpace:onConvoyArrived(pShip)
+	if pShip == nil then return 1 end
+	local oid = SceneObject(pShip):getObjectID()
+	local tag = readStringData(tostring(oid) .. ":warspace")
+	local orbitId = tag and string.match(tag, "^([a-z_]+)|") or nil
+	if orbitId ~= nil then
+		writeData(WarSpace.CONVOY_KEY .. orbitId .. ":in", 1)
+	end
+	return 1
+end
+
 -- ---------------------------------------------------------------- cycle --
 
 --- One orbit: sweep both rosters, file the bodies, then restage the picket
@@ -308,10 +458,22 @@ function WarSpace.reconcileOrbit(orbitId, o, cfg, seasonOver, casualties, lost)
 	end
 	WarSpace.save(WarSpace.ATTACK_KEY .. orbitId, aside, aalive)
 
-	printf(string.format("WarSpace: %s -- %s holds the sky, picket %d/%d (%d lost); %s\n",
+	-- S2: the convoys follow the export's traffic through this sky
+	local convoy = WarSpace.sweepConvoy(orbitId, casualties, lost)
+	if convoy == nil and not seasonOver and type(o.traffic) == "table" then
+		local tick = tonumber(o.tick) or 0
+		for _, side in ipairs({ "imperial", "rebel" }) do
+			if convoy == nil and (tonumber(o.traffic[side]) or 0) > 0 then
+				convoy = WarSpace.flyConvoy(orbitId, cfg, side, tick)
+			end
+		end
+	end
+
+	printf(string.format("WarSpace: %s -- %s holds the sky, picket %d/%d (%d lost); %s; %s\n",
 		orbitId, tostring(holder), #palive, WarSpace.PICKET_SIZE, pdead,
 		attacker and string.format("%s attacking at %.2f with %d hull(s) (%d lost)", attacker, intensity, #aalive, adead)
-			or "no attack"))
+			or "no attack",
+		convoy and string.format("%s convoy en route (%d hulls)", convoy.side, #convoy.oids) or "no convoy"))
 end
 
 function WarSpace.runCycle()
@@ -323,9 +485,11 @@ function WarSpace.runCycle()
 	local seasonOver = type(st.season) == "table" and st.season.winner ~= nil and st.season.winner ~= ""
 	writeData(WarSpace.CYCLE_KEY, (readData(WarSpace.CYCLE_KEY) or 0) + 1)
 	local casualties, lost = {}, {}
+	local tick = tonumber(st.generated_at_tick) or 0
 	for _, id in ipairs(WarSpace.orbitIds()) do
 		local o = st.orbits[id]
 		local cfg = WarSpace.ORBITS[id]
+		if o ~= nil then o.tick = tick end
 		if o ~= nil and cfg ~= nil and isZoneEnabled(cfg.zone) then
 			local ok, err = pcall(function() WarSpace.reconcileOrbit(id, o, cfg, seasonOver, casualties, lost) end)
 			if not ok then
@@ -395,6 +559,48 @@ function WarSpace:onShipDestroyed(pShip, pKiller)
 		CreatureObject(pPilot):sendSystemMessage("[War] Splash one over " .. WarSpace.planetName(orbitId) .. ". Your side will hear of it.")
 	end)
 	return 1
+end
+
+-- --------------------------------------------------------- the war pilot --
+
+--- S2: the officer's "Sign up as a pilot" radial. A declared side, the novice
+-- pilot box of that side (the stock trainers' own grant) and a starter fighter
+-- in the datapad when the player has no certified ship; nothing else the stock
+-- squadrons give (their missions and tiers stay theirs).
+function WarSpace.onSignupRadial(pPlayer, pOfficer)
+	if pPlayer == nil then return end
+	local player = CreatureObject(pPlayer)
+	local side = (WarStandings ~= nil and WarStandings.factionOf ~= nil) and WarStandings.factionOf(pPlayer) or nil
+	if side ~= "imperial" and side ~= "rebel" then
+		player:sendSystemMessage("[War] Declare for a side first; the rolls are the Empire's and the Alliance's.")
+		return
+	end
+	if SpaceHelpers == nil or SpaceHelpers.grantNovicePilot == nil then
+		player:sendSystemMessage("[War] The pilot rolls are closed on this server (no SpaceHelpers).")
+		return
+	end
+	local already = SpaceHelpers:isPilot(pPlayer)
+	local hasShip = SpaceHelpers.hasCertifiedShip ~= nil and SpaceHelpers:hasCertifiedShip(pPlayer, true) or false
+	if already and hasShip then
+		player:sendSystemMessage("[War] You are on the rolls already. Launch from your datapad and find the picket over any war planet.")
+		return
+	end
+	if not already then
+		pcall(function() SpaceHelpers:grantNovicePilot(pPlayer, side .. "Pilot") end)
+		pcall(function()
+			local pGhost = player:getPlayerObject()
+			if pGhost ~= nil and PlayerObject(pGhost):getPilotTier() < 1 then
+				PlayerObject(pGhost):incrementPilotTier()
+			end
+		end)
+	end
+	if not hasShip and grantStarterShip ~= nil then
+		pcall(function() grantStarterShip(pPlayer, side) end)
+	end
+	player:sendSystemMessage("[War] You are on the " .. (WarSpace.SIDE_NAME[side] or side) .. " pilot rolls. "
+		.. (hasShip and "Your ship" or (WarSpace.STARTER[side] or "A fighter") .. " is in your datapad") .. ": launch it over any war planet and find the picket."
+		.. " Every hull you bring down over a war planet counts for your side.")
+	printf(string.format("WarSpace: %s signed up as a %s pilot\n", tostring(player:getFirstName()), side))
 end
 
 -- Include time: schedule only (gated), never spawn.

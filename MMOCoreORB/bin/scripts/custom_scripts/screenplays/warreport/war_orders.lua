@@ -71,9 +71,11 @@ WarOrders.KILLS_NEEDED = 6
 WarOrders.HOLD_MINUTES = 10
 WarOrders.SCOUT_MINUTES = 3
 WarOrders.HUNT_KILLS = 2
+WarOrders.SKY_KILLS = 3   -- B61 S2: a pilot's order -- war ships down over the home planet
 WarOrders.HOLD_CHECK_MS = 60 * 1000
 WarOrders.EXPIRY_MS = 2 * 60 * 60 * 1000
-WarOrders.POINTS = { line = 3.0, carry = 2.0, hold = 2.0, mend = 2.0, supply = 2.0, rally = 2.0, scout = 3.0, blockade = 4.0, hunt = 4.0 }
+WarOrders.POINTS = { line = 3.0, carry = 2.0, hold = 2.0, mend = 2.0, supply = 2.0, rally = 2.0, scout = 3.0, blockade = 4.0, hunt = 4.0, sky = 4.0 }
+WarOrders.ORBIT_OF = { cor = "cor_orbit", nab = "nab_orbit", tat = "tat_orbit" }  -- B61 S2: the sky over a region's planet
 WarOrders.MEND_POINTS = 3.0             -- crates' worth of healing a mend order asks for
 WarOrders.SUPPLY_POINTS = 6.0           -- crates' worth of donations a supply order asks for: crafted goods price
                                         -- at up to 15 a stack (war_donate.lua), so two would be one hand-in
@@ -321,6 +323,13 @@ function WarOrders.candidates(st, faction, homeRegion, prof)
 	if prof.hunter and homeKnown then
 		out[#out + 1] = { type = "hunt", region = homeRegion, need = WarOrders.HUNT_KILLS }
 	end
+	-- B61 S2: a pilot clears the sky over the planet the officer stands on
+	if prof.pilot and homeKnown then
+		local orbit = WarOrders.ORBIT_OF[string.sub(tostring(homeRegion), 1, 3)]
+		if orbit ~= nil and type(st.orbits) == "table" and st.orbits[orbit] ~= nil then
+			out[#out + 1] = { type = "sky", region = orbit, need = WarOrders.SKY_KILLS }
+		end
+	end
 
 	for _, c in ipairs(lines) do
 		out[#out + 1] = { type = "line", region = c.region, need = c.need }
@@ -369,6 +378,10 @@ end
 --- The order as the officer says it.
 function WarOrders.text(o, st)
 	local enemy = other(o.faction)
+	if o.type == "sky" then
+		return "Clear the sky over " .. WarOrders.planetOfOrbit(o.region) .. ": bring down " .. tostring(o.need)
+			.. " " .. adj(enemy) .. " war ships in orbit. Launch from your datapad."
+	end
 	if o.type == "line" then
 		return "Break the " .. side(enemy) .. "'s line at " .. name(o.region) .. ": kill " .. tostring(o.need)
 			.. " " .. adj(enemy) .. " war troopers there."
@@ -426,7 +439,18 @@ function WarOrders.rewardText(o)
 end
 
 --- What a completed order reads as.
+--- B61 S2: "Tatooine" for tat_orbit (WarSpace names the planet; fall back to the id).
+function WarOrders.planetOfOrbit(orbitId)
+	if WarSpace ~= nil and WarSpace.planetName ~= nil then
+		return WarSpace.planetName(orbitId)
+	end
+	return name(orbitId)
+end
+
 function WarOrders.doneText(o)
+	if o.type == "sky" then
+		return tostring(o.need) .. " " .. adj(other(o.faction)) .. " hulls down over " .. WarOrders.planetOfOrbit(o.region) .. "."
+	end
 	if o.type == "line" then
 		return tostring(o.need) .. " " .. adj(other(o.faction)) .. " troopers down at " .. name(o.region) .. "."
 	elseif o.type == "carry" then
@@ -511,6 +535,8 @@ function WarOrders.professionsOf(pPlayer)
 		prof.scout = hasAny(creature, WarOrders.SCOUT_SKILLS)
 		prof.smuggler = hasAny(creature, WarOrders.SMUGGLER_SKILLS)
 		prof.hunter = hasAny(creature, WarOrders.HUNTER_SKILLS)
+		-- B61 S2: a pilot (any of the three pilot trees)
+		prof.pilot = (SpaceHelpers ~= nil and SpaceHelpers.isPilot ~= nil) and SpaceHelpers:isPilot(pPlayer) or false
 	end)
 	return prof
 end
@@ -909,7 +935,8 @@ function WarOrders.observe(faction, regionId, source, points, characterId)
 	end
 	local pPlayer = getSceneObject(oid)
 	if (o.type == "line" and (source == "npc_kill_faction" or source == "pvp_kill"))
-		or (o.type == "hunt" and source == "pvp_kill") then
+		or (o.type == "hunt" and source == "pvp_kill")
+		or (o.type == "sky" and source == "npc_kill_faction") then
 		o.done = (o.done or 0) + 1
 		if o.done >= o.need then
 			WarOrders.complete(oid, o, pPlayer)

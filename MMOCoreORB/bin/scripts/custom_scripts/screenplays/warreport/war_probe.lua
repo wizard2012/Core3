@@ -915,9 +915,12 @@ function Tests:warSpaceCheck()
 			local holder = o ~= nil and o.faction or "?"
 			local declared = (holder == "imperial" or holder == "rebel")
 			local good = (not declared) or (pside == holder and #palive > 0)
-			printf(string.format("WARSPACE: %s %s -- holder %s, picket %s x%d, attack %s x%d, front %s, zone %s\n",
+			local conv = WarSpace.convoyRecord ~= nil and WarSpace.convoyRecord(id) or nil
+			local traffic = (o ~= nil and type(o.traffic) == "table") and (tostring(o.traffic.imperial) .. "/" .. tostring(o.traffic.rebel)) or "none"
+			printf(string.format("WARSPACE: %s %s -- holder %s, picket %s x%d, attack %s x%d, front %s, traffic %s, convoy %s, zone %s\n",
 				good and "PASS" or "FAIL", id, tostring(holder), tostring(pside), #palive, tostring(aside), #aalive,
 				(o ~= nil and type(o.front) == "table") and (tostring(o.front.attacker) .. " " .. tostring(o.front.intensity)) or "none",
+				traffic, conv and (conv.side .. " x" .. tostring(#conv.oids)) or "none",
 				isZoneEnabled(cfg.zone) and "enabled" or "DISABLED"))
 		end
 	end)
