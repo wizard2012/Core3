@@ -83,6 +83,9 @@ includeFile("../custom_scripts/screenplays/warreport/war_deploy.lua")
 -- war_window.lua: B48 -- the War window (a SUI list box from the officer). After
 -- war_deploy.lua and war_orders.lua: its action rows run their radial code.
 includeFile("../custom_scripts/screenplays/warreport/war_window.lua")
+-- war_convoy.lua: B55 -- convoys on the roads. After war_battle.lua (fronts,
+-- ROLES) and war_contrib.lua (the delivery and the loss are records).
+includeFile("../custom_scripts/screenplays/warreport/war_convoy.lua")
 includeFile("../custom_scripts/screenplays/warreport/war_template_probe.lua")
 -- Slice D: a player takes command of a line from its sergeant (radial).
 includeFile("../custom_scripts/screenplays/warreport/war_command.lua")

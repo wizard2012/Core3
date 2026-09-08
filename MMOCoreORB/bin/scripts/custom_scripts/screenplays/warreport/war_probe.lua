@@ -835,7 +835,7 @@ end
 -- summary, then the probe's own marker for its lines.
 function Tests:warAllCheck()
 	printf("WARALL: begin\n")
-	local probes = { "warReadoutsRender", "warStandingsCheck", "warOrdersCheck", "warDigestCheck", "warSquadProbe", "warSitesCheck", "warDeployCheck", "warWindowCheck" }
+	local probes = { "warReadoutsRender", "warStandingsCheck", "warOrdersCheck", "warDigestCheck", "warSquadProbe", "warSitesCheck", "warDeployCheck", "warWindowCheck", "warConvoyCheck", "warGatesCheck", "warAdvanceCheck" }
 	for _, name in ipairs(probes) do
 		local fn = Tests[name]
 		if type(fn) ~= "function" then

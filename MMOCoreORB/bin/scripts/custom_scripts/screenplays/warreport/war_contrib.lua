@@ -148,6 +148,9 @@ local VALID_SOURCES = {
 	-- faction = the officer's own side, points = 1. The sim puts the posted
 	-- officer out of action for days (officers.process_killed).
 	officer_killed          = true,
+	-- B55: a supply convoy destroyed on the road in (war_convoy.lua); the
+	-- holder's side, the town, points 1. News for the digest.
+	convoy_lost             = true,
 }
 WarContrib.VALID_SOURCES = VALID_SOURCES
 
