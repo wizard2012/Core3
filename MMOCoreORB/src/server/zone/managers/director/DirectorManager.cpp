@@ -24,6 +24,7 @@
 #include "server/zone/managers/object/ObjectManager.h"
 #include "server/zone/managers/structure/StructureManager.h"
 #include "server/zone/managers/faction/FactionManager.h"
+#include "server/zone/managers/gcw/WarTravel.h"
 #include "server/zone/managers/combat/CombatManager.h"
 #include "server/zone/managers/collision/PathFinderManager.h"
 #include "server/zone/objects/tangible/threat/ThreatMap.h"
@@ -488,6 +489,7 @@ void DirectorManager::initializeLuaEngine(Lua* luaEngine) {
 	luaEngine->registerFunction("getChatMessage", getChatMessage);
 	luaEngine->registerFunction("getStringId", getStringId);
 	luaEngine->registerFunction("getRankName", getRankName);
+	luaEngine->registerFunction("warHolderOf", warHolderOf); // B60 (SWGWar)
 	luaEngine->registerFunction("getRankCost", getRankCost);
 	luaEngine->registerFunction("getRankDelegateRatioFrom", getRankDelegateRatioFrom);
 	luaEngine->registerFunction("getRankDelegateRatioTo", getRankDelegateRatioTo);
@@ -3632,6 +3634,26 @@ int DirectorManager::getStringId(lua_State* L) {
 	String stringid = lua_tostring(L, -1);
 	String stringvalue = StringIdManager::instance()->getStringId(stringid.hashCode()).toString();
 	lua_pushstring(L, stringvalue.toCharArray());
+
+	return 1;
+}
+
+// B60 (SWGWar): warHolderOf(zone, cityToken) -> "imperial" / "rebel" / "",
+// straight from WarTravel's table, so a console probe can check the file the
+// server actually read against the export.
+int DirectorManager::warHolderOf(lua_State* L) {
+	if (checkArgumentCount(L, 2) == 1) {
+		String err = "incorrect number of arguments passed to DirectorManager::warHolderOf";
+		printTraceError(L, err);
+		ERROR_CODE = INCORRECT_ARGUMENTS;
+		return 0;
+	}
+
+	String zone = lua_tostring(L, -2);
+	String city = lua_tostring(L, -1);
+	String holder = WarTravel::instance()->holderOf(zone, city);
+
+	lua_pushstring(L, holder.toCharArray());
 
 	return 1;
 }

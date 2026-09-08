@@ -68,6 +68,25 @@ function WarLines.side(faction)
 	return WarLines.SIDE[faction] or "no one"
 end
 
+--- B60: the towns with a city (a port and a cloner), by the Core3 city
+-- token. Mirrors bridge/war_state_writer.lua's CITY_OF; the swamp and the
+-- wastes have neither and are absent.
+WarLines.CITY_OF = {
+	cor_coronet = { zone = "corellia", city = "coronet" },
+	cor_kor_vella = { zone = "corellia", city = "kor_vella" },
+	cor_tyrena = { zone = "corellia", city = "tyrena" },
+	cor_doaba = { zone = "corellia", city = "doaba_guerfel" },
+	cor_bela_vistal = { zone = "corellia", city = "bela_vistal" },
+	nab_theed = { zone = "naboo", city = "theed" },
+	nab_keren = { zone = "naboo", city = "keren" },
+	nab_moenia = { zone = "naboo", city = "moenia" },
+	nab_kaadara = { zone = "naboo", city = "kaadara" },
+	tat_mos_eisley = { zone = "tatooine", city = "mos_eisley" },
+	tat_bestine = { zone = "tatooine", city = "bestine" },
+	tat_anchorhead = { zone = "tatooine", city = "anchorhead" },
+	tat_mos_espa = { zone = "tatooine", city = "mos_espa" },
+}
+
 function WarLines.name(regionId)
 	if WarReport ~= nil and WarReport.regionName ~= nil then
 		return WarReport.regionName(regionId)
@@ -647,6 +666,11 @@ function WarLines.arrival(st, regionId)
 			local dry = WarLines.capitalFallText(r, st)
 			out[#out + 1] = roads:gsub("^%l", string.upper) .. (dry and ("; " .. dry) or "") .. "."
 		end
+		-- B60: the port and the cloner follow the holder (last, so the lines the
+		-- tests and the players read first keep their places).
+		if WarLines.CITY_OF ~= nil and WarLines.CITY_OF[regionId] ~= nil then
+			out[#out + 1] = "Its port and cloner serve the " .. WarLines.side(r.faction) .. "; the other side can neither land nor clone here."
+		end
 		return out
 	end
 
@@ -693,6 +717,11 @@ function WarLines.arrival(st, regionId)
 		else
 			out[#out + 1] = "Under attack and holding. Every wiped " .. (WarLines.ADJ[attacker] or "enemy") .. " line costs them crates."
 		end
+	end
+	-- B60: the port and the cloner follow the holder (last, so the lines the
+	-- tests and the players read first keep their places).
+	if WarLines.CITY_OF ~= nil and WarLines.CITY_OF[regionId] ~= nil then
+		out[#out + 1] = "Its port and cloner serve the " .. WarLines.side(r.faction) .. "; the other side can neither land nor clone here."
 	end
 	return out
 end

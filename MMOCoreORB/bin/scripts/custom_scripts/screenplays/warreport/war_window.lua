@@ -93,6 +93,17 @@ function WarWindow.rows(st, zoneName, pPlayer, pOfficer)
 	if WarDeploy ~= nil and WarDeploy.onRadial ~= nil then
 		add("Transport to the front", WarWindow.ACTION_DEPLOY)
 	end
+	-- B60: a ride to a planet -- your capital there, or the field camp.
+	if WarDeploy ~= nil and WarDeploy.transportLabel ~= nil and WarStandings ~= nil and WarStandings.factionOf ~= nil then
+		local side = (pPlayer ~= nil) and WarStandings.factionOf(pPlayer) or nil
+		for _, planet in ipairs(WarDeploy.PLANETS or {}) do
+			local label = (side ~= nil) and WarDeploy.transportLabel(side, planet) or nil
+			if label ~= nil then
+				local pn = (WarReport ~= nil and WarReport.PLANET_NAME and WarReport.PLANET_NAME[planet]) or planet
+				add("Transport to " .. pn .. ": " .. label, "transport:" .. planet)
+			end
+		end
+	end
 	add("Print this report to chat", WarWindow.ACTION_REPORT)
 	return rows, prompt
 end
@@ -148,6 +159,8 @@ function WarWindow:onSelect(pPlayer, pSui, eventIndex, args)
 			WarOrders.onRadial(pPlayer, pOfficer)
 		elseif value == WarWindow.ACTION_DEPLOY and WarDeploy ~= nil and WarDeploy.onRadial ~= nil then
 			WarDeploy.onRadial(pPlayer, pOfficer)
+		elseif type(value) == "string" and value:sub(1, 10) == "transport:" and WarDeploy ~= nil and WarDeploy.transport ~= nil then
+			WarDeploy.transport(pPlayer, value:sub(11))
 		elseif value == WarWindow.ACTION_REPORT and WarOfficerReportMenuComponent ~= nil and pOfficer ~= nil then
 			WarOfficerReportMenuComponent:sendReport(pPlayer, pOfficer)
 		end

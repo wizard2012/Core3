@@ -77,6 +77,11 @@ function WarAnnounce:lineFor(flip)
 	end
 
 	local line = name .. " has fallen to " .. captor .. "."
+	-- B60 (owner ruling 2026-09-08): the town's port and cloner follow the
+	-- holder; say so where the town has them.
+	if WarLines ~= nil and type(WarLines.CITY_OF) == "table" and WarLines.CITY_OF[flip.region] ~= nil then
+		line = line .. " Its port and cloner serve " .. captor .. " now."
+	end
 	-- If a player's fight broke the line here within the hour, say whose.
 	-- Written by war_contrib_hook.lua when a player kills a war-spawned NPC.
 	pcall(function()

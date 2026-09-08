@@ -8,3 +8,7 @@ region_map.lua
 # Same reasoning as war_state.lua above: a per-tick artifact of the live sim,
 # not authored content.
 war_flips.lua
+
+# Generated per-export by bridge/export_war_state.lua (B60): zone, city, holder for
+# the server travel and cloning closures (WarTravel.h). A per-tick artifact.
+war_holders.txt

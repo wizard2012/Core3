@@ -106,6 +106,15 @@ function WarOfficerReportMenu:attachAll(pObject, args)
 		for i = 1, #WarOfficer.POSTS do
 			local region = WarOfficer.POSTS[i].region
 			local oid = readSharedMemory("warofficer:npc:" .. region)
+			-- B60: a post that never spawned on this boot (added by a reload, or
+			-- one spawnAll could not place) is spawned here; spawnPost is
+			-- idempotent, so a live officer is never doubled.
+			if (oid == nil or oid == 0) and WarOfficer.respawnForRegion ~= nil then
+				local okS = pcall(function() WarOfficer:respawnForRegion(region) end)
+				if okS then
+					oid = readSharedMemory("warofficer:npc:" .. region)
+				end
+			end
 			if oid ~= nil and oid > 0 then
 				local pNpc = getSceneObject(oid)
 				-- B43/B44: the posts stand at the town centres, where street
@@ -177,6 +186,10 @@ function WarOfficerReportMenuComponent:fillObjectMenuResponse(pSceneObject, pMen
 	if WarWindow ~= nil and WarWindow.open ~= nil then
 		menuResponse:addRadialMenuItem(WarWindow.RADIAL_ID or 23, 3, "War")
 	end
+	-- B60: transport to a planet (war_deploy.lua).
+	if WarDeploy ~= nil and WarDeploy.onTransportRadial ~= nil then
+		menuResponse:addRadialMenuItem(WarDeploy.TRANSPORT_RADIAL_ID or 26, 3, "Transport")
+	end
 end
 
 function WarOfficerReportMenuComponent:handleObjectMenuSelect(pSceneObject, pPlayer, selectedID)
@@ -195,6 +208,11 @@ function WarOfficerReportMenuComponent:handleObjectMenuSelect(pSceneObject, pPla
 		local ok, err = pcall(function() WarDeploy.onRadial(pPlayer, pSceneObject) end)
 		if not ok then
 			printf("WarDeploy.onRadial failed, swallowed: " .. tostring(err) .. "\n")
+		end
+	elseif WarDeploy ~= nil and WarDeploy.onTransportRadial ~= nil and selectedID == (WarDeploy.TRANSPORT_RADIAL_ID or 26) then
+		local ok, err = pcall(function() WarDeploy.onTransportRadial(pPlayer, pSceneObject) end)
+		if not ok then
+			printf("WarDeploy.onTransportRadial failed, swallowed: " .. tostring(err) .. "\n")
 		end
 	elseif WarWindow ~= nil and selectedID == (WarWindow.RADIAL_ID or 23) then
 		local ok, err = pcall(function() WarWindow.open(pPlayer, pSceneObject) end)
@@ -220,7 +238,7 @@ function WarOfficerReportMenuComponent:regionOf(pOfficer)
 	for i = 1, #WarOfficer.POSTS do
 		local region = WarOfficer.POSTS[i].region
 		if readSharedMemory("warofficer:npc:" .. region) == oid then
-			return region
+			return WarOfficer.POSTS[i].reportRegion or region -- B60: a field officer reads from the nearest town
 		end
 	end
 	return nil

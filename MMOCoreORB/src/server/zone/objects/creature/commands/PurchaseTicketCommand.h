@@ -9,6 +9,7 @@
 #include "server/zone/objects/player/sui/messagebox/SuiMessageBox.h"
 #include "server/zone/managers/planet/PlanetManager.h"
 #include "server/zone/objects/region/CityRegion.h"
+#include "server/zone/managers/gcw/WarTravel.h"
 #include "server/zone/objects/transaction/TransactionLog.h"
 #include "server/zone/objects/player/sui/callbacks/TravelCouponUseSuiCallback.h"
 
@@ -138,6 +139,30 @@ public:
 		if (destCity != nullptr) {
 			if (destCity.get()->isBanned(creature->getObjectID())) {
 				creature->sendSystemMessage("@city/city:banned_from_that_city"); // You have been banned from traveling to that city by the city militia
+				return GENERALERROR;
+			}
+		}
+
+		// B60 (SWGWar): a war town the player's enemy holds sells them no ticket
+		// to it and none from it.
+		{
+			WarTravel* war = WarTravel::instance();
+
+			if (war->isCityClosedTo(creature, destCity.get())) {
+				creature->sendSystemMessage(war->closedText(destCity.get()));
+				return GENERALERROR;
+			}
+
+			Reference<PlanetTravelPoint*> fromPoint = pmDeparture->getPlanetTravelPoint(departurePoint);
+
+			if (fromPoint != nullptr && war->isPointClosedTo(creature, fromPoint)) {
+				ManagedReference<CreatureObject*> fromShuttle = fromPoint->getShuttle();
+				ManagedReference<CityRegion*> fromCity;
+
+				if (fromShuttle != nullptr)
+					fromCity = fromShuttle->getCityRegion().get();
+
+				creature->sendSystemMessage(war->closedText(fromCity.get()));
 				return GENERALERROR;
 			}
 		}

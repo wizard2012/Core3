@@ -35,7 +35,7 @@ public:
 		return point;
 	}
 
-	void insertToMessage(BaseMessage* message, PlanetTravelPoint* origin) {
+	void insertToMessage(BaseMessage* message, PlanetTravelPoint* origin, const Vector<String>* closedNames = nullptr) {
 		rlock();
 
 		int totalPoints = size();
@@ -51,6 +51,10 @@ public:
 			Reference<PlanetTravelPoint*> ptp = VectorMap<String, Reference<PlanetTravelPoint*> >::get(i);
 
 			bool incoming = ptp->isIncomingAllowed();
+
+			// B60 (SWGWar): a war town the player's enemy holds is no destination.
+			if (incoming && closedNames != nullptr && closedNames->contains(ptp->getPointName()))
+				incoming = false;
 			incomingAllowed.add(incoming);
 
 			if (!incoming) {

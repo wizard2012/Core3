@@ -13,6 +13,7 @@
 #include "server/zone/managers/weather/WeatherManager.h"
 #include "server/zone/managers/collision/CollisionManager.h"
 #include "server/zone/managers/gcw/GCWManager.h"
+#include "server/zone/managers/gcw/WarTravel.h"
 #include "server/zone/managers/object/ObjectManager.h"
 
 #include "engine/util/iffstream/IffStream.h"
@@ -715,7 +716,36 @@ bool PlanetManagerImplementation::isTravelToLocationPermitted(const String& depa
 
 void PlanetManagerImplementation::sendPlanetTravelPointListResponse(CreatureObject* player) {
 	PlanetTravelPointListResponse* ptplr = new PlanetTravelPointListResponse(zone->getZoneName());
-	planetTravelPointList->insertToMessage(ptplr, getNearestPlanetTravelPoint(player));
+	Reference<PlanetTravelPoint*> origin = getNearestPlanetTravelPoint(player);
+
+	// B60 (SWGWar): war towns the player's enemy holds are closed to a
+	// declared character -- as destinations on every planet, and as the port
+	// they stand in (then nothing is offered and they are told why).
+	Vector<String> closedNames;
+	WarTravel* war = WarTravel::instance();
+	bool originClosed = (origin != nullptr && player->getZone() == zone && war->isPointClosedTo(player, origin));
+
+	if (originClosed) {
+		ManagedReference<CreatureObject*> shuttle = origin->getShuttle();
+		ManagedReference<CityRegion*> city;
+
+		if (shuttle != nullptr)
+			city = shuttle->getCityRegion().get();
+
+		player->sendSystemMessage(war->closedText(city.get()));
+	}
+
+	for (int i = 0; i < planetTravelPointList->size(); ++i) {
+		const auto& ptp = planetTravelPointList->get(i);
+
+		if (ptp == nullptr)
+			continue;
+
+		if (originClosed || war->isPointClosedTo(player, ptp))
+			closedNames.add(ptp->getPointName());
+	}
+
+	planetTravelPointList->insertToMessage(ptplr, origin, &closedNames);
 
 	player->sendMessage(ptplr);
 }

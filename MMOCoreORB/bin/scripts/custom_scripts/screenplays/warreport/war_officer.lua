@@ -50,6 +50,12 @@ WarOfficer = ScreenPlay:new {
 		{ region = "nab_theed",      zone = "naboo",    x = -6160, y = 3920,  heading = 0 },
 		{ region = "nab_lianorm",    zone = "naboo",    x = -416,  y = 0,     heading = 0 },
 		{ region = "tat_anchorhead", zone = "tatooine", x = 102,   y = -5360, heading = 0 },
+		-- B60 slice B: the field officers at the landing zones, fixed sides.
+		-- The exact point is found on the navmesh at first spawn and
+		-- remembered (warofficer:lz:<post>); reportRegion is the town whose
+		-- vantage the report, orders and deploy use.
+		{ region = "lz_corellia_rebel",    zone = "corellia", x = -4400, y = -2526, heading = 0, faction = "rebel",    lz = true, reportRegion = "cor_tyrena" },
+		{ region = "lz_tatooine_imperial", zone = "tatooine", x = -1218, y = -2900, heading = 0, faction = "imperial", lz = true, reportRegion = "tat_bestine" },
 	},
 
 	-- Faction-appropriate stock templates. Verified present in the running
@@ -153,11 +159,22 @@ function WarOfficer:spawnPost(post)
 		return
 	end
 
-	local faction = WarOfficer:factionFor(post.region)
+	local faction = post.faction or WarOfficer:factionFor(post.region)
 	if faction == nil then
 		-- No war state readable yet. Spawn nothing rather than guess a side;
 		-- spawnAll() will retry.
 		return false
+	end
+
+	-- B60: idempotent -- a post whose officer stands and lives is left alone
+	-- (spawnAll and the rescan may both reach it).
+	local existing = readSharedMemory("warofficer:npc:" .. tostring(post.region))
+	if existing ~= nil and existing > 0 then
+		local pOld = getSceneObject(existing)
+		local okAlive, alive = pcall(function() return pOld ~= nil and not CreatureObject(pOld):isDead() end)
+		if okAlive and alive == true then
+			return true
+		end
 	end
 
 	local template = WarOfficer.TEMPLATE[faction]
@@ -166,7 +183,25 @@ function WarOfficer:spawnPost(post)
 		return false
 	end
 
-	local pNpc = spawnMobile(post.zone, template, -1, post.x, 0, post.y, post.heading, 0)
+	-- B60: a landing-zone post stands on a navmesh point near its centre.
+	local x, y = post.x, post.y
+	if post.lz then
+		local key = "warofficer:lz:" .. tostring(post.region)
+		local rx, ry = tostring(readStringData(key) or ""):match("^(-?%d+),(-?%d+)$")
+		if rx ~= nil and ry ~= nil then
+			x, y = tonumber(rx), tonumber(ry)
+		else
+			pcall(function()
+				local pt = getSpawnPoint(post.zone, post.x, post.y, 20, 220, true)
+				if type(pt) == "table" and pt[1] ~= nil and pt[3] ~= nil then
+					x, y = pt[1], pt[3]
+				end
+			end)
+			writeStringData(key, tostring(math.floor(x)) .. "," .. tostring(math.floor(y)))
+		end
+	end
+
+	local pNpc = spawnMobile(post.zone, template, -1, x, 0, y, post.heading, 0)
 	if pNpc == nil then
 		printf("WarOfficer: spawnMobile returned nil for " .. template .. " at " .. post.region .. "\n")
 		return false
@@ -181,7 +216,7 @@ function WarOfficer:spawnPost(post)
 	end)
 
 	local pArea = spawnActiveArea(post.zone, "object/active_area.iff",
-		post.x, 0, post.y, WarOfficer.BRIEF_RADIUS_M, 0)
+		x, 0, y, WarOfficer.BRIEF_RADIUS_M, 0)
 
 	if pArea == nil then
 		printf("WarOfficer: spawnActiveArea returned nil at " .. post.region .. " (officer spawned but will not brief)\n")
@@ -201,7 +236,7 @@ function WarOfficer:spawnPost(post)
 	createObserver(ENTEREDAREA, "WarOfficer", "briefEntered", pArea)
 
 	printf("WarOfficer: " .. tostring(faction) .. " officer at " .. tostring(post.region)
-		.. " (" .. tostring(post.x) .. ", " .. tostring(post.y) .. ")\n")
+		.. " (" .. tostring(x) .. ", " .. tostring(y) .. ")\n")
 	return true
 end
 

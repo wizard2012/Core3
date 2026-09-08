@@ -62,6 +62,7 @@
 #include "server/zone/objects/cell/CellObject.h"
 #include "server/zone/managers/skill/SkillManager.h"
 #include "server/zone/objects/player/FactionStatus.h"
+#include "server/zone/managers/gcw/WarTravel.h"
 #include "server/zone/managers/planet/PlanetManager.h"
 
 #include "server/zone/packets/trade/AbortTradeMessage.h"
@@ -1636,6 +1637,7 @@ void PlayerManagerImplementation::sendActivateCloneRequest(CreatureObject* playe
 	SortedVector<ManagedReference<SceneObject*> > locations = zone->getPlanetaryObjectList("cloningfacility");
 
 	int checkDistanceSq = 16000 * 16000;
+	bool warClosedAny = false; // B60 (SWGWar): a cloner here was the enemy's
 
 	for (int j = 0; j < locations.size(); j++) {
 		ManagedReference<SceneObject*> location = locations.get(j);
@@ -1644,6 +1646,9 @@ void PlayerManagerImplementation::sendActivateCloneRequest(CreatureObject* playe
 			continue;
 
 		ManagedReference<CityRegion*> clonerCityRegion = location->getCityRegion().get();
+
+		if (WarTravel::instance()->isCityClosedTo(player, clonerCityRegion.get()))
+			warClosedAny = true;
 
 		if (!isValidClosestCloner(player, location, clonerCityRegion))
 			continue;
@@ -1669,6 +1674,15 @@ void PlayerManagerImplementation::sendActivateCloneRequest(CreatureObject* playe
 		}
 	}
 
+	// B60 (SWGWar): every cloner on this planet is the enemy's -- the nearest
+	// friendly one on any planet (the side's own capitals first).
+	if (closestCloning == nullptr && warClosedAny) {
+		closestCloning = WarTravel::instance()->fallbackCloner(player, server);
+
+		if (closestCloning != nullptr)
+			closestName = WarTravel::clonerName(closestCloning) + " (off-planet)";
+	}
+
 	StringBuffer promptText;
 	promptText << "Closest:\t\t " << closestName << "\n"
 			<< "Pre-Designated: " << predesignatedName << "\n"
@@ -1680,7 +1694,8 @@ void PlayerManagerImplementation::sendActivateCloneRequest(CreatureObject* playe
 	if (closestCloning != nullptr)
 		cloneMenu->addMenuItem("@base_player:revive_closest", closestCloning->getObjectID());
 
-	if (preDesignatedFacility != nullptr && preDesignatedFacility->getZone() == zone)
+	if (preDesignatedFacility != nullptr && preDesignatedFacility->getZone() == zone
+			&& !WarTravel::instance()->isCityClosedTo(player, preDesignatedFacility->getCityRegion().get().get())) // B60
 		cloneMenu->addMenuItem("@base_player:revive_bind", preDesignatedFacility->getObjectID());
 
 	for (int i = 0; i < locations.size(); i++) {
@@ -1717,6 +1732,10 @@ bool PlayerManagerImplementation::isValidClosestCloner(CreatureObject* player, S
 		return false;
 
 	if (cityRegion != nullptr && cityRegion->isBanned(player->getObjectID()))
+		return false;
+
+	// B60 (SWGWar): a war town the player's enemy holds keeps its cloner.
+	if (WarTravel::instance()->isCityClosedTo(player, cityRegion))
 		return false;
 
 	CloningBuildingObjectTemplate* cbot = cast<CloningBuildingObjectTemplate*>(cloner->getObjectTemplate());
@@ -1758,6 +1777,22 @@ void PlayerManagerImplementation::sendPlayerToCloner(CreatureObject* player, uin
 		return;
 	}
 
+	// B60 (SWGWar): the town flipped between the dialog and the click -- the
+	// nearest friendly cloner on any planet instead.
+	{
+		ManagedReference<CityRegion*> clonerCity = cloner->getCityRegion().get();
+
+		if (WarTravel::instance()->isCityClosedTo(player, clonerCity.get())) {
+			ManagedReference<SceneObject*> other = WarTravel::instance()->fallbackCloner(player, server);
+
+			if (other != nullptr && other != cloner) {
+				player->sendSystemMessage(WarTravel::instance()->closedText(clonerCity.get()));
+				sendPlayerToCloner(player, other->getObjectID(), typeofdeath);
+				return;
+			}
+		}
+	}
+
 	CloneSpawnPoint* clonePoint = cbot->getRandomSpawnPoint();
 
 	if (clonePoint == nullptr) {
@@ -1789,7 +1824,11 @@ void PlayerManagerImplementation::sendPlayerToCloner(CreatureObject* player, uin
 		}
 	}
 
-	Zone* zone = player->getZone();
+	// B60 (SWGWar): the cloner's own zone -- it may stand on another planet.
+	Zone* zone = cloner->getZone();
+
+	if (zone == nullptr)
+		zone = player->getZone();
 
 	if (zone == nullptr) {
 		error() << player->getDisplayedName() << " ID: " << player->getObjectID() << " - Failed to activate clone due to null zone. Chosen Cloning Facility ID: " << cloner->getObjectID();

@@ -169,6 +169,7 @@ namespace server {
 		static int createConversationScreen(lua_State* L);
 		static int getStringId(lua_State* L);
 		static int getRankName(lua_State* L);
+		static int warHolderOf(lua_State* L); // B60 (SWGWar)
 		static int getRankCost(lua_State* L);
 		static int getRankDelegateRatioFrom(lua_State* L);
 		static int getRankDelegateRatioTo(lua_State* L);

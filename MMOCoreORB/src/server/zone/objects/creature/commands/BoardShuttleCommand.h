@@ -19,6 +19,7 @@
 #include "server/zone/objects/region/CityRegion.h"
 #include "server/zone/managers/planet/PlanetManager.h"
 #include "server/zone/managers/planet/PlanetTravelPoint.h"
+#include "server/zone/managers/gcw/WarTravel.h"
 #include "server/zone/managers/collision/CollisionManager.h"
 #include "server/zone/objects/group/GroupObject.h"
 
@@ -154,6 +155,12 @@ public:
 					return GENERALERROR;
 				}
 #endif
+				// B60 (SWGWar): the destination is a war town the player's enemy holds now.
+				if (WarTravel::instance()->isCityClosedTo(creature, region.get())) {
+					creature->sendSystemMessage(WarTravel::instance()->closedText(region.get()) + " Keep the ticket; it is good when the town changes hands.");
+					return GENERALERROR;
+				}
+
 				if (region->isBanned(creature->getObjectID())) {
 					creature->sendSystemMessage("@city/city:banned_from_that_city"); // You have been banned from traveling to that city by the city militia
 					return GENERALERROR;
@@ -164,6 +171,12 @@ public:
 		ManagedReference<CityRegion*> departCity = shuttle->getCityRegion().get();
 
 		if (departCity != nullptr){
+			// B60 (SWGWar): the port they stand in is the enemy's.
+			if (WarTravel::instance()->isCityClosedTo(creature, departCity.get())) {
+				creature->sendSystemMessage(WarTravel::instance()->closedText(departCity.get()));
+				return GENERALERROR;
+			}
+
 			if (departCity->isBanned(creature->getObjectID())) {
 				creature->sendSystemMessage("@city/city:city_cant_board"); // You are banned from using the services of this city.\nYou may not board the transport.
 				return GENERALERROR;

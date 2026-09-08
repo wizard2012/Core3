@@ -223,6 +223,170 @@ function WarDeploy.onRadial(pPlayer, pOfficer)
 	end
 end
 
+--- B60 slice B (owner ruling 2026-09-08): the officer's transport to a
+-- PLANET is the way onto one with no friendly port. Where the side has a
+-- capital there the ride lands at its officer post; where it has none, at
+-- the side's field landing zone -- a wilderness point the field officer
+-- found on the navmesh at spawn (war_officer.lua) and remembered, else
+-- getSpawnPoint around the fixed centre. Same guards and the same wait as
+-- the front transport.
+WarDeploy.TRANSPORT_RADIAL_ID = 26
+WarDeploy.PLANETS = { "corellia", "naboo", "tatooine" }
+WarDeploy.CAPITAL_ON = {
+	imperial = { corellia = "cor_coronet", naboo = "nab_theed" },
+	rebel = { naboo = "nab_lianorm", tatooine = "tat_anchorhead" },
+}
+WarDeploy.LZ = {
+	rebel = { corellia = { post = "lz_corellia_rebel", x = -4400, y = -2526, label = "the Alliance field camp east of Tyrena" } },
+	imperial = { tatooine = { post = "lz_tatooine_imperial", x = -1218, y = -2900, label = "the Imperial field camp north of Bestine" } },
+}
+WarDeploy.LZ_RING_M = { 20, 220 }
+
+local function planetName(p)
+	if WarReport ~= nil and type(WarReport.PLANET_NAME) == "table" and WarReport.PLANET_NAME[p] ~= nil then
+		return WarReport.PLANET_NAME[p]
+	end
+	return tostring(p)
+end
+
+--- The label of where a side lands on a planet, or nil. Pure.
+function WarDeploy.transportLabel(faction, planet)
+	local cap = WarDeploy.CAPITAL_ON[faction] and WarDeploy.CAPITAL_ON[faction][planet]
+	if cap ~= nil then
+		return name(cap)
+	end
+	local lz = WarDeploy.LZ[faction] and WarDeploy.LZ[faction][planet]
+	if lz ~= nil then
+		return lz.label
+	end
+	return nil
+end
+
+--- The landing point: { zone, x, y, label } or nil.
+function WarDeploy.transportTarget(faction, planet)
+	local cap = WarDeploy.CAPITAL_ON[faction] and WarDeploy.CAPITAL_ON[faction][planet]
+	if cap ~= nil then
+		local zone, x, y = WarDeploy.landing(cap)
+		if zone ~= nil then
+			return { zone = zone, x = x, y = y, label = name(cap) }
+		end
+	end
+	local lz = WarDeploy.LZ[faction] and WarDeploy.LZ[faction][planet]
+	if lz == nil then
+		return nil
+	end
+	local x, y = lz.x, lz.y
+	local remembered = readStringData("warofficer:lz:" .. tostring(lz.post))
+	local rx, ry = tostring(remembered or ""):match("^(-?%d+),(-?%d+)$")
+	if rx ~= nil and ry ~= nil then
+		x, y = tonumber(rx), tonumber(ry)
+	else
+		pcall(function()
+			local pt = getSpawnPoint(planet, lz.x, lz.y, WarDeploy.LZ_RING_M[1], WarDeploy.LZ_RING_M[2], true)
+			if type(pt) == "table" and pt[1] ~= nil and pt[3] ~= nil then
+				x, y = pt[1], pt[3]
+			end
+		end)
+	end
+	return { zone = planet, x = x, y = y, label = lz.label }
+end
+
+--- The ride to a planet.
+function WarDeploy.transport(pPlayer, planet)
+	if pPlayer == nil or planet == nil then
+		return
+	end
+	local creature = CreatureObject(pPlayer)
+	local faction = (WarStandings ~= nil and WarStandings.factionOf ~= nil) and WarStandings.factionOf(pPlayer) or nil
+	if faction == nil then
+		creature:sendSystemMessage("The transport is for the enlisted. Declare for a side first.")
+		return
+	end
+	if creature:isDead() or creature:isIncapacitated() then
+		creature:sendSystemMessage("Not in that state.")
+		return
+	end
+	if creature:isInCombat() then
+		creature:sendSystemMessage("Not while you are in combat.")
+		return
+	end
+	if creature:isRidingMount() then
+		creature:sendSystemMessage("Dismount first.")
+		return
+	end
+	local oid = SceneObject(pPlayer):getObjectID()
+	local now = getTimestampMilli()
+	local last = readData(lastKey(oid))
+	if last ~= nil and last > 0 and (now - last) < WarDeploy.COOLDOWN_MS then
+		creature:sendSystemMessage(WarDeploy.waitText(WarDeploy.COOLDOWN_MS - (now - last)))
+		return
+	end
+	local t = WarDeploy.transportTarget(faction, planet)
+	if t == nil then
+		creature:sendSystemMessage("No transport: your side has nowhere to land on " .. planetName(planet) .. ".")
+		return
+	end
+	local z = getWorldFloor(t.x, t.y, t.zone)
+	creature:sendSystemMessage("Transport to " .. t.label .. " on " .. planetName(planet) .. ".")
+	printf("WarDeploy: " .. tostring(oid) .. " (" .. faction .. ") transport to " .. planet .. " -- " .. t.label
+		.. " at " .. tostring(t.x) .. ", " .. tostring(t.y) .. "\n")
+	local moved = pcall(function() SceneObject(pPlayer):switchZone(t.zone, t.x, z, t.y, 0) end)
+	if moved then
+		writeData(lastKey(oid), now)
+	end
+end
+
+--- The officer's "Transport" radial: a list box of the planets.
+WarTransport = WarTransport or {}
+
+function WarDeploy.onTransportRadial(pPlayer, pOfficer)
+	if pPlayer == nil then
+		return
+	end
+	local creature = CreatureObject(pPlayer)
+	local faction = (WarStandings ~= nil and WarStandings.factionOf ~= nil) and WarStandings.factionOf(pPlayer) or nil
+	if faction == nil then
+		creature:sendSystemMessage("The transport is for the enlisted. Declare for a side first.")
+		return
+	end
+	if SuiListBox == nil then
+		creature:sendSystemMessage("No transport list on this thread; use the War window.")
+		return
+	end
+	local sui = SuiListBox.new("WarTransport", "onSelect")
+	sui.setTargetNetworkId(SceneObject(pPlayer):getObjectID())
+	sui.setTitle("Transport")
+	sui.setPrompt("The transport lands you at your capital where your side has one, else at its field camp. One ride per ten minutes.")
+	sui.setOkButtonText("Fly")
+	sui.setCancelButtonText("Stay")
+	for _, planet in ipairs(WarDeploy.PLANETS) do
+		local label = WarDeploy.transportLabel(faction, planet)
+		if label ~= nil then
+			sui.add(planetName(planet) .. " -- " .. label, planet)
+		end
+	end
+	sui.sendTo(pPlayer)
+end
+
+function WarTransport:onSelect(pPlayer, pSui, eventIndex, args)
+	if pPlayer == nil or eventIndex == 1 then
+		return
+	end
+	local ok, err = pcall(function()
+		local pPageData = LuaSuiBoxPage(pSui):getSuiPageData()
+		if pPageData == nil then
+			return
+		end
+		local planet = LuaSuiPageData(pPageData):getStoredData(tostring(args))
+		if planet ~= nil and planet ~= "" then
+			WarDeploy.transport(pPlayer, planet)
+		end
+	end)
+	if not ok then
+		printf("WarTransport.onSelect failed, swallowed: " .. tostring(err) .. "\n")
+	end
+end
+
 -- Console probe: test warDeployCheck
 if type(Tests) == "table" then
 	function Tests:warDeployCheck()

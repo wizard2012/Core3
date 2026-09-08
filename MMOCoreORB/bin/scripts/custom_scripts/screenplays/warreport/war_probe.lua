@@ -884,12 +884,46 @@ function Tests:warRankTable()
 	printf("WARRANKTABLE: end\n")
 end
 
+--- test warTravelCheck (B60): the server's holders file (WarTravel.h) agrees
+-- with the export, city by city, through the warHolderOf binding. Read-only.
+function Tests:warTravelCheck()
+	printf("WARTRAVEL: begin\n")
+	local ok, err = pcall(function()
+		if warHolderOf == nil then
+			printf("WARTRAVEL: FAIL the warHolderOf binding is not registered (old binary?)\n")
+			return
+		end
+		local st = WarReport.state()
+		if st == nil or type(st.regions) ~= "table" then
+			printf("WARTRAVEL: no war state\n")
+			return
+		end
+		local pass, fail = 0, 0
+		for rid, c in pairs(WarLines.CITY_OF) do
+			local want = st.regions[rid] and st.regions[rid].faction or "?"
+			local got = warHolderOf(c.zone, c.city)
+			if got == want then
+				pass = pass + 1
+			else
+				fail = fail + 1
+				printf("WARTRAVEL: FAIL " .. rid .. " export=" .. tostring(want) .. " server=" .. tostring(got) .. "\n")
+			end
+		end
+		printf("WARTRAVEL: " .. ((fail == 0) and "PASS" or "FAIL") .. " holders agree for " .. pass .. " of " .. (pass + fail) .. " cities\n")
+		printf("WARTRAVEL: " .. ((warHolderOf("corellia", "no_such_city") == "") and "PASS" or "FAIL") .. " an unknown city has no holder\n")
+	end)
+	if not ok then
+		printf("WARTRAVEL: failed: " .. tostring(err) .. "\n")
+	end
+	printf("WARTRAVEL: end\n")
+end
+
 --- test warAllCheck: every readout probe in one console command, each in its
 -- own pcall so one failing cannot hide the others. Grep WARALL for the
 -- summary, then the probe's own marker for its lines.
 function Tests:warAllCheck()
 	printf("WARALL: begin\n")
-	local probes = { "warReadoutsRender", "warStandingsCheck", "warOrdersCheck", "warDigestCheck", "warSquadProbe", "warSitesCheck", "warDeployCheck", "warWindowCheck", "warConvoyCheck", "warGatesCheck", "warAdvanceCheck", "warFinaleCheck" }
+	local probes = { "warReadoutsRender", "warStandingsCheck", "warOrdersCheck", "warDigestCheck", "warSquadProbe", "warSitesCheck", "warDeployCheck", "warWindowCheck", "warConvoyCheck", "warGatesCheck", "warAdvanceCheck", "warFinaleCheck", "warTravelCheck" }
 	for _, name in ipairs(probes) do
 		local fn = Tests[name]
 		if type(fn) ~= "function" then
